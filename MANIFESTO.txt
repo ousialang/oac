@@ -1,7 +1,8 @@
+Copyright (c) 2003, Eric S. Raymond. All rights reserved.
+
 Eric Raymond’s 17 Unix Rules
 ============================
 From "The Art of Unix Programming" by Eric Raymond (2003).
-Copyright (c) 2003 Eric S. Raymond.
 
 Rule of Modularity
 ------------------
