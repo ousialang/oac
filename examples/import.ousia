@@ -1,0 +1,3 @@
+import ousia.abc.xyz as x;
+import ousia.foo;
+import ousia;
