@@ -1,4 +1,4 @@
-Copyright (c) 2003, Eric S.Raymond. All rights reserved.
+Copyright (c) 2003, Eric S. Raymond. All rights reserved.
 
 Eric Raymond’s 17 Unix Rules
 ============================
