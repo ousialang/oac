@@ -1,5 +1,0 @@
-package ousia;
-package ousia.abc;
-package ousia.abc.xyz;
-package foo.bar as spam;
-
