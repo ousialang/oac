@@ -1,0 +1,11 @@
+imperial gallon:
+    quantity: volume
+    symbol: gal
+    value: 4.54609
+    system: imperial
+
+US gallon:
+    quantity: volume
+    symbol: gal
+    value: 3.785411784
+    system: US

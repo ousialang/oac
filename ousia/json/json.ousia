@@ -1,0 +1,14 @@
+package ousia.json
+package ousia.util.json
+
+application JSON
+
+
+
+object Example {
+
+  val TREK: BICYCLE faster[3] cadence[100]
+
+  CONSOLE println
+
+

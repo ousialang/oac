@@ -1,0 +1,23 @@
+second:
+    quantity: Time
+    symbol: s
+
+minute:
+    quantity: Time
+    symbol: min
+    value: 60
+
+hour:
+    quantity: Time
+    symbol: h
+    value: 3600
+
+day:
+    quantity: Time
+    symbol: d
+    value: 86400
+
+year:
+    quantity: Time
+    symbol: a
+    value: 31557600

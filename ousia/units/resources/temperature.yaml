@@ -1,0 +1,15 @@
+celsius:
+    quantity: Temperature
+    symbol: °C
+
+kelvin:
+    quantity: Temperature
+    symbol: K
+
+fahrenheit:
+    quantity: Temperature
+    symbol: °F
+
+rankine:
+    quantity: Temperature
+    symbol: °R

@@ -1,0 +1,26 @@
+package ousia.IO
+
+object ANSIColors {
+
+  val BLINK: "\u001B[5m"
+  val BOLD: "\u001B[1m"
+  val INVISIBLE: "\u001B[8m"
+  val RESET: "\u001B[0m"
+  val REVERSE: "\u001B[7m"
+  val UNDERLINE: "\u001B[4m"
+
+  val RED: "\u001B[31m"
+  val RED_BG: "\u001B[41m"
+  val GREEN: "\u001B[32m"
+  val GREEN_BG: "\u001B[42m"
+  val YELLOW: "\u001B[33m"
+  val YELLOW_BG: "\u001B[43m"
+  val BLUE: "\u001B[34m"
+  val BLUE_BG: "\u001B[44m"
+  val MAGENTA: "\u001B[35m"
+  val MAGENTA_BG: "\u001B[45m"
+  val CYAN: "\u001B[36m"
+  val CYAN_BG: "\u001B[46m"
+  val WHITE: "\u001B[37m"
+  val WHITE_BG: "\u001B[47m"
+}

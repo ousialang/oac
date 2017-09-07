@@ -1,0 +1,49 @@
+astronomical unit:
+    quantity: length
+    symbol: au
+    value: 149597870700
+    system: IAU
+
+earth mass:
+    quantity: mass
+    symbol: M_earth
+    value: 5.9722E+27
+    system: IAU
+
+jupiter mass:
+    quantity: mass
+    symbol: M_jupiter
+    value: 1.898E+30
+    system: IAU
+
+"light-year":
+    quantity: length
+    symbol: ly
+    value: 9460730472580800
+    system: IAU
+
+lunar mass:
+    quantity: mass
+    symbol: M_moon
+    value: 7.342E+25
+    system: IAU
+
+parsec:
+    quantity: length
+    symbol: pc
+    value: >
+        import math
+        648000 / math.pi
+    system: IAU
+
+solar mass:
+    quantity: mass
+    symbol: M_sun
+    value: 1.98892E+33
+    system: IAU
+
+speed of light in vacuum:
+    quantity: speed
+    symbol: c
+    value: 299792458
+    system: IAU

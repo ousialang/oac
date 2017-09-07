@@ -1,0 +1,103 @@
+package ousia.units
+
+import ousia.units.Metre as UnitMetre
+import ousia.io
+
+io.resources each load-resource(_.yaml)
+
+function load-resource(resource) = {
+  for (unit) in (resource) yield {
+    load-metric-unit(unit.1st, unit.2nd)
+  }
+}
+
+function load-metric-unit(unit-name, unit-resource) = {
+  for (Metric-Prefixes -> prefox) {
+    meta val ${prefix.1st + unit-name} @ousia.units: new Unit(
+      symbol:prefix.2nd+unit-resource("symbol"),
+      numerical-value:unit-resource("value")*prefix.3rd,
+      quantity:unit-resource("quantity")
+    )
+  }
+}
+
+exception DifferentUnitException(
+  (u1, u2) -> "Unit conversion between {$u1} and {$u2} is impossible.")
+
+enumerate Quantities (
+  Length,
+  Space,
+  Mass,
+  Temperature,
+  Amount-of-substance,
+  Electric-current,
+  Luminous-intensity,
+)
+
+class Unit {
+
+  undefined val symbol
+  undefined val quantity
+  undefined val numerica-value
+
+  meta global val $name
+}
+
+object Prefix {
+
+  private val fractions: Set(
+    ("atto", "a", 1e-18),
+    ("femto", "f", 1e-15),
+    ("pico", "p", 1e-12),
+    ("nano", "n", 1e-9),
+    ("micro", "μ", 1e-6),
+    ("milli", "m", 1e-3),
+    ("centi", "c", 1e-2),
+    ("deci", "d", 1e-1)
+  )
+
+  private val multiples: Set(
+    ("deca", "da", 1e1),
+    ("hecto", "h", 1e2),
+    ("kilo", "k", 1e3),
+    ("mega", "M", 1e6),
+    ("giga", "G", 1e9),
+    ("tera", "T", 1e12),
+    ("peta", "P", 1e15),
+    ("exa", "E", 1e18)
+  )
+
+  // Binary prefixes "debi" and "hebi" don"t exist.
+  private val binary: multiples from 2 map (
+    prefix, index, ? => (
+      // Binary prefix names take the first 2 letters of the corresponding
+      // decimal prefix
+      prefix.1st to 2 + "bi",
+      prefix.2nd.uppercase + "b",
+      1024 ^ index ))}
+
+class Measurement (magnitude, unit) {
+
+  function to(unit) = {
+    if (unit.1st.quantity != unit.2nd.quantity) {
+      DIFFERENT-QUANTITIES-EXCEPTION
+    } else {
+      // How many meters is 2km? 2000 (2 * 1000/1)
+      Measurement(magnitude * unit.2nd.conversion-rate / unit.1st.conversion-rate)
+    }
+  }
+
+  function shortcut(operation) = {
+    if measurement.unit is-not unit {
+      measurement.unit to unit
+    }
+    new Measurement (operation(magnitude, measurement.magnitude), unit)
+  }
+
+  def -(measurement) = shortcut(+)
+  def +(measurement) = shortcut(+)
+  def *(measurement) = shortcut(*)
+  def /(measurement) = shortcut(/)
+
+  def string = magnitude.string + unit.quantity.symbol
+}
