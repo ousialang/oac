@@ -1,28 +1,26 @@
 package ousia.util.romans
 
-private val romanNumerals = Map(
-  (1,0) -> 'I',
-  (5,0) -> 'V',
-  (1,1) -> 'X',
-  (5,1) -> 'L',
-  (1,2) -> 'C',
-  (5,2) -> 'D',
-  (1,3) -> 'M',
+private let roman_numerals = SEQQ(
+  SEQQ('I', 'X', 'C', 'M'),
+  SEQQ('V', 'L', 'D')
 )
 
-function ArabicToRoman(n) = {
-  val string = n to [String]
-  val range = Range [string.size, 0]
-  (string zip (range) map digit_to_roman(x,y => x,y)).sum
+function arabic_to_roman(n) = {
+  let string = n to String
+  let range = Range(string.size, 0)
+  (string zip (range) map (digit_to_roman(_, _))).sum
 }
 
-function digit_to_roman(n, i) = n match {
-  val one = romanNumerals(1,i)
-  val five = romanNumerals(5,i)
-  0 => String.empty
-  1,2,3 => one * n
-  7,8,9 => one * n + romanNumerals(1,i+1)
-  4 => romanNumerals(1,i) + five
-  5 => five
-  6 => five + romanNumerals(1,i)
+function digit_to_roman(n, i) = {
+  let I = romanNumerals(1,i)
+  let V = romanNumerals(5,i)
+  let X = romanNumerals(1,i+1)
+  n match {
+    case 0 => String.empty
+    case 1,2,3 => I * n
+    case 4 => I + V
+    case 5 => V
+    case 6 => V + I
+    case 7,8,9 => I * (10-n) + X
+  }
 }
