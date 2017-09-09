@@ -1,8 +1,7 @@
-package io.ousia
-package parser
+package ousia.parser
 
-import io.ousia.util.Parsing
-import io.ousia.exceptions.SyntaxException
+import ousia.util.Parsing
+import ousia.exceptions.SyntaxException
 
 object Parser {
 

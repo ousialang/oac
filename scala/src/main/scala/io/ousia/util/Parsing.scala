@@ -1,7 +1,6 @@
-package io.ousia
-package util
+package ousia.util
 
-import io.ousia.parser.Tokens
+import ousia.parser.Tokens
 
 object Parsing {
 
