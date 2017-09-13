@@ -1,0 +1,3 @@
+package ousia.date
+
+abstract class Date

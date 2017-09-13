@@ -1,0 +1,3 @@
+package units
+
+val Gravity = Unit[Acceleration](9.80665, "g")

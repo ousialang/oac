@@ -1,0 +1,10 @@
+- capnp
+- CBOR
+- CSV
+- flatbuf
+- INI
+- JSON
+- protobuf
+- SBE
+- XML
+- YAML

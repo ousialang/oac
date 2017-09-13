@@ -5,12 +5,6 @@ import ousia.io
 
 io.resources each load-resource(_.yaml)
 
-function load-resource(resource) = {
-  for (unit) in (resource) yield {
-    load-metric-unit(unit.1st, unit.2nd)
-  }
-}
-
 function load-metric-unit(unit-name, unit-resource) = {
   for (Metric-Prefixes -> prefox) {
     meta val ${prefix.1st + unit-name} @ousia.units: new Unit(

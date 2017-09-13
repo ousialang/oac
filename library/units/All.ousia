@@ -1,0 +1,5 @@
+package units.ousia
+
+object AllUnits {
+  val astronomical_unit = Unit()
+}

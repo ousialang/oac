@@ -1,0 +1,15 @@
+package ousia.units
+
+class DigitalUnit extends MetricUnit {
+
+  undefined val amount
+
+  function kibi = DigitalUnit(1024*amount, "Ki" + symbol)
+  function mebi = DigitalUnit(1024*amount, "Mi" + symbol)
+  function gibi = DigitalUnit(1024*amount, "Gi" + symbol)
+  function tebi = DigitalUnit(1024*amount, "Ti" + symbol)
+  function pebi = DigitalUnit(1024*amount, "Pi" + symbol)
+  function exbi = DigitalUnit(1024*amount, "Ei" + symbol)
+  function zebi = DigitalUnit(1024*amount, "Zi" + symbol)
+  function yobi = DigitalUnit(1024*amount, "Yi" + symbol)
+}

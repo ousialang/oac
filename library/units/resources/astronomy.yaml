@@ -32,7 +32,6 @@ parsec:
     quantity: length
     symbol: pc
     value: >
-        import math
         648000 / math.pi
     system: IAU
 

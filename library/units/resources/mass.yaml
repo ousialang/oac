@@ -10,7 +10,7 @@ dalton:
 
 grain:
     quantity: Mass
-    symbol: gr 
+    symbol: gr
     value: 64798.91
 
 gram:
