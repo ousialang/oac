@@ -9,8 +9,6 @@ val Bar = MetricUnit[Pressure](100'000, "bar")
 val Barye = Unit[Pressure](.1, "Ba")
 val MillimitreOfMercury = Unit[Pressure](133.322387415, "mmHg")
 val Atmosphere = Unit[Pressure](101325, "atm")
-val Torr = Unit[Pressure](atmosphere / 760, "torr")
+val torr = Unit[Pressure](atmosphere / 760, "torr")
 
-
-
-val Pound_per_square_inch = Unit[Pressure]((pound * gravity / inch^2).numerical, "psi")
+val pound_per_square_inch = Unit[Pressure]((pound * gravity / inch^2).numerical, "psi")

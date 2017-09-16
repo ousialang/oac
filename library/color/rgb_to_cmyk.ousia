@@ -1,21 +1,19 @@
-package ousia.color
+package neysofu.color
 
 class RGB {
 
-  undefined val R
-  undefined val G
-  undefined val B
+  undefined val R, G, B
 
-  function to CMYK = {
-    val (r,g,b) = (r,g,b) map (d => d / 255)
+  function as CMYK = {
+    val r,g,b = (R, G, B) map (x => x / 255)
     val K = 1 - (r,g,b).max
     val C = (1-r-k) / (1-k)
     val M = (1-g-k) / (1-k)
     val Y = (1-b-k) / (1-k)
-    CMYK(C,M,Y,K)
+    cmyk (C,M,Y,K)
   }
 
-  function to HSL = {
+  function to_HSL = {
     val (r,g,b) = (R,G,B) map (d => d / 255)
     val min = (r,g,b).min
     val max = (r,g,b).max

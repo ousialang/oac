@@ -1,22 +1,28 @@
-package ousia.units.mass
+package ousia.units
 
-val gram = MetricUnit[Mass]("gram", 1, "g")
-val carat = Unit[Mass]("carat", .2, "ct")
-val grain = Unit[Mass]("grain", 64798.91, "gr")
-val tonne = Unit[Mass]("tonne", 1000000)
+(3 * kilogram) to [ousia.units.tonne]
+
+val gram = Unit[Mass]("gram", 1, "g")
+val carat = Unit[Mass](.2, "ct")
+val grain = Unit[Mass](64798.91, "gr")
+val tonne = Unit[Mass](1'000'000, "t")
+
 // See https://en.wikipedia.org/wiki/Ounce#Currently_in_use
-val ounce = Unit[Mass]("ounce", 28.349523125, "oz")
-val troy_ounce = Unit[Mass]("troy ounce", 31.1034768, "ozt")
+val ounce = Unit[Mass](28.349523125, "oz") {
+  tag troy = Unit[Mass](31.1034768, "ozt")
+}
 
 // As defined by the international yard and pound agreement of 1959
 val pound = Unit[Mass](453.59237, "lb")
 val grain = Unit[Mass](pound / 7000, "gr")
 val dram = Unit[mass](pound / 256, "dr")
 val ounce = Unit[Mass](pound / 16, "oz")
-val stone = Unit[Mass](pound * 14, "st")
-val hundredweight = Unit[Mass](pound * 100, "cwt")
-val hundredweight.long = Unit[Mass](pound * 112, "cwt")
+val stone = Unit[Mass](14 * pound, "st")
+
+val hundredweight = Unit[Mass](pound * 100, "cwt") {
+  tag long = Uni[Mass](pound * 112, "cwt")
+}
+
+implicit object extends hundredweight {tag long = Uni[Mass](pound * 112, "cwt")}
 
 val ton = Unit[Mass]()
-val short_hundredweight = hundredweight
-val long_hundredweight = Unit[Mass](pound * 112)
