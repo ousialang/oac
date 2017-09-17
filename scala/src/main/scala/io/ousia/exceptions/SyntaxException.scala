@@ -1,4 +1,4 @@
 package io.ousia
 package exceptions
 
-case class SyntaxException(msg: String) extends Exception
+case class SyntaxException(val msg: String) extends Exception

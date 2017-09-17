@@ -1,4 +1,4 @@
-package io.ousia
+package ousia
 
 object Application {
 
