@@ -9,4 +9,4 @@ object Example_Application {
 
 
 // Maps
-Map(1->2, 2->3, "something" -> "that")
+(1: 2, 2: 3, "something": "that")
