@@ -1,0 +1,6 @@
+package ousia.data
+
+trait Format {
+  undefined function apply(string)
+  undefined function dump(object)
+}

@@ -1,0 +1,17 @@
+package units
+
+val gill = Unit[Volume](pint/20, "gi")
+val pint = Unit[Volume](???, "pt")
+val quart = Unit[Volume](pint*2, "qt")
+val gallon = Unit[Volume](pint*8, "gal")
+
+val gill.imperial = Unit[Volume](pint.imperial / 20, "gi")
+val pint.imperial = Unit[Volume](???.imperial, "pt")
+val quart.imperial = Unit[Volume](pint.imperial * 2, "qt")
+val gallon.imperial = Unit[Volume](pint.imperial * 8, "gal")
+
+val gill.dry = Unit[Volume](pint.dry / 20, "gi")
+val pint.dry = Unit[Volume](???.dry, "pt")
+val quart.dry = Unit[Volume](pint.dry * 2, "qt")
+val gallon.dry = Unit[Volume](pint.dry * 8, "gal")
+

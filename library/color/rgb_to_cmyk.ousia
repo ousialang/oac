@@ -1,0 +1,29 @@
+package neysofu.color
+
+class RGB {
+
+  undefined val R, G, B
+
+  function as CMYK = {
+    val r,g,b = (R, G, B) map (x => x / 255)
+    val K = 1 - (r,g,b).max
+    val C = (1-r-k) / (1-k)
+    val M = (1-g-k) / (1-k)
+    val Y = (1-b-k) / (1-k)
+    cmyk (C,M,Y,K)
+  }
+
+  function to_HSL = {
+    val (r,g,b) = (R,G,B) map (d => d / 255)
+    val min = (r,g,b).min
+    val max = (r,g,b).max
+    set (h,s,l) = (max + min) / 2
+    if (max == min) then {
+      (h, s) = 0
+    } else {
+      val diff = max - min
+    }
+  }
+
+  function gray = R*0.299 + G*0.587 + B*0.114
+}

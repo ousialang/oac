@@ -1,0 +1,3 @@
+package ousia.automaton
+
+(2, 3, "ol", "a") map (x => x > 2)

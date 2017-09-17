@@ -1,0 +1,3 @@
+package units
+
+val Candela = Unit[LuminousIntensity](1, "cd")

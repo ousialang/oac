@@ -1,0 +1,18 @@
+package ousia.chess
+
+class Board {
+
+  enum Players {White, Black}
+
+  val turn: White
+}
+
+def moves(board) = {
+  board.pieces
+}
+
+class King extends Piece {
+  var can_castle = false
+
+
+}

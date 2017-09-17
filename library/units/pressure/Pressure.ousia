@@ -1,0 +1,14 @@
+package units
+
+import units.pound
+import units.inch
+import units.gravity
+
+val Pascal = MetricUnit[Pressure](1, "Pa")
+val Bar = MetricUnit[Pressure](100'000, "bar")
+val Barye = Unit[Pressure](.1, "Ba")
+val MillimitreOfMercury = Unit[Pressure](133.322387415, "mmHg")
+val Atmosphere = Unit[Pressure](101325, "atm")
+val torr = Unit[Pressure](atmosphere / 760, "torr")
+
+val pound_per_square_inch = Unit[Pressure]((pound * gravity / inch^2).numerical, "psi")
