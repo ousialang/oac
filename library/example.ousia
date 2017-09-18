@@ -10,3 +10,5 @@ object Example_Application {
 
 // Maps
 (1: 2, 2: 3, "something": "that")
+
+2 in map // true
