@@ -13,3 +13,9 @@ object Example_Application {
 
 2 in map // true
 map contains 2 // true
+
+if (condition) then {
+  do_something()
+} else {
+  do_something_else()
+}
