@@ -1,8 +1,7 @@
-package ousia.parser
+package org.ousia.compiler
 
-import ousia.util.Parsing
-import ousia.exceptions.SyntaxException
-
+import org.ousia.exceptions.SyntaxException
+/*
 object Parser {
 
   def apply(tokens: Seq[Tokens.Token]): Seq[Statements.Statement] = {
@@ -65,4 +64,4 @@ object Parser {
       }
     }
   }
-}
+}*/

@@ -3,10 +3,7 @@ package ousia.example
 object Example_Application {
 
   val animals = (1,2,3) map (x => x+1) where (x => x>2)
-
-  def (a,b,c) = a*b*c
 }
-
 
 // Maps
 (1: 2, 2: 3, "something": "that")

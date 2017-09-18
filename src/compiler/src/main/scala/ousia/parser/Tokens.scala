@@ -1,4 +1,5 @@
-package ousia.parser
+package org.ousia
+package parser
 
 object Tokens {
   trait Token
