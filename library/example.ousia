@@ -23,3 +23,7 @@ if (condition) then {
 while (condition) do {
   print("hello")
 }
+
+do {
+  print("hello")
+} while (condition)
