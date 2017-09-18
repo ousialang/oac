@@ -19,3 +19,7 @@ if (condition) then {
 } else {
   do_something_else()
 }
+
+while (condition) do {
+  print("hello")
+}
