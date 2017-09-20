@@ -1,26 +1,26 @@
-package ousia.example
-
 object Example_Application {
 
-  val animals = (1,2,3) map (x => x+1) where (x => x>2)
+  System println (1,2,3) map (x => x+1) where (x => x>2) to [String];
 }
 
 // Maps
-(1: 2, 2: 3, "something": "that")
+(1: 2, 2: 3, "something": "that");
 
-2 in map // true
-map contains 2 // true
+2 in map; // true
+map contains 2; // true
 
 if (condition) then {
-  do_something()
+  do_something();
 } else {
-  do_something_else()
+  do_something_else();
 }
 
 while (condition) do {
-  print("hello")
+  "hello" writeln;
 }
 
 do {
-  print("hello")
-} while (condition)
+  "hello" print;
+} while (condition);
+
+2 √ 9; // 3
