@@ -5,12 +5,13 @@ import exceptions.SyntaxException
 import fastparse.all._
 
 object Lexer {
-/*
-  def apply(src: String): Seq[Seq[String]] = {
 
-  }*/
+  def apply(src: String) {
+    println(ousia.parse(src))
+  }
 
-  val word = P((CharIn('a' to 'z') | CharIn('A' to 'Z') | "_").rep(1))
+  val ousia = P((word ~ " ".?).rep(1))
+  val word = P((CharIn('a' to 'z') | CharIn('A' to 'Z') | "_").rep(1).!)
   val symbol = P(CharIn("\\|/!%&?^*+@#.,-<>≤≥≠~‹›").rep(1) | "==")
 
   val break = P(";" | "\n")

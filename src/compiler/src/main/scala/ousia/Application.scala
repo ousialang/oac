@@ -1,18 +1,24 @@
 package org.ousia
 
+import parser.Lexer
+
 object Application {
 
   def main(args: Array[String]): Unit = {
     if (args.size == 0) {
       println(usage)
-    } else {
-      val command = commands(args(0))
-      command match {
-        case build => None
+    // Check if the given command name is known
+    } else if (commands contains args(0)) {
+      commands(args(0)) match {
+        case build => Lexer("hello word")
       }
+    } else {
+      println(wrongCommand(args(0)))
     }
   }
 
+  // Scala bug: string interpolation doesn't work with escapes
+  val wrongCommand = (s: String) => "\"" + s + "\" is not an Ousia command."
   val usage = "Usage: ousia ‹action› ‹options›"
 
   val build: Command = Command("build", "Builds and compiles a project.", 0)
