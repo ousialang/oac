@@ -1,10 +1,10 @@
-packge units
+package ousia.units
 
-val Kelvin = Unit[Temperature](1, "K")
-val Fahrenheit = Unit[Temperature](1.8, "°F", offset: -459.67)
-val Celsius = Unit[Temperature](1, "°C", offset: -273.15)
-val Rankine = Unit[Temperature](1.8, "°R")
-val Delisle = Unit[Temperature](-1.5, "°D", offset: 559.725)
-val Newton = Unit[Temperature](.33, "°N", offset: -90.1395)
-val Réaumur = Unit[Temperature](.8, "°Ré", offset: -218.52)
-val Rømer = Unit[Temperature](.525, "°Rø", offset: -135.90375)
+Kelvin = Unit[Temperature](1, "K")
+Fahrenheit = Unit[Temperature](1.8, "°F", offset: -459.67)
+Celsius = Unit[Temperature](1, "°C", offset: -273.15)
+Rankine = Unit[Temperature](1.8, "°R")
+Delisle = Unit[Temperature](-1.5, "°D", offset: 559.725)
+Newton = Unit[Temperature](.33, "°N", offset: -90.1395)
+Réaumur = Unit[Temperature](.8, "°Ré", offset: -218.52)
+Rømer = Unit[Temperature](.525, "°Rø", offset: -135.90375)

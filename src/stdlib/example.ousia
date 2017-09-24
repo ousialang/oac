@@ -9,6 +9,12 @@ object Example_Application {
 2 in map; // true
 map contains 2; // true
 
+(1,2,3,4,5) map (x => x*2)
+
+// range
+1 to 10 by 2
+10 to 1 by -2
+
 if (condition) then {
   do_something();
 } else {
@@ -16,11 +22,11 @@ if (condition) then {
 }
 
 while (condition) do {
-  "hello" writeln;
+  System.write "hello"
 }
 
 do {
-  "hello" print;
+  "hello" print
 } while (condition);
 
 2 √ 9; // 3
