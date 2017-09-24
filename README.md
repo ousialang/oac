@@ -4,7 +4,7 @@
     alt="logo">
   </img>
 </p>
-</p align="center">
+<p align="center">
   <a href="https://github.com/neysofu/ousia/blob/master/LICENSE.txt">
     <img
       src="https://img.shields.io/badge/license-BSD-blue.svg"
