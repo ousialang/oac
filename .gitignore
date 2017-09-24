@@ -7,7 +7,6 @@ target/
 
 # SBT
 # ===
-
 lib_managed/
 src_managed/
 project/boot/
@@ -18,7 +17,6 @@ project/plugins/project/
 
 # Vim
 # ===
-
 Session.vim
 .netrwhist
 # swap files
@@ -29,6 +27,5 @@ Session.vim
 
 # Linux
 # =====
-
 .Trash-*
 .nfs*
