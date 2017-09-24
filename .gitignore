@@ -1,4 +1,34 @@
+*~
 .DS_Store
+dist/
 target/
 *.class
 *.log
+
+# SBT
+# ===
+
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+.history
+.cache
+.lib/
+
+# Vim
+# ===
+
+Session.vim
+.netrwhist
+# swap files
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-v][a-z]
+[._]sw[a-p]
+
+# Linux
+# =====
+
+.Trash-*
+.nfs*
