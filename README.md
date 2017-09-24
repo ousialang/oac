@@ -1,8 +1,5 @@
 <p align="center">
-  <img
-    src="https://raw.githubusercontent.com/neysofu/ousia/master/logo.svg"
-    alt="logo">
-  </img>
+  ![logo](https://raw.githubusercontent.com/neysofu/ousia/master/logo.svg)
   <a href="https://github.com/neysofu/ousia/blob/master/LICENSE.txt">
     <img
       src="https://img.shields.io/badge/license-BSD-blue.svg"
