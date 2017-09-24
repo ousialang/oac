@@ -1,6 +1,7 @@
-package org.ousia.compiler
+package org.ousia
+package parser
 
-import org.ousia.exceptions.SyntaxException
+import exceptions.SyntaxException
 /*
 object Parser {
 

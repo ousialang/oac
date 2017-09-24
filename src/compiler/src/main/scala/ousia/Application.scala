@@ -10,7 +10,7 @@ object Application {
     // Check if the given command name is known
     } else if (commands contains args(0)) {
       commands(args(0)) match {
-        case build => Lexer("hello word")
+        case build => println(Lexer("hello word 0xEFFE 123.987 ++++"))
       }
     } else {
       println(wrongCommand(args(0)))
