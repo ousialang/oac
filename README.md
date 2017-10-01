@@ -19,7 +19,7 @@
   </a>
   <a href="https://gitter.im/ousialang/Lobby">
     <img
-      src="https://badges.gitter.im/ousialang/Lobby.svg"
+      src="https://badges.gitter.im/ousialang/ousia.svg"
       alt="Gitter chat">
     </img>
   </a>
