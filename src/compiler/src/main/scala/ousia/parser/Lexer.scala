@@ -18,7 +18,7 @@ object Lexer {
   val word: P[Identifier] = P(CharIn('a' to 'z', 'A' to 'Z', "_").rep(1).!.map(Identifier(_)))
   val operator: P[Operator] = P(CharIn("\\|/!%&?^*+@#.,-√<>≤≥≠~‹›=").rep(1).!.map(Operator(_)))
 
-  val token: P[Token] = P((
+  val token: P[Token] = P(
     word |
     operator |
     string |
@@ -26,7 +26,7 @@ object Lexer {
     parentheses |
     brackets |
     braces
-  ))
+  )
 
   val whitespace = P(line | space)
   // Semicolon, LF, and CRLF
