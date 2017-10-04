@@ -1,6 +1,6 @@
 *~
 .DS_Store
-.hignore
+.hgignore
 dist/
 target/
 *.class
