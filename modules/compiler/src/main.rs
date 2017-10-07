@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate clap;
+extern crate colored;
 
+use colored::*;
 use std::io::{stdin, stdout, Write};
 
 mod reader;
