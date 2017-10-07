@@ -1,8 +1,10 @@
-// Function calls are executed by message passing with infix syntax.
-// Functions with one arguments may use the @ right-associative operator to
-// avoid excessive parentheses nesting.
+# Function calls are executed by message passing with infix syntax.
+# Functions with one arguments may use the @ right-associative operator to
+# avoid excessive parentheses nesting.
 
 "hello" head, tail, first, last
+
+native.address @ native.pointer @ "Hello, world!" fixed_length
 
 println @ "Hello, world!"
 condition ? ("Success", "Failure")
@@ -35,7 +37,7 @@ function addVector (a,b) = Vectorize("float32", "float32") {2+2}
 
 arr = (true)
 
-// Yoda yoda operator
+# Yoda yoda operator
 
 if (condition) {...} else {...}
 
