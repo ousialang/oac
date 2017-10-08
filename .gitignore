@@ -6,15 +6,11 @@ target/
 *.class
 *.log
 
-# SBT
-# ===
-lib_managed/
-src_managed/
-project/boot/
-project/plugins/project/
-.history
-.cache
-.lib/
+# Cargo
+# =====
+/target/
+Cargo.lock
+**/*.rs.bk
 
 # Vim
 # ===
