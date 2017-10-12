@@ -1,25 +1,15 @@
+use errors;
+
 /// Tokenize a string according to Ousia's grammar.
-pub fn tokenize(source: &str) -> Result<Vec<Token>, (u64, &str)> {
+pub fn tokenize(source: &str) -> Result<Vec<Token>, errors::Message> {
     let mut tokens = Vec::new();
     if source.is_empty() {
         return Ok(tokens);
     }
-    let source_chars = &mut source.chars();
+    let mut source_chars = source.chars();
     let first_char = source_chars.nth(0).unwrap();
     // We already populate the token with the info of the first char.
-    let current_token = &mut Token {
-        lexeme: first_char.to_string(),
-        location: 0,
-        data: fetch_token_entity(first_char),
-    };
-    // If we know the current token is over, be make this true so the main loop
-    // knows to create a new Token with updated info.
-    let mut flag_is_new_token = false;
-    // Various flags to keep track of tokenization. They all refer to the last
-    // seen char.
-    let mut flag_is_zero = false;
-    let mut flag_is_period = false;
-    let mut flag_is_backslash = false;
+    tokens.push(fetch_init_token(first_char, 0));
     // To keep track of opened brackets, so we catch non-matching brackets
     // errors early into the parsing process.
     let mut brackets = String::new();
@@ -28,53 +18,26 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, (u64, &str)> {
     //   1. Instantiate a new token if flag_is_new_token
     //   2. Updating the old one otherwise
     for (index, c) in source_chars.enumerate() {
-        let new_data = fetch_token_entity(c);
-        if flag_is_new_token || new_data != current_token.data {
-            let current_token = &mut Token {
-                lexeme: c.to_string(),
-                location: index,
-                data: new_data,
-            };
-            flag_is_new_token = false;
-            continue;
-        } else {
-            current_token.lexeme.push(c);
-            match current_token.data {
-                TokenEntity::Literal {ref mut string} => {
-                    if c == '"' {
-                        if flag_is_backslash {
-                            string.push('\"');
-                        } else {
-                            flag_is_new_token = true;
-                        }
-                    } else {
-                        string.push(c);
-                    }
-                }
-                // TODO
-                TokenEntity::Number {..} |
-                TokenEntity::Word |
-                TokenEntity::Symbol |
-                TokenEntity::Other |
-                TokenEntity::Whitespace => {}
-                TokenEntity::Bracket => {
-                    let current_token_copy = (*current_token).clone();
-                    tokens.push(current_token_copy);
-                    tokens.push(Token {
-                        lexeme: c.to_string(),
-                        location: index,
-                        data: TokenEntity::Bracket,
-                    });
-                }
+        let mut token = &mut tokens.pop().unwrap();
+        let token_clone = token.clone();
+        let new_token = update_token(token, c);
+        match new_token {
+            Err(None) => {
+                tokens.push(token_clone);
+                tokens.push(fetch_init_token(c, 1+index as u64));
             }
+            Ok(t) => {
+                tokens.push((*t).clone());
+            }
+            _ => {}
         }
     }
-    println!("{:?}", tokens);
+    println!("  {:?}", tokens);
     Ok(tokens)
 }
 
 #[derive(PartialEq, Clone, Debug)]
-enum TokenEntity {
+enum TokenData {
     Literal {string: String},
     Number {base: u8, integer_digits: String, decimal_digits: String},
     Word,
@@ -83,31 +46,101 @@ enum TokenEntity {
     Whitespace,
     Other,
 }
+
 #[derive(Clone, Debug)]
 pub struct Token {
     lexeme: String,
-    location: usize, // The index in the source string.
-    data: TokenEntity,
+    location: u64, // The index in the source string.
+    data: TokenData,
 }
 
-fn fetch_token_entity(c: char) -> TokenEntity {
-    // In case the token is longer than one single character, its type
-    // (entity) is always determined by its first character.
-    if "{}[]()".contains(c) {
-        return TokenEntity::Bracket;
-    } else if c.is_alphabetic() {
-        return TokenEntity::Word;
-    } else if "/+*-!|%&=?^@#.:,;".contains(c) {
-        return TokenEntity::Symbol;
+fn fetch_init_token(c: char, location: u64) -> Token {
+    let data: TokenData;
+    if is_bracket(c) {
+        data = TokenData::Bracket;
+    } else if is_letter(c) {
+        data = TokenData::Word;
+    } else if is_symbol(c) {
+        data = TokenData::Symbol;
     } else if c == '"' {
-        return TokenEntity::Literal {string: String::new()};
+        data = TokenData::Literal {string: String::new()};
     } else if c == '0' {
         // We put base 0 waiting for the real base to be parsed int he next
         // character.
-        return TokenEntity::Number {base: 0, integer_digits: String::new(), decimal_digits: String::new()};
+        data = TokenData::Number {base: 0, integer_digits: String::new(), decimal_digits: String::new()};
     } else if "123456789".contains(c) {
-        return TokenEntity::Number {base: 10, integer_digits: c.to_string(), decimal_digits: String::new()};
+        data = TokenData::Number {base: 10, integer_digits: c.to_string(), decimal_digits: String::new()};
+    } else if is_whitespace(c) {
+        data = TokenData::Whitespace;
     } else {
-        return TokenEntity::Other;
+        data = TokenData::Other;
     }
+    Token {
+        lexeme: c.to_string(),
+        location: location,
+        data: data,
+    }
+}
+
+fn is_symbol(c: char) -> bool {
+    "/+*-!|%&=?^@#.:,;".contains(c)
+}
+fn is_letter(c: char) -> bool {
+    c.is_alphabetic()
+}
+fn is_bracket(c: char) -> bool {
+    "{[()]}".contains(c)
+}
+fn is_whitespace(c: char) -> bool {
+    "\n ".contains(c)
+}
+
+fn update_token(t: &mut Token, c: char) -> Result<&mut Token, Option<errors::Message>> {
+    match t.data {
+        TokenData::Literal {ref mut string} => {
+            if t.lexeme.pop().unwrap() == '\\' || c != '"' {
+                t.lexeme.push(c);
+            } else {
+                return Err(None);
+            }
+        }
+        TokenData::Number {
+            ref mut base,
+            ref mut integer_digits,
+            ref mut decimal_digits
+        } => { /*
+            if t.lexeme.len() == 1 && t.pop() == '0' {
+                match c {
+                    'b' => { t.data.base = 2; }
+                    'o' => { t.data.base = 8; }
+                    'x' => { t.data.base = 16; }
+                    _ => { return Err("Expected"); }
+                }
+            }*/
+        }
+        TokenData::Word => {
+            if is_letter(c) {
+                t.lexeme.push(c);
+            } else {
+                return Err(None);
+            }
+        }
+        TokenData::Symbol => {
+            if is_symbol(c) {
+                t.lexeme.push(c);
+            } else {
+                return Err(None);
+            }
+        }
+        TokenData::Whitespace => {
+            if is_whitespace(c) {
+                t.lexeme.push(c);
+            } else {
+                return Err(None);
+            }
+        }
+        TokenData::Other |
+        TokenData::Bracket => { return Err(None); }
+    }
+    Ok(t)
 }
