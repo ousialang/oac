@@ -10,13 +10,6 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, errors::Message> {
     let first_char = source_chars.nth(0).unwrap();
     // We already populate the token with the info of the first char.
     tokens.push(fetch_init_token(first_char, 0));
-    // To keep track of opened brackets, so we catch non-matching brackets
-    // errors early into the parsing process.
-    let mut brackets = String::new();
-    let mut brackets_len = 0u16;
-    // Main loop does two things:
-    //   1. Instantiate a new token if flag_is_new_token
-    //   2. Updating the old one otherwise
     for (index, c) in source_chars.enumerate() {
         let mut token = &mut tokens.pop().unwrap();
         let token_clone = token.clone();
@@ -105,7 +98,7 @@ fn update_token(t: &mut Token, c: char) -> Result<&mut Token, Option<errors::Mes
             ref mut base,
             ref mut integer_digits,
             ref mut decimal_digits
-        } => { /*
+        } => {
             if t.lexeme.len() == 1 && t.pop() == '0' {
                 match c {
                     'b' => { t.data.base = 2; }
@@ -113,7 +106,7 @@ fn update_token(t: &mut Token, c: char) -> Result<&mut Token, Option<errors::Mes
                     'x' => { t.data.base = 16; }
                     _ => { return Err("Expected"); }
                 }
-            }*/
+            }
         }
         TokenData::Word => { condition = is_letter(c); }
         TokenData::Symbol => { condition = is_symbol(c); }
