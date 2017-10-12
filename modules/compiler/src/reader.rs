@@ -96,13 +96,10 @@ fn is_whitespace(c: char) -> bool {
 }
 
 fn update_token(t: &mut Token, c: char) -> Result<&mut Token, Option<errors::Message>> {
+    let mut condition = false;
     match t.data {
         TokenData::Literal {ref mut string} => {
-            if t.lexeme.pop().unwrap() == '\\' || c != '"' {
-                t.lexeme.push(c);
-            } else {
-                return Err(None);
-            }
+            condition = t.lexeme.pop().unwrap() == '\\' || c != '"'
         }
         TokenData::Number {
             ref mut base,
@@ -118,29 +115,16 @@ fn update_token(t: &mut Token, c: char) -> Result<&mut Token, Option<errors::Mes
                 }
             }*/
         }
-        TokenData::Word => {
-            if is_letter(c) {
-                t.lexeme.push(c);
-            } else {
-                return Err(None);
-            }
-        }
-        TokenData::Symbol => {
-            if is_symbol(c) {
-                t.lexeme.push(c);
-            } else {
-                return Err(None);
-            }
-        }
-        TokenData::Whitespace => {
-            if is_whitespace(c) {
-                t.lexeme.push(c);
-            } else {
-                return Err(None);
-            }
-        }
+        TokenData::Word => { condition = is_letter(c); }
+        TokenData::Symbol => { condition = is_symbol(c); }
+        TokenData::Whitespace => { condition = is_whitespace(c); }
         TokenData::Other |
         TokenData::Bracket => { return Err(None); }
+    }
+    if condition {
+        t.lexeme.push(c);
+    } else {
+        return Err(None);
     }
     Ok(t)
 }
