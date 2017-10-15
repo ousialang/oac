@@ -1,26 +1,40 @@
-//#[macro_use]
-//extern crate colored;
+#[macro_use]
+extern crate colored;
 
-//use colored::*;
+use colored::Colorize;
 use std::collections::HashMap;
 use std::env;
 use std::io::{stdin, stdout, Write};
 
-mod reader;
-mod errors;
+mod feedback;
+mod scanner;
 
 fn main() {
     let mut args = env::args_os();
     args.next();
     match args.next() {
-        None => { repl(); }
-        Some(os_string) => match os_string.into_string() {
-            Err(_) => { help(); }
-            Ok(s) => match s.to_lowercase().as_ref() {
-                "build" => { build(); }
-                "help" => { help(); }
-                "repl" => { repl(); }
-                _ => {}
+        None => {
+            repl();
+        }
+        Some(os_string) => {
+            match os_string.into_string() {
+                Err(_) => {
+                    help();
+                }
+                Ok(s) => {
+                    match s.to_lowercase().as_ref() {
+                        "build" => {
+                            build();
+                        }
+                        "help" => {
+                            help();
+                        }
+                        "repl" => {
+                            repl();
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -44,7 +58,7 @@ fn fetch_args(args: Vec<&str>) -> Option<HashMap<String, String>> {
                 //hash_args.insert(letter.to_string(), String::new());
             }
         }*/
-    };
+    }
     Some(hash_args)
 }
 
@@ -53,11 +67,21 @@ pub fn build() {
 }
 
 pub fn help() {
-    println!("The Ousia compiler");
+    println!(
+        "The Ousia programming language platform
+
+Usage:
+    ousia ‹command› ‹arguments?›
+
+Available Ousia commands:
+    build    Build OUSIA code
+    help     Help
+    repl     The Ousia REPL
+    run      Runs some Ousia code"
+    );
 }
 
 fn repl() {
-    println!("The Ousia REPL");
     loop {
         let mut s = String::new();
         print!("ousia› ");
@@ -72,7 +96,7 @@ fn repl() {
             s.pop();
         }
         println!("  {}", s);
-        reader::tokenize(&s);
+        println!("{:?}", scanner::scan(&s));
     }
 
 }

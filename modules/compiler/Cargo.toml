@@ -6,4 +6,4 @@ authors = ["Filippo Costa <filippocosta.italy@gmail.com>"]
 
 [dependencies]
 colored = "1.5"
-clap = "2"
+indextree = "1.0.1"
