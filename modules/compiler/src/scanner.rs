@@ -26,7 +26,7 @@ pub fn scan(source: &str) -> Result<Vec<Token>, Feedback> {
         }
     }
     let tokens_clone = tokens.clone();
-    match has_balanced_brackets(tokens) {
+    match fetch_matching_brackets_feedback(tokens) {
         Some(body) => {
             return Err(body);
         }
@@ -36,9 +36,8 @@ pub fn scan(source: &str) -> Result<Vec<Token>, Feedback> {
     }
 }
 
-fn has_balanced_brackets(tokens: Vec<Token>) -> Option<Feedback> {
-    let mut brackets = String::new();
-    let mut brackets_count = 0;
+fn fetch_matching_brackets_feedback(tokens: Vec<Token>) -> Option<Feedback> {
+    let mut brackets: Vec<char> = Vec::new();
     for token in tokens {
         if token.data != TokenData::Bracket {
             continue;
@@ -46,42 +45,34 @@ fn has_balanced_brackets(tokens: Vec<Token>) -> Option<Feedback> {
         let c = token.lexeme.chars().nth(0).unwrap();
         if "([{".contains(c) {
             brackets.push(c);
-            brackets_count += 1;
-        } else {
-            let last = brackets.chars().last().unwrap_or('?');
-            match c {
-                ')' => {
-                    if last == '(' {
-                        brackets.pop();
-                        brackets_count -= 1;
-                    } else {
-                        return Some(Feedback { title: "bracket".to_string(), ..Default::default() });
-                    }
-                }
-                ']' => {
-                    if last == '[' {
-                        brackets.pop();
-                        brackets_count -= 1;
-                    } else {
-                        return Some(Feedback { body: "bracket".to_string(), ..Default::default() });
-                    }
-                }
-                '}' => {
-                    if last == '{' {
-                        brackets.pop();
-                        brackets_count -= 1;
-                    } else {
-                        return Some(Feedback { body: "bracket".to_string(), ..Default::default() });
-                    }
-                }
-                _ => {}
-            }
+            continue;
         }
-        if brackets_count < 0 {
-            return Some(Feedback { body: "bracket".to_string(), ..Default::default() });
+        let j = c as u8;
+        let ascii1 = j - 1 - (j>90) as u8;
+        let ascii2 = *(brackets.last().unwrap_or(&'-')) as u8;
+        // Ascii magic trick: 40 -> 41, 91 -> 93, 123 -> 125
+        if ascii1 != ascii2 || brackets.pop().is_none() {
+            return Some(Feedback {
+                title: format!("Unexpected bracket `{}` at position {}", c, token.location),
+                ..Default::default()
+            });
         }
     }
+    if brackets.len() > 0 {
+        return Some(Feedback {
+            title: "Unclosed bracket `{w` at position {w".to_string(),
+            ..Default::default()
+        });
+    }
     None
+}
+
+fn remove_whitespace(mut tokens: Vec<Token>) -> Vec<Token> {
+    tokens.retain(|t|
+        t.data != TokenData::Whitespace ||
+        t.lexeme.contains('\n')
+    );
+    tokens
 }
 
 #[derive(PartialEq, Clone, Debug)]
@@ -130,7 +121,7 @@ fn is_digit(c: char) -> bool {
     c.is_digit(10)
 }
 fn is_symbol(c: char) -> bool {
-    "/+*-!|%&=?^@#.:,;".contains(c)
+    "/+*-!|%&=?^@#.:,;<>".contains(c)
 }
 fn is_letter(c: char) -> bool {
     c.is_alphabetic()
@@ -146,21 +137,11 @@ fn update_token(t: &mut Token, c: char) -> Result<&mut Token, Option<Feedback>> 
     let condition: bool;
     match t.data {
         TokenData::Literal => condition = t.lexeme.pop().unwrap() == '\\' || c != '"',
-        TokenData::Number => {
-            condition = is_digit(c);
-        }
-        TokenData::Word => {
-            condition = is_letter(c);
-        }
-        TokenData::Symbol => {
-            condition = is_symbol(c);
-        }
-        TokenData::Whitespace => {
-            condition = is_whitespace(c);
-        }
-        TokenData::Other | TokenData::Bracket => {
-            condition = false;
-        }
+        TokenData::Number => condition = is_digit(c),
+        TokenData::Word => condition = is_letter(c),
+        TokenData::Symbol => condition = is_symbol(c),
+        TokenData::Whitespace => condition = is_whitespace(c),
+        TokenData::Other | TokenData::Bracket => condition = false,
     }
     if condition {
         t.lexeme.push(c);

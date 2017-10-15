@@ -15,17 +15,21 @@ impl Default for Feedback {
     }
 }
 
-fn write_feedbacks(feedbacks: Vec<Feedback>) {
+fn write_all_feedbacks(feedbacks: Vec<Feedback>) {
     for fb in feedbacks {
         match fb.level {
-            0 => { write_error(fb); }
-            1 => { write_error(fb); }
-            2 => { write_error(fb); }
-            _ => { write_error(fb); }
+            0 => { write_feedback(fb); }
+            1 => { write_feedback(fb); }
+            2 => { write_feedback(fb); }
+            _ => { write_feedback(fb); }
         }
     }
 }
 
-fn write_error(fb: Feedback) {
-
+fn write_feedback(fb: Feedback) {
+    match fb.level {
+        0 => { println!("note"); }
+        1 => { println!("warning"); }
+        _ => { println!("note"); }
+    }
 }
