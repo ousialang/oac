@@ -1,9 +1,0 @@
-[package]
-name = "ousia"
-description = ""
-version = "0.1.0"
-authors = ["Filippo Costa <filippocosta.italy@gmail.com>"]
-
-[dependencies]
-colored = "1.5"
-indextree = "1.0.1"

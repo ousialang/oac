@@ -1,39 +1,124 @@
+# Parentheses
+# ===========
+
+# List
+(1,2,3)
+# Hash table
+(1:'a', 2:'b', 3:'c')
+# Application
+(1, 'a', abc: $XYZ)
+
+automaton f compose g
+
+# Statements
+# ==========
+
+42 as_roman_numeral
+
+import
+import yuck.eek as ahem
+import blah.[duh.eureka as yikes, amen as bingo, jeez.ouch]
+import nah.wow.dibs
+
+class Woah
+class Uhoh {}
+class Right (
+    param_1,
+    param_2,
+    param_3,
+    param_4: $DEFAULT,
+) extends Uhoh {
+
+}
+println ("Hello, world!" bold red, end: '')
+[undef] def do_something
+def yuck = "Hello, world!"
+[curious]
+val
+var
+if
+while
+until
+do
+for
+
+import yuck.eek as ahem
+import blah.(duh.eureka as yikes, amen as bingo, jeez.ouch)
+/circular import nah.wow.dibs
+
+println "Wubba lubba dub dub"
+
+($ADD, 2, ($ADD, 1, 3)) lisp.run
+
+(1,2,3) sort (order: _>_, algo: $RADIXSORT)
+($BUBBLESORT, $BUCKETSORT, $HEAPSORT, $INSERTIONSORT, $MERGESORT, $QUICKSORT, $RADIXSORT, $SELECTIONSORT, $SHELLSORT, $TIMSORT)
+
+((1,2,3) filter (_ > 1) map (_ * 2) enumerate @1) [symbolic]
+((1,2,3) filter (is_prime) map (_ * 2) enumerate @1) [symbolic]
+
 # Function calls are executed by message passing with infix syntax.
 # Functions with one arguments may use the @ right-associative operator to
 # avoid excessive parentheses nesting.
 
-"hello" head, tail, first, last
+println ("Hello, world!")
+jukebox play (songs by "John Williams" last)
+jukebox.play(Songs.played_by("John Williams") @1)
 
-native.address @ native.pointer @ "Hello, world!" fixed_length
+(1,2,3) map (_ + random_Double)
 
-println @ "Hello, world!"
-condition ? ("Success", "Failure")
+println "Hello, world!"
+
+"Hello, world" system.out.println
+"Hello, world!" split " " map (capitalize) + " ...Filippo."
+"hello" reverse ++ (seq)
+x => x
+list filter (_%2 == 0) map (_+2)
+false ? (1,0)
+
+private var x = 2
+
+val y = 3
+var x = y
+users map (x => x.name)
+
+color.to_rgb()
+
+colour as $RGB
+
+println [http.post [Context ["api.google.com", "user:pippoc"]]]
+data Tree = $LEAF || ($LNODE && $RNODE)
 'x' upper
-(1,2,3) map (x => x+1) shuffle
-(3,1,2) sort
 f compose g
-(1,2,3) contains 4
-4 in (1,2,3)
 assert true
 raise IndexOutOfBounds
 1 .. 100
 
-// Primitives
+class Tree (nodes) {
 
-"Hello, world!" // string
-'x' // char
+  def while (condition) (code) = {
+
+  }
+
+  def until (condition) (code) = while (condition!) (code)
+
+  def travel(distance) = distance as (metre kilo)
+
+# Primitives
+
+"Hello, world!" # string
+'x' # char
 10
 -2.75
 0xFF
 0b11001
-0o1234567 // numbers
-(1, 2, 3) // list
-(1: 'x', 2: 'y', 3: 'z') // hashmaps
-true, false // bool
+0o1234567 # numbers
+(1, 2, 3) # list
+(1: 'x', 2: 'y', 3: 'z') # hashmaps
+true, false # bool
 
-function @ (funct, arg) = funct (arg)
+def @ (funct, arg) = funct (arg)
 
-function addVector (a,b) = Vectorize("float32", "float32") {2+2}
+def add_vector (a,b) = Vectorize("float32", "float32") {2+2}
 
 arr = (true)
 
@@ -41,11 +126,14 @@ arr = (true)
 
 if (condition) {...} else {...}
 
-1 * units.MiB
+1 units.MiB
+1 units.second
+42 units.Newton
+
 
 pi = π = 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170
 euler = e = 2.7182818284590452353602874713526624977572470936999595749669676277240766303535475945713821785251
-golden = φ = 1.6180339887498948482045868343656381177203091798057628621354486227052604628189024497072072041893911374847540880753868917521
+golden = φ = 1.618033988749894848204586834365638117720309179805762862135448622705260462818902449707207204189
 
 class Generative (x) {
 
@@ -53,7 +141,13 @@ class Generative (x) {
   def filter (p) = Generative (() => x if p(x) else x)
 }
 
-// range
+val condition = !true
+val condition = true! and false!
+if not cargo contains box {
+
+}
+
+# range
 
 likely if (condition) then {
   do_something()
@@ -63,54 +157,62 @@ likely if (condition) then {
 
 condition ? ("Success", "Failure")
 
-val a,b = b,a
+# Numbers
+n + m
+n - m
+n * m
+n / m
+n % m
+n ^ m
+n < m
+n > m
+n >= m
+n <= m
+n compare m
 
-1+2i
-3 + 4
-4 - 3
-4 * 3
-4 / 3
-4 % 3
-4 ^ 3
+# Bool
+x and y
+x or y
+x !
+x xor y
 
-0 < 1
-1 > 0
-1 >= 0
-0 <= 1
-0 compare 1
+# Strings
+string + other_string
 
-true && false
-true || false
-true not
-true xor false
-
-"Hello, world!"
-"Hello, " + "world!"
-"Hello," + "world!"
-"Happy birthday to ${person}!"
-
-// Lists
+# Lists
 (1, 2, 3)
 
-list [0]
-list reverse
-list range
-list contains element
+# Control flow
+if (condition) then {foo} else {bar}
+for foo in bar {jeez}
+while (condition) do {foobar}
+until (condition) do {foobar}
+do {foobar} n times
+do {foobar} while (condition)
+do {foobar} until (condition)
 
-(1: 'A', 2: 'B')
+# Sequences
+list contains
+list filter
+list fold
+list fst
+list enumerate
+list head
+list lst
+list size
+list map
+list tail
+list range
+list reverse
+list sort
+list shuffle
+
+# Hash maps
 hash keys
 hash values
-hash contains key
-hash map (x => x get 1)
 
 enum Colours = Red | blue | green
 
 val status = Colours.red
 
-while (condition) do {System.println "hello"}
-
-do {
-  system.println "hello"
-} while (condition)
-
-√ 9 // 3
+9 sqrt + 2 # 5

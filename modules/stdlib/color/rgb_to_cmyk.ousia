@@ -1,10 +1,8 @@
-package neysofu.color
-
 class RGB {
 
   undefined val R, G, B
 
-  function as CMYK = {
+  def as CMYK = {
     val r,g,b = (R, G, B) map (x => x / 255)
     val K = 1 - (r,g,b).max
     val C = (1-r-k) / (1-k)
@@ -13,7 +11,7 @@ class RGB {
     cmyk (C,M,Y,K)
   }
 
-  function to_HSL = {
+  def to_HSL = {
     val (r,g,b) = (R,G,B) map (d => d / 255)
     val min = (r,g,b).min
     val max = (r,g,b).max
@@ -25,5 +23,5 @@ class RGB {
     }
   }
 
-  function gray = R*0.299 + G*0.587 + B*0.114
+  def gray = R*0.299 + G*0.587 + B*0.114
 }
