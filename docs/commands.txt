@@ -1,0 +1,27 @@
+By writing plugins, you can also add your own commands to OUSIA.
+
+* bug
+* help
+* install
+  install https://github.com/abc/xyz
+  install:github abc/xyz
+  install:gitlab abc/xyz
+  install:bitbucket abc/xyz
+* interactive
+* list
+* run
+* plugins
+* profile
+* format
+* update
+* version
+
+    curl -sL https://ousia.org | bash
+    ousia install
+
+ousia bug
+
+
+ousia profile --deterministic .
+
+All this commands are also available in the REPL as ousia functions.

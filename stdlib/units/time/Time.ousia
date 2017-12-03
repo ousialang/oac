@@ -1,0 +1,7 @@
+val second = Unit[Time]("second", 1, "s")
+val minute = Unit[Time]("minute", 60, "m")
+val hour = Unit[Time]("hour", minute.amount * 60, "h")
+val day = Unit[Time]("day", hour.amount * 24, "d")
+val week = Unit[Time]("week", day.amount * 7, "w")
+val month = Unit[Time]("month", year.amount / 12, "M")
+val year = Unit[Time]("year", day.amount * 365.25, "a")

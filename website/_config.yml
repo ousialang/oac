@@ -1,0 +1,8 @@
+sass:
+  style: compressed
+  sass_dir: _sass
+
+exclude:
+  - package.json
+  - yarn.lock
+  - node_modules/

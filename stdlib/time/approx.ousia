@@ -1,0 +1,15 @@
+val times = [
+  1: $SECOND,
+  60: $MINUTE,
+  60*60: $HOUR,
+  60*60*24: $DAY,
+  60*60*24*7: $WEEK,
+  60*60*24*30.436875: $MONTH,
+]
+
+for time_unit in times {time_unit = $SECOND}
+
+def approx (seconds) = times find (_ >= seconds) map (n,s => {
+  val i = (n / seconds) to $INT
+  if i == 1 then s else s + "s"
+})

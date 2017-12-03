@@ -1,0 +1,23 @@
+Usage: ousia command [arguments...]
+The available commands are
+
+    beautify
+      Beautify source files.
+    build
+      Compile an Ousia project.
+    bug
+      Report a bug in the Ousia compiler.
+    clean
+      Remove all binaries and object files created by the compiler.
+    debug
+      Open the debugger in the browser.
+    help <topic>
+      Show info about a topic.
+    install
+      Fetch and install an Ousia library.
+    list
+      List the locally installed Ousia libraries.
+    plugins
+      Show information about the installed plugins.
+    run
+      Compile and run a script on the fly.

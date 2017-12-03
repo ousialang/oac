@@ -1,0 +1,98 @@
+import ousia.units.Metre as UnitMetre
+import ousia.io
+
+io.resources each load-resource(_.yaml)
+
+function load-metric-unit(unit-name, unit-resource) = {
+  for (Metric-Prefixes -> prefox) {
+    meta val ${prefix.1st + unit-name} @ousia.units: new Unit(
+      symbol:prefix.2nd+unit-resource("symbol"),
+      numerical-value:unit-resource("value")*prefix.3rd,
+      quantity:unit-resource("quantity")
+    )
+  }
+}
+
+exception DifferentUnitException(
+  (u1, u2) -> "Unit conversion between {$u1} and {$u2} is impossible.")
+
+enum Quantities (
+  Length,
+  Space,
+  Mass,
+  Temperature,
+  Amount-of-substance,
+  Electric-current,
+  Luminous-intensity,
+)
+
+class Unit {
+
+  undefined val symbol
+  undefined val quantity
+  undefined val numerica-value
+
+  meta global val $name
+}
+
+group Prefix {
+
+  val fractions = (
+    ("atto", "a", 10^-18),
+    ("femto", "f", 10^-15),
+    ("pico", "p", 10^-12),
+    ("nano", "n", 10^-9),
+    ("micro", "μ", 10^-6),
+    ("milli", "m", 10^-3),
+    ("centi", "c", 10^-2),
+    ("deci", "d", 10^-1)
+  )
+
+  val multiples: Set(
+    ("deca", "da", 10^1),
+    ("hecto", "h", 10^2),
+    ("kilo", "k", 10^3),
+    ("mega", "M", 10^6),
+    ("giga", "G", 10^9),
+    ("tera", "T", 10^12),
+    ("peta", "P", 10^15),
+    ("exa", "E", 10^18)
+  )
+
+  // Binary prefixes "debi" and "hebi" don"t exist.
+  val binary = multiples from 2 enumerate map (
+    prefix, symbol, multiplier => (
+      // Binary prefix names take the first 2 letters of the corresponding
+      // decimal prefix
+      prefix to 2 + "bi",
+      symbol uppercase + "ib",
+      1024 ^ multiplier
+    )
+  )
+}
+
+class Measurement (magnitude, unit) {
+
+  function to(unit) = {
+    if (unit.1st.quantity != unit.2nd.quantity) {
+      DIFFERENT-QUANTITIES-EXCEPTION
+    } else {
+      // How many meters is 2km? 2000 (2 * 1000/1)
+      Measurement(magnitude * unit.2nd.conversion-rate / unit.1st.conversion-rate)
+    }
+  }
+
+  function shortcut(operation) = {
+    if measurement.unit is-not unit {
+      measurement.unit to unit
+    }
+    new Measurement (operation(magnitude, measurement.magnitude), unit)
+  }
+
+  def -(measurement) = shortcut(+)
+  def +(measurement) = shortcut(+)
+  def *(measurement) = shortcut(*)
+  def /(measurement) = shortcut(/)
+
+  def string = magnitude.string + unit.quantity.symbol
+}

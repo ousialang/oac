@@ -1,29 +1,16 @@
 *~
+build/
 .DS_Store
-.hgignore
-*.log
 
-# Common Lisp
-# ===========
-*.fas
-*.FASL
-*.fasl
-*.lib
-*.lisp-temp
-*.dfsl
-*.pfsl
-*.d64fsl
-*.p64fsl
-*.lx64fsl
-*.lx32fsl
-*.dx64fsl
-*.dx32fsl
-*.fx64fsl
-*.fx32fsl
-*.sx64fsl
-*.sx32fsl
-*.wx64fsl
-*.wx32fsl
+CMakeFiles/
+CMakeCache.txt
+
+# website
+# =======
+_site/
+Gemfile.lock
+yarn.lock
+node_modules/
 
 # Vim
 # ===

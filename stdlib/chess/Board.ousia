@@ -1,0 +1,10 @@
+class Board {
+
+  val turn = $WHITE
+}
+
+def moves(board) = board.pieces
+
+class King Piece {
+  var can_castle = false
+}

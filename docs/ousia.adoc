@@ -1,0 +1,56 @@
+= ousia(1)
+Filippo Costa
+v{{{ VERSION }}}
+:doctype: manpage
+:manmanual: ousia
+:mansource: ousia
+:man-linkstyle: pass:[blue R < >]
+
+== Name
+
+ousia - a programming language for drug-fueled hackers
+
+== Synopis
+
+*ousia* _command_ [_arguments_] [_options_]
+
+== Description
+
+The Ousia compiler (_ousiac_ for short) is built upon a modular architecture.
+
+== Commands
+
+Ousia uses a subcommand schema to do things.
+
+*beautify* +
+  Beautify Ousia source files.
+
+*bug* +
+  Open a GitHub issue to report a bug.
+
+*install* +
+  Download and install a module.
+
+*license* +
+  Print copyright information about Ousia.
+
+*plugins* +
+  List all installed compiler plugins.
+
+== Authors
+
+Built by Filippo Costa. See `AUTHORS.txt` for a complete list of contributors.
+
+== Reporting bugs
+
+Report bugs by creating an issue at https://github.com/neysofu/ousia/issues/new
+or with *ousia bug*.
+
+== Notes
+
+. Source code +
+  https://github.com/neysofu/ousia
+. Website +
+  https://ousia-language.org
+. Donate +
+  bitcoin: 13N79V3JBvZ9UcbEJR4xMQrigkveWZ2rqw
