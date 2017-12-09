@@ -51,8 +51,7 @@ char matching_bracket(char bracket) {
     case '}':
       return '{';
     default:
-      fprintf(stderr, "ERROR");
-      exit(-1);
+      return '?';
   }
 }
 

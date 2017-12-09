@@ -1,0 +1,27 @@
+---
+BasedOnStyle: Chromium
+BreakBeforeBinaryOperators: NonAssignment
+BreakStringLiterals: false
+Language: Cpp
+UseTab: ForIndentation
+BreakBeforeBraces: Attach
+AlwaysBreakBeforeMultilineStrings: true
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: false
+IndentCaseLabels: false
+AlignEscapedNewlinesLeft: false
+AlignTrailingComments: true
+AllowAllParametersOfDeclarationOnNextLine: false
+AlignAfterOpenBracket: true
+SpaceAfterCStyleCast: false
+IndentWidth: 4
+MaxEmptyLinesToKeep: 2
+ColumnLimit: 100
+PointerAlignment: Left
+SortIncludes: true
+SpaceBeforeAssignmentOperators: true
+SpaceInEmptyParentheses: false
+SpacesInCStyleCastParentheses: false
+TabWidth: 4
+ContinuationIndentWidth: 4

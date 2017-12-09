@@ -1,6 +1,3 @@
-[submodule "app/ousiac/lib/libyaml"]
-	path = app/ousiac/lib/libyaml
-	url = https://github.com/yaml/libyaml
-[submodule "app/ousiac/lib/zlog"]
-	path = app/ousiac/lib/zlog
-	url = https://github.com/HardySimpson/zlog
+[submodule "ousiac/lib/libyuarel"]
+	path = ousiac/lib/libyuarel
+	url = https://github.com/jacketizer/libyuarel/
