@@ -1,6 +1,6 @@
 <p align="center">
     <img
-        src="https://raw.githubusercontent.com/neysofu/ousia/master/logo/logo-github.png"
+        src="https://raw.githubusercontent.com/neysofu/ousia/master/extras/logo-github.png"
         alt="logo">
     </img>
 </p>
