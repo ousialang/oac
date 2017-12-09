@@ -18,6 +18,7 @@ def format_sources():
             subprocess.call(["clang-format", "-i", file_name[3:]])
         elif file_name.endswith(".py"):
             FormatFile(file_name, in_place=True)
+        subprocess.call(["git", "add", file_name])
 
 
 if __name__ == "__main__":
