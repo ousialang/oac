@@ -1,4 +1,4 @@
-#!/usr/bin/env/python
+#!/usr/bin/env/python3
 import os
 
 if __name__ == "__main__":
@@ -9,6 +9,6 @@ if __name__ == "__main__":
       os.path.dirname(location),
       ".git",
       "hooks",
-      "git-clang-format.py")
-  os.symlink(os.path.join(location, "hooks", "git-clang-format.py"),
+      "pre-commit")
+  os.symlink(os.path.join(location, "hooks", "pre_commit_formatter.py"),
              git_location)
