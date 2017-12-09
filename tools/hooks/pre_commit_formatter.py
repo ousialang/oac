@@ -15,7 +15,7 @@ def format_sources():
     print("Running code formatters...")
     for file_name in file_names:
         if file_name.endswith((".c", ".h", ".cpp", ".cc", ".hpp")):
-            subprocess.call(["clang-format", "-i", file_name[3:]])
+            subprocess.call(["clang-format", "-i", file_name])
         elif file_name.endswith(".py"):
             FormatFile(file_name, in_place=True)
     subprocess.call(["git", "add"] + file_names)
