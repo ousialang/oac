@@ -12,7 +12,8 @@ def format_sources():
     file_names = [
         file_name[3:] for file_name in git_status.decode("utf-8").splitlines()
     ]
-    print("Running code formatters...")
+    if file_names:
+        print("Running code formatters...")
     for file_name in file_names:
         if file_name.endswith((".c", ".h", ".cpp", ".cc", ".hpp")):
             subprocess.call(["clang-format", "-i", file_name])
