@@ -1,3 +1,0 @@
-* N: Filippo Costa (@neysofu)
-  E: <filippocosta.italy@gmail.com>
-  R: Lead developer
