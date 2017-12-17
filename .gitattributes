@@ -1,17 +1,2 @@
-# Auto detect text files and perform LF normalization
-* text=auto
-
-# Text
-*.txt text
-*.ousia text
-*.scala text
-
-# Graphics
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.gif binary
-*.tif binary
-*.tiff binary
-*.ico binary
-*.eps binary
+ousiac/CMake/cotire.cmake linguist-vendored
+ousiac/lib/* linguist-vendored
