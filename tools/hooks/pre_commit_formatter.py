@@ -73,14 +73,13 @@ def git_add_file_names(file_names):
 
 
 def git_status_file_names():
-    git_status_params = ["git", "status", "--porcelain", "-uno"]
+    git_status_params = ["git", "diff", "--name-only", "--cached"]
     try:
         git_status = subprocess.check_output(
             git_status_params, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError:
         return []
-    git_status_lines = git_status.decode("utf-8").splitlines()
-    return [line[3:] for line in git_status_lines]
+    return git_status.decode("utf-8").splitlines()
 
 
 if __name__ == "__main__":
