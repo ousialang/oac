@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import os
 import shutil
@@ -10,6 +10,8 @@ try:
     YAPF = True
 except ImportError:
     YAPF = False
+
+PYTHON33 = sys.version_info >= (3, 3)
 
 EXTENSIONS_CXX = (".c", ".h", ".cpp", ".cc", ".hpp")
 EXTENSIONS_PY = (".py", )
@@ -39,7 +41,8 @@ def format_python(file_name):
 
 
 def format_cxx(file_name):
-    if shutil.which("clang-format") is not None:
+    # shutil.which is only available in Python 3.3+
+    if PYTHON33 and shutil.which("clang-format") is not None or not PYTHON33:
         print_formatting_notice(file_name)
         try:
             subprocess.call(["clang-format", "-i", file_name], shell=True)
@@ -64,7 +67,7 @@ def format_sources(file_names):
 
 def git_add_file_names(file_names):
     try:
-        subprocess.check_output(["git", "add"], stderr=subprocess.DEVNULL)
+        subprocess.check_output(["git", "add"], stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError:
         pass
 
