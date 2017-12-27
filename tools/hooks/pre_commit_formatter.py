@@ -45,10 +45,10 @@ def format_cxx(file_name):
     if PYTHON33 and shutil.which("clang-format") is not None or not PYTHON33:
         print_formatting_notice(file_name)
         try:
-            subprocess.call(["clang-format", "-i", file_name], shell=True)
+            subprocess.call(["clang-format", "-i", file_name])
             print_formatting_success(file_name)
             return True
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, OSError, FileNotFoundError) as e:
             print_formatting_fail(file_name)
             return False
 
