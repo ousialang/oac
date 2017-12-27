@@ -30,11 +30,21 @@ set (CMAKE_CXX_STANDARD 17)
 set (BUILD_TESTING ON)
 set (CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake")
 
-# Sources
-# =======
-file (GLOB_RECURSE SOURCES "src/*.*")
-file (GLOB_RECURSE HEADERS "include/*.h")
-include_directories ("include/")
+# logc
+set (LOGC_HEADER_URL "https://raw.githubusercontent.com/rxi/log.c/b7414f3468d2fea25c9039d05822e5053e95e885/src/log.h")
+set (LOGC_SOURCE_URL "https://raw.githubusercontent.com/rxi/log.c/b7414f3468d2fea25c9039d05822e5053e95e885/src/log.c")
+set (LOGC_HEADER_DIR "${CMAKE_BINARY_DIR}/logc")
+set (LOGC_SOURCE_DIR ${CMAKE_BINARY_DIR})
+set (LOGC_HEADER "${LOGC_HEADER_DIR}/log.h")
+set (LOGC_SOURCE "${LOGC_SOURCE_DIR}/log.c")
+add_target_from_url (logc_header ${LOGC_HEADER_URL} ${LOGC_HEADER_DIR})
+add_target_from_url (logc_source ${LOGC_SOURCE_URL} ${LOGC_SOURCE_DIR})
+set_source_files_properties (
+	${LOGC_HEADER} ${LOGC_SOURCE}
+	PROPERTIES GENERATED 1 )
+add_library (logc ${LOGC_SOURCE})
+add_dependencies (logc logc_header logc_source)
+include_directories (${LOGC_HEADER_DIR})
 
 # catch
 set (CATCH_URL "https://raw.githubusercontent.com/catchorg/Catch2/v2.0.1/single_include/catch.hpp")
@@ -52,14 +62,8 @@ add_custom_target (
 
 # Tests
 # =====
-file (GLOB_RECURSE TESTS "test/*.*")
-add_executable (tests ${TESTS})
-target_link_libraries (tests catch2)
+#file (GLOB_RECURSE TESTS "test/*.*")
+#add_executable (tests ${TESTS})
 
-# Building and linking
-# ====================
-add_executable (ousiac ${HEADERS} ${SOURCES})
-target_link_libraries (ousiac curl)
-
-enable_testing ()
-add_test (ousiac_tests tests)
+#enable_testing ()
+#add_test (ousiac_tests tests)
