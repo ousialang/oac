@@ -1,6 +1,8 @@
 cmake_minimum_required (VERSION 3.4.3)
 project (ousia)
 
+include (ExternalProject)
+
 function (add_target_from_url TARGET URL DIR)
 	if (${ARG4})
 		set (URL_MD5_SETTING URL_MD5 ${ARG4})
@@ -34,10 +36,11 @@ file (GLOB_RECURSE SOURCES "src/*.*")
 file (GLOB_RECURSE HEADERS "include/*.h")
 include_directories ("include/")
 
-# catch2
-# ======
-add_library (catch2 INTERFACE)
-target_include_directories (catch2 INTERFACE "lib/catch2/")
+# catch
+set (CATCH_URL "https://raw.githubusercontent.com/catchorg/Catch2/v2.0.1/single_include/catch.hpp")
+set (CATCH_DIR "${CMAKE_BINARY_DIR}/catch")
+add_target_from_url (catch ${CATCH_URL} ${CATCH_DIR})
+include_directories (${CATCH_DIR})
 
 # Update submodules
 # =================
