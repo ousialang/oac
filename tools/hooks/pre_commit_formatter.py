@@ -12,13 +12,12 @@ except ImportError:
     YAPF = False
 
 PYTHON33 = sys.version_info >= (3, 3)
-
 EXTENSIONS_CXX = (".c", ".h", ".cpp", ".cc", ".hpp")
 EXTENSIONS_PY = (".py", )
 EXTENSIONS = EXTENSIONS_CXX + EXTENSIONS_PY
-
 NEEDS_FORMATTING = lambda x: x.endswith(EXTENSIONS)
-
+HERE = os.path.realpath(__file__)
+OUSIA_DIR = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 CLANG_FORMAT = "clang-format"
 
 
@@ -80,7 +79,8 @@ def git_status_file_names():
             git_status_params, stderr=subprocess.STDOUT)
     except (subprocess.CalledProcessError, OSError) as e:
         return []
-    return git_status.decode("utf-8").splitlines()
+    lines = git_status.decode("utf-8").splitlines()
+    return [os.path.join(OUSIA_DIR, l) for l in lines]
 
 
 if __name__ == "__main__":
