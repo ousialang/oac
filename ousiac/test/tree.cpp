@@ -1,6 +1,8 @@
-#include "tree.h"
 #include <cstdio>
-#include "catch2.hpp"
+#include "catch.hpp"
+extern "C" {
+#include "tree.h"
+}
 
 using namespace std;
 

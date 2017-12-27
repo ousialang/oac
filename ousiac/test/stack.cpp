@@ -4,9 +4,11 @@ extern "C" {
 #include "stack.h"
 }
 
+#define NUM_TRIALS 100
+
 TEST_CASE("Stack operations work as expected.", "[stack]") {
 	stack* s = stack_init();
-	REQUIRE(!s);
+	REQUIRE(s);
 	SECTION("A newly created stack has no elements in it.") {
 		REQUIRE(stack_size(s) == 0);
 	}
@@ -43,11 +45,11 @@ TEST_CASE("Stack operations work as expected.", "[stack]") {
 	}
 	SECTION("Pushing, popping, and fetching work even with large stacks.") {
 		for (int i=0; i<NUM_TRIALS; i++) {
+			REQUIRE(stack_size(s) == i);
 			REQUIRE(stack_push(s, 0));
 			REQUIRE(stack_push(s, i));
 			REQUIRE(stack_top(s) == i);
 			REQUIRE(stack_pop(s) == i);
-			REQUIRE(stack_size(s) == i);
 		}
 	}
 }

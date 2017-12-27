@@ -1,6 +1,8 @@
 #ifndef STACK_H_
 #define STACK_H_
 
+#include <stdbool.h>
+
 #define STACK_INIT_SIZE 8
 #define STACK_GROWTH_CONSTANT 2
 #ifndef STACK_TYPE
@@ -9,9 +11,11 @@
 
 typedef struct stack stack;
 
-bool stack_is_empty(stack*);
+size_t stack_size(stack* s);
 stack* stack_init(void);
-bool stack_push(stack* STACK_TYPE);
-STACK_TYPE stack_top(stack*);
-STACK_TYPE stack_pop(stack*);
-void stack_kill(stack*);
+bool stack_push(stack* s, STACK_TYPE x);
+STACK_TYPE stack_top(stack* s);
+STACK_TYPE stack_pop(stack* s);
+void stack_kill(stack* s);
+
+#endif
