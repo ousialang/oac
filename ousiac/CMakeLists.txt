@@ -1,15 +1,14 @@
 cmake_minimum_required (VERSION 3.4.3)
-project (ousiac)
+project (ousia)
 
 set (VERSION_MAJOR 0)
 set (VERSION_MINOR 1)
 set (VERSION_PATCH 0)
+
 set (C_STANDARD 99)
 set (CMAKE_CXX_STANDARD 17)
 set (BUILD_TESTING ON)
 set (CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake")
-
-include (cotire)
 
 # Sources
 # =======
@@ -35,7 +34,6 @@ add_custom_target (
 file (GLOB_RECURSE TESTS "test/*.*")
 add_executable (tests ${TESTS})
 target_link_libraries (tests catch2)
-cotire (tests)
 
 # Building and linking
 # ====================
