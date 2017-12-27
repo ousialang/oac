@@ -52,13 +52,18 @@ set (CATCH_DIR "${CMAKE_BINARY_DIR}/catch")
 add_target_from_url (catch ${CATCH_URL} ${CATCH_DIR})
 include_directories (${CATCH_DIR})
 
-# Update submodules
-# =================
-add_custom_target (
-	update_submodules
-	COMMAND git submodule init
-	COMMAND git submodule update
-	WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} )
+# FlatBuffers
+ExternalProject_Add (
+	flatbuf
+	URL "https://github.com/google/flatbuffers/archive/v1.8.0.tar.gz"
+	URL_MD5 "276cab8303c4189cbe3b8a70e0515d65"
+	DOWNLOAD_NO_PROGRESS 1
+	INSTALL_COMMAND ""
+	CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} )
+ExternalProject_Get_Property (flatbuf BINARY_DIR)
+ExternalProject_Get_Property (flatbuf SOURCE_DIR)
+set (FLATC "${BINARY_DIR}/${CMAKE_CFG_INTDIR}/flatc")
+include_directories ("${SOURCE_DIR}/include")
 
 # Tests
 # =====
