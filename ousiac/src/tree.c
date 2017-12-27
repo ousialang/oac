@@ -10,6 +10,9 @@
 
 struct tree* tree_init(TREE_TYPE x) {
 	struct tree* t = malloc(sizeof(struct tree));
+	if (!t) {
+		return NULL;
+	}
 	t->info = x;
 	t->parent = NULL;
 	t->lchild = NULL;
