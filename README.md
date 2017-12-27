@@ -5,6 +5,10 @@
     </img>
 </p>
 <p align="center">
+    <img
+        src="https://img.shields.io/travis/neysofu/ousia.svg"
+        alt="Travis CI status">
+    </img>
     <a href="https://github.com/neysofu/ousia/blob/master/LICENSE.txt">
         <img
             src="https://img.shields.io/badge/license-BSD-blue.svg"
