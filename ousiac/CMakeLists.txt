@@ -28,13 +28,13 @@ set (VERSION_PATCH 0)
 set (C_STANDARD 99)
 set (CMAKE_CXX_STANDARD 17)
 set (BUILD_TESTING ON)
-set (CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake")
+set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
 # logc
 set (LOGC_HEADER_URL "https://raw.githubusercontent.com/rxi/log.c/b7414f3468d2fea25c9039d05822e5053e95e885/src/log.h")
 set (LOGC_SOURCE_URL "https://raw.githubusercontent.com/rxi/log.c/b7414f3468d2fea25c9039d05822e5053e95e885/src/log.c")
-set (LOGC_HEADER_DIR "${CMAKE_BINARY_DIR}/logc")
-set (LOGC_SOURCE_DIR ${CMAKE_BINARY_DIR})
+set (LOGC_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/logc")
+set (LOGC_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set (LOGC_HEADER "${LOGC_HEADER_DIR}/log.h")
 set (LOGC_SOURCE "${LOGC_SOURCE_DIR}/log.c")
 add_target_from_url (logc_header ${LOGC_HEADER_URL} ${LOGC_HEADER_DIR})
@@ -48,7 +48,7 @@ include_directories (${LOGC_HEADER_DIR})
 
 # catch
 set (CATCH_URL "https://raw.githubusercontent.com/catchorg/Catch2/v2.0.1/single_include/catch.hpp")
-set (CATCH_DIR "${CMAKE_BINARY_DIR}/catch")
+set (CATCH_DIR "${CMAKE_CURRENT_BINARY_DIR}/catch")
 add_target_from_url (catch ${CATCH_URL} ${CATCH_DIR})
 include_directories (${CATCH_DIR})
 
@@ -66,16 +66,27 @@ set (FLATC "${BINARY_DIR}/${CMAKE_CFG_INTDIR}/flatc")
 include_directories ("${SOURCE_DIR}/include")
 
 # FlatBuffers schemas generation
+set (FLATBUF_SCHEMAS_DIR "${CMAKE_CURRENT_BINARY_DIR}/schemas")
+file (MAKE_DIRECTORY ${FLATBUF_SCHEMAS_DIR})
 add_custom_target (
+	flatbuf_schemas_gen
 	DEPENDS flatbuf
-	flatbuf_schemas_generation
-	COMMAND ${FLATC} --cpp "${CMAKE_SOURCE_DIR}/src/schemas/tree.fbs"
-)
+	COMMAND ${FLATC} --cpp "${CMAKE_CURRENT_SOURCE_DIR}/src/schemas/tree.fbs"
+	WORKING_DIRECTORY ${FLATBUF_SCHEMAS_DIR} )
+include_directories (${FLATBUF_SCHEMAS_DIR})
+
+# Source
+set (INCLUDES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
+include_directories (${INCLUDES_DIR})
+file (GLOB_RECURSE SOURCES "src/*.c" "src/*.cpp")
+add_library (ousiac_lib ${SOURCES})
+target_link_libraries (ousiac_lib logc)
+add_dependencies (ousiac_lib flatbuf_schemas_gen)
 
 # Tests
-# =====
-#file (GLOB_RECURSE TESTS "test/*.*")
-#add_executable (tests ${TESTS})
-
-#enable_testing ()
-#add_test (ousiac_tests tests)
+enable_testing ()
+file (GLOB_RECURSE TESTS "test/*.*")
+add_executable (ousiac_tests ${TESTS})
+target_link_libraries (ousiac_tests logc ousiac_lib)
+add_dependencies (ousiac_tests catch)
+add_test (ousiac_tests ousiac_tests)
