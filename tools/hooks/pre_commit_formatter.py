@@ -48,7 +48,8 @@ def format_cxx(file_name):
             subprocess.call(["clang-format", "-i", file_name])
             print_formatting_success(file_name)
             return True
-        except (subprocess.CalledProcessError, OSError, FileNotFoundError) as e:
+        except (subprocess.CalledProcessError, OSError,
+                FileNotFoundError) as e:
             print_formatting_fail(file_name)
             return False
 
@@ -66,10 +67,8 @@ def format_sources(file_names):
 
 
 def git_add_file_names(file_names):
-    try:
-        subprocess.check_output(["git", "add"], stderr=subprocess.STDOUT)
-    except subprocess.CalledProcessError:
-        pass
+    subprocess.check_output(
+        ["git", "add"] + file_names, stderr=subprocess.STDOUT)
 
 
 def git_status_file_names():
