@@ -78,7 +78,7 @@ def git_status_file_names():
     try:
         git_status = subprocess.check_output(
             git_status_params, stderr=subprocess.STDOUT)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, OSError) as e:
         return []
     return git_status.decode("utf-8").splitlines()
 
