@@ -6,5 +6,12 @@ extern "C" {
 
 using namespace std;
 
-TEST_CASE("") {
+TEST_CASE("Tree operations work as expected.", "[tree][AST][parser]") {
+	tree* t = tree_init(123);
+	REQUIRE(t);
+	SECTION("A newly created tree is orphan, child-free and an only-child.") {
+		REQUIRE(!t->parent);
+		REQUIRE(tree_count_children(t) == 0);
+		REQUIRE(tree_count_siblings(t) == 0);
+	}
 }

@@ -4,12 +4,16 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#define TREE_TYPE int
+
 struct tree {
-	int info;
+	TREE_TYPE info;
 	struct tree* parent;
 	struct tree* lchild;
 	struct tree* rsibling;
 };
+
+struct tree* tree_init(TREE_TYPE x);
 
 struct tree* tree_common_ancestor(struct tree* t0, struct tree* t1);
 struct tree** tree_children(struct tree* t);
@@ -19,8 +23,6 @@ struct tree** tree_pedigree(struct tree* t);
 bool tree_is_root(struct tree* t);
 bool tree_is_leaf(struct tree* t);
 bool tree_is_inode(struct tree* t);
-bool tree_has_children(struct tree* t);
-bool tree_has_siblings(struct tree* t);
 bool tree_are_siblings(struct tree* t0, struct tree* t1);
 bool tree_is_older_sibling(struct tree* older, struct tree* younger);
 
@@ -31,6 +33,7 @@ size_t tree_depth(struct tree* inode);
 size_t tree_level(struct tree* t);
 size_t tree_height(struct tree* root);
 size_t tree_degree(struct tree* t);
-size_t tree_num_siblings(struct tree* t);
+size_t tree_count_siblings(struct tree* t);
+size_t tree_count_children(struct tree* t);
 
 #endif
