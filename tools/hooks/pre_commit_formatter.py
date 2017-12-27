@@ -19,6 +19,8 @@ EXTENSIONS = EXTENSIONS_CXX + EXTENSIONS_PY
 
 NEEDS_FORMATTING = lambda x: x.endswith(EXTENSIONS)
 
+CLANG_FORMAT = "clang-format"
+
 
 def print_formatting_notice(file_name):
     print("Formatting {}...".format(file_name))
@@ -42,10 +44,10 @@ def format_python(file_name):
 
 def format_cxx(file_name):
     # shutil.which is only available in Python 3.3+
-    if PYTHON33 and shutil.which("clang-format") is not None or not PYTHON33:
+    if PYTHON33 and shutil.which(CLANG_FORMAT) is not None or not PYTHON33:
         print_formatting_notice(file_name)
         try:
-            subprocess.call(["clang-format", "-i", file_name])
+            subprocess.call([CLANG_FORMAT, "-i", file_name])
             print_formatting_success(file_name)
             return True
         except (subprocess.CalledProcessError, OSError,
