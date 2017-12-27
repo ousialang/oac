@@ -1,6 +1,24 @@
 cmake_minimum_required (VERSION 3.4.3)
 project (ousia)
 
+function (add_target_from_url TARGET URL DIR)
+	if (${ARG4})
+		set (URL_MD5_SETTING URL_MD5 ${ARG4})
+	else ()
+		set (URL_MD5_SETTING)
+	endif ()
+	ExternalProject_Add (
+		${TARGET}
+		URL ${URL}
+		URL_MD5 ${URL_MD5_SETTING}
+		DOWNLOAD_DIR ${DIR}
+		DOWNLOAD_NO_PROGRESS 1
+		DOWNLOAD_NO_EXTRACT 1
+		CONFIGURE_COMMAND ""
+		BUILD_COMMAND ""
+		INSTALL_COMMAND "" )
+endfunction ()
+
 set (VERSION_MAJOR 0)
 set (VERSION_MINOR 1)
 set (VERSION_PATCH 0)
