@@ -65,6 +65,13 @@ ExternalProject_Get_Property (flatbuf SOURCE_DIR)
 set (FLATC "${BINARY_DIR}/${CMAKE_CFG_INTDIR}/flatc")
 include_directories ("${SOURCE_DIR}/include")
 
+# FlatBuffers schemas generation
+add_custom_target (
+	DEPENDS flatbuf
+	flatbuf_schemas_generation
+	COMMAND ${FLATC} --cpp "${CMAKE_SOURCE_DIR}/src/schemas/tree.fbs"
+)
+
 # Tests
 # =====
 #file (GLOB_RECURSE TESTS "test/*.*")
