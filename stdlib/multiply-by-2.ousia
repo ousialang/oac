@@ -1,3 +1,0 @@
-print ("Hello! What number are you thinking about?")
-val n = prompt ()
-print ("I multiplied by 2 your number: ${n*2}.")
