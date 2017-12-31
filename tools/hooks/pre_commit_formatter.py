@@ -1,5 +1,10 @@
 #!/usr/bin/env python
 
+# This pre-commit hook automatically formats source code files using tools like
+# YAPF and clang-format. Any thrown error is considered a bug. It's fine if a
+# formatting tool is not installed: it's much better to let the user commit
+# their changes and deal with potentially bad formatted source files later.
+
 import os
 import shutil
 import subprocess
@@ -73,13 +78,13 @@ def git_add_file_names(file_names):
 
 
 def git_status_file_names():
-    git_status_params = [
+    git_status_argv = [
         "git", "diff", "--name-only", "--cached", "--diff-filter=drc",
         "--no-renames"
     ]
     try:
         git_status = subprocess.check_output(
-            git_status_params, stderr=subprocess.STDOUT)
+            git_status_argv, stderr=subprocess.STDOUT)
     except (subprocess.CalledProcessError, OSError) as e:
         return []
     lines = git_status.decode("utf-8").splitlines()
