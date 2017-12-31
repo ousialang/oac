@@ -37,14 +37,14 @@ TEST_CASE("Stack operations work as expected.", "[stack]") {
 		REQUIRE(stack_size(s) == size);
 		REQUIRE(stack_top(s) == 123);
 	}
-	SECTION("Killing a big stack doesn0t throw errors.") {
-		for (int i=0; i<NUM_TRIALS; i++) {
+	SECTION("Killing a big stack doesn't throw errors.") {
+		for (int i = 0; i < NUM_TRIALS; i++) {
 			stack_push(s, i);
 		}
 		stack_kill(s);
 	}
 	SECTION("Pushing, popping, and fetching work even with large stacks.") {
-		for (int i=0; i<NUM_TRIALS; i++) {
+		for (int i = 0; i < NUM_TRIALS; i++) {
 			REQUIRE(stack_size(s) == i);
 			REQUIRE(stack_push(s, 0));
 			REQUIRE(stack_push(s, i));

@@ -12,7 +12,7 @@ function (add_target_from_url TARGET URL DIR)
 	ExternalProject_Add (
 		${TARGET}
 		URL ${URL}
-		URL_MD5 ${URL_MD5_SETTING}
+		${URL_MD5_SETTING}
 		DOWNLOAD_DIR ${DIR}
 		DOWNLOAD_NO_PROGRESS 1
 		DOWNLOAD_NO_EXTRACT 1
@@ -24,6 +24,7 @@ endfunction ()
 set (VERSION_MAJOR 0)
 set (VERSION_MINOR 1)
 set (VERSION_PATCH 0)
+string (RANDOM LENGTH 8 VERSION_BUILD)
 
 set (C_STANDARD 99)
 set (CMAKE_CXX_STANDARD 17)
@@ -52,6 +53,18 @@ set (CATCH_DIR "${CMAKE_CURRENT_BINARY_DIR}/catch")
 add_target_from_url (catch ${CATCH_URL} ${CATCH_DIR})
 include_directories (${CATCH_DIR})
 
+# tinydir
+ExternalProject_Add (
+	tinydir
+	URL "https://github.com/cxong/tinydir/archive/1.2.3.tar.gz"
+	URL_MD5 "ed4bf9f73e385dbb00f7d5ce5b944785"
+	DOWNLOAD_NO_PROGRESS 1
+	CONFIGURE_COMMAND ""
+	BUILD_COMMAND ""
+	INSTALL_COMMAND "" )
+ExternalProject_Get_Property (tinydir SOURCE_DIR)
+include_directories (${SOURCE_DIR})
+
 # FlatBuffers
 ExternalProject_Add (
 	flatbuf
@@ -75,6 +88,7 @@ add_custom_target (
 	WORKING_DIRECTORY ${FLATBUF_SCHEMAS_DIR} )
 include_directories (${FLATBUF_SCHEMAS_DIR})
 
+
 # Source
 set (INCLUDES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 include_directories (${INCLUDES_DIR})
@@ -82,6 +96,12 @@ file (GLOB_RECURSE SOURCES "src/*.c" "src/*.cpp")
 add_library (ousiac_lib ${SOURCES})
 target_link_libraries (ousiac_lib logc)
 add_dependencies (ousiac_lib flatbuf_schemas_gen)
+add_executable (ousiac ${SOURCES})
+target_link_libraries (ousiac ousiac_lib)
+set (VERSION_H_IN "${CMAKE_CURRENT_SOURCE_DIR}/include/cmd/version.h.in")
+set (VERSION_H "${CMAKE_CURRENT_BINARY_DIR}/include/cmd/version.h")
+configure_file ("${VERSION_H_IN}" ${VERSION_H})
+include_directories ("${CMAKE_CURRENT_BINARY_DIR}/include")
 
 # Tests
 enable_testing ()

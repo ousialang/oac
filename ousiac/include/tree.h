@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#ifndef TREE_TYPE
 #define TREE_TYPE int
+#endif
 
 struct tree {
 	TREE_TYPE info;
