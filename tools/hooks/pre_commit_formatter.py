@@ -73,7 +73,10 @@ def git_add_file_names(file_names):
 
 
 def git_status_file_names():
-    git_status_params = ["git", "diff", "--name-only", "--cached"]
+    git_status_params = [
+        "git", "diff", "--name-only", "--cached", "--diff-filter=drc",
+        "--no-renames"
+    ]
     try:
         git_status = subprocess.check_output(
             git_status_params, stderr=subprocess.STDOUT)
