@@ -88,7 +88,6 @@ add_custom_target (
 	WORKING_DIRECTORY ${FLATBUF_SCHEMAS_DIR} )
 include_directories (${FLATBUF_SCHEMAS_DIR})
 
-
 # Source
 set (INCLUDES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 include_directories (${INCLUDES_DIR})
