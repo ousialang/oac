@@ -1,26 +1,26 @@
-package ousia.util.romans
+let ROMAN_NUMERALS = [
+  1: ["I", "X", "C", "M"],
+  5: ["V", "L", "D"]
+]
 
-private val roman_numerals = (
-  ("I", "X", "C", "M"),
-  ("V", "L", "D")
-)
-
-function arabic_to_roman(n) = {
-  val string = n to String
-  val range = Range(string.size, 0)
-  (string zip (range) map (digit_to_roman(_, _))).sum
+let ROMAN_TO_ARABIC (N) = {
+	if N slide (2,1) assert_all (_ in ROMAN_NUMERALS[5])
+	if N slide (3,1) assert_any (ABC => ABC all (ABC[0] == _))
+if N slide (2,1) assert_all
 }
 
-function digit_to_roman(n, i) = {
-  val I = romanNumerals(1,i)
-  val V = romanNumerals(5,i)
-  val X = romanNumerals(1,i+1)
-  n match {
-    case 0 => String.empty
-    case 1,2,3 => I * n
-    case 4 => I + V
-    case 5 => V
-    case 6 => V + I
-    case 7,8,9 => I * (10-n) + X
+let ARABIC_TO_ROMAN (N) = N as STRING enumerate map DIGIT_TO_ROMAN_STRING sum
+
+let DIGIT_TO_ROMAN_STRING (DIGIT,PLACE) = {
+  let I: ROMAN_NUMERALS (1,PLACE)
+  let V: ROMAN_NUMERALS (5,PLACE)
+  let X: ROMAN_NUMERALS (1,PLACE+1)
+  N match {
+    0 => STRING empty
+    1,2,3 => I*N
+    4 => I+V
+    5 => V
+    6 => V+I
+    7,8,9 => I*(10-N)+X
   }
 }

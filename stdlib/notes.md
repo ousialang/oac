@@ -39,11 +39,24 @@
         do this until condition
         def ...
 
-        subclass SuperBootser {
+        subclass SUPER_BOOSTER {
         }
 
-        extend vehicle with (plugin match {
-          $BOOSTER: SuperBooster
-          $WEAPONS: MachineGun
-          $AUTOMATIC: AutoPilot
+        extend VEHICLE with (PLUGIN match {
+          $BOOSTER: SUPER_BOOSTER
+          $WEAPONS: MACHINE_GUN
+          $AUTOMATIC: AUTO_PILOT
         })
+* One of the few untyped functional languages
+* Focus on interface design. I am not satisfied with how existing languages
+  handle interface design; i.e. they make poor design choices.
+* "Well-designed programs treat the user's attention and concentration as a precious and limited resource, only to be claimed when necessary."
+* See http://www.faqs.org/docs/artu/ch01s06.html
+* I had a beautiful idea: replace much of the ALGOL-like noisy syntax with
+  case-sensitivity. Programming languages are already case-sensitive, but we'll
+  make it a part of the syntax. Expressions can have "syntax goodies" with
+  symbols and undercase letters, but semantically significant code must be in
+  uppercase. Es.:
+    import FOO as BAR
+    let ABC = XYZ length + 5 abs
+    class FOO_BAR extends FOO
