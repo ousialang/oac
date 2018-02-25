@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 # This pre-commit hook automatically formats source code files using tools like
 # YAPF and clang-format. Any thrown error is considered a bug. It's fine if a
