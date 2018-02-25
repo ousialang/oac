@@ -1,0 +1,10 @@
+table CommandDescription {
+	command:string;
+	description:string;
+}
+
+table CommandDescriptions {
+	cd:CommandDescription;
+}
+
+root_type CommandDescriptions;

@@ -1,0 +1,53 @@
+= zenzi-beautify(1)
+Filippo Costa
+v{{{ VERSION }}}
+:doctype: manpage
+:manmanual: zenzi
+:mansource: zenzi
+:man-linkstyle: pass:[blue R < >]
+
+== Name
+
+zenzi beautify - Format Zenzi source files.
+
+== Synopis
+
+*zenzi beautify* [--config-file=<file>] [--write-to-disk=<bool>] [--confirm=<bool>] <file(s)>
+
+== Description
+
+Format a number of Zenzi source files.
+are given, then the full version is printed such as this:
+
+    $ zenzi beautify main.zn api/api.zn
+
+If any options are given, only the specified information is displayed in
+separate lines and in the specified order, e.g.:
+
+    $ zenzi version --major --tags --build
+    1
+    RC2 SNAPSHOT
+    6ED58A12
+
+Tags are space-separated
+
+== Options
+
+--major
+  Print the major version number.
+
+--minor
+  Print the minor version number.
+
+--patch
+  Print the patch version number.
+
+--tags
+  Print all the tags in a space-separated manner.
+
+--build
+  Print the build version number.
+
+== Zenzi
+
+Part of the **zenzi**(1) suite.

@@ -1,5 +1,4 @@
-#!/bin/sh
-
+#!/usr/bin/env bash
 cd $(dirname $0)
 cd ..
 asciidoctor -b manpage -d manpage --out-file "build/man.1" "docs/man.adoc"

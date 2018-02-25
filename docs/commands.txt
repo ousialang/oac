@@ -1,27 +1,23 @@
-By writing plugins, you can also add your own commands to OUSIA.
+By writing plugins, you can also add your own commands to Zenzi.
 
 * bug
 * help
-* install
-  install https://github.com/abc/xyz
-  install:github abc/xyz
-  install:gitlab abc/xyz
-  install:bitbucket abc/xyz
-* interactive
+* install https://github.com/abc/xyz
+* repl
 * list
 * run
 * plugins
 * profile
-* format
+* beautify
 * update
 * version
 
-    curl -sL https://ousia.org | bash
-    ousia install
+    curl -sL https://zenzi.org | bash
+    zenzi install
 
-ousia bug
+zenzi bug
 
 
-ousia profile --deterministic .
+zenzi profile --deterministic .
 
-All this commands are also available in the REPL as ousia functions.
+All this commands are also available in the REPL as zenzi functions.

@@ -6,14 +6,12 @@ CMakeFiles/
 CMakeCache.txt
 
 # website
-# =======
 _site/
 Gemfile.lock
 yarn.lock
 node_modules/
 
 # Vim
-# ===
 Session.vim
 .netrwhist
 # swap files
@@ -23,6 +21,5 @@ Session.vim
 [._]sw[a-p]
 
 # Linux
-# =====
 .Trash-*
 .nfs*

@@ -1,0 +1,11 @@
+table WordWithEditDistance {
+	word:string;
+	edit_distance:uint16;
+}
+
+table DeletionsOfWords {
+	word_after_deletion:string;
+	words_with_edit_distance:[WordWithEditDistance];
+}
+
+root_type DeletionsOfWords;

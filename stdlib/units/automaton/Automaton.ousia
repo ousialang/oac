@@ -1,3 +1,3 @@
-package ousia.automaton
+package ZENZI.AUTOMATON
 
-(2, 3, "ol", "a") map (x => x > 2)
+(2, 3, "ol", "a") map (_>2)

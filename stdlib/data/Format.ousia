@@ -1,4 +1,0 @@
-class Format {
-  fn function apply(string)
-  fn dump(object)
-}

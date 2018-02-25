@@ -1,5 +1,4 @@
 package ousia.units.information
 
-val bit = Unit[Dimensionless]("bit", 2, "b")
-val byte = Unit[Dimensionless]("byte", 2^8, "B")
-val nibble = Unit[Dimensionless]("nibble", 2^4)
+val BIT = Unit[Dimensionless]("bit", 2, "b")
+val BYTE = Unit[Dimensionless]("byte", 2^8, "B")

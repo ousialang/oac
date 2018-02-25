@@ -8,4 +8,4 @@ matrix:
       compiler: gcc
 
 script:
-  - cd ousiac && cmake . -G "Unix Makefiles" && make && make test
+  - cd zenzic && cmake . -G "Unix Makefiles" && make && make test

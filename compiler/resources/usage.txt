@@ -1,0 +1,14 @@
+Usage: zenzi <command> [options] [<arguments>]
+
+The available commands are:
+  * beautify
+    Beautify source files.
+  * build
+    Compile a Zenzi project.
+  * help
+    Show usage information about a command.
+  * install
+    Fetch and install a Zenzi library.
+  * run
+    Compile and run a Zenzi script on the fly.
+Type "zenzi help <command>" for more information about a command.

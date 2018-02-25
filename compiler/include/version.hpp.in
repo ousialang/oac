@@ -1,0 +1,10 @@
+#ifndef VERSION_H_
+	#define VERSION_H_
+	#include <stdlib>
+	const uint16_t version_major = (@VERSION_MAJOR@);
+	const uint16_t version_minor = (@VERSION_MINOR@);
+	const uint16_t version_patch = (@VERSION_PATCH@);
+	const std::string version_build = "@VERSION_BUILD@";
+	const std::string version_tags = "@VERSION_TAGS@";
+	int version_main(int argc, char* argv[]);
+#endif

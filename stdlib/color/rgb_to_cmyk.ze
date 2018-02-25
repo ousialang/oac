@@ -1,0 +1,22 @@
+import GO
+
+class RGB (R,G,B) {
+
+  as (X) = GRAPH_BASED_AS
+
+  as $CMYK = {
+    set R1,G1,B1 = [R,G,B] map (_/255)
+    let K = 1 - [R1,G1,B1] max
+    cmyk ([R1,G1,B1] map (X -> (1-X-K)/(1-K)),K) }
+
+  as $HSL = {
+    let R1,G1,B1 = [R,G,B] map (_/255)
+    set MAX = [R,G,B] max
+    set MIN = [R,G,B] min
+    set H,S,L = (MAX+MIN) / 2
+    if MAX == MIN then {
+      H,S = 0 }
+    else {
+      let DIFF = MAX-MIN }}
+
+  let GRAY = R*0.299 + G*0.587 + B*0.114 }
