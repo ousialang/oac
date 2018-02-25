@@ -1,7 +1,5 @@
 #include "catch.hpp"
-extern "C" {
-#include "utils/path.h"
-}
+#include "utils/path.hpp"
 
 TEST_CASE("File paths shortening works as expected.", "[feedback]") {
 	char* s1 = "src/abc/foobar_123/spam/ousia.oa:1337:42";

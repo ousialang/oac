@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.4.3)
-project (zenzi)
+project (zenzi CXX)
 
 include (ExternalProject)
 
@@ -25,16 +25,29 @@ set (VERSION_MAJOR 0)
 set (VERSION_MINOR 1)
 set (VERSION_PATCH 0)
 string (RANDOM LENGTH 8 VERSION_BUILD)
+set (VERSION_TAGS "")
 
 set (C_STANDARD 99)
 set (CMAKE_CXX_STANDARD 17)
 set (BUILD_TESTING ON)
 set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
+# Boost
+set (Boost_USE_STATIC_LIBS ON)
+set (Boost_USE_MULTITHREADED ON)
+set (Boost_USE_STATIC_RUNTIME OFF)
+find_package (Boost 1.45.0 COMPONENTS filesystem thread)
+if (Boost_FOUND)
+    include_directories (${Boost_INCLUDE_DIRS})
+else ()
+	message (FATAL_ERROR "Boost components not found.")
+endif()
+
 # catch
 set (CATCH_URL "https://raw.githubusercontent.com/catchorg/Catch2/v2.0.1/single_include/catch.hpp")
 set (CATCH_DIR "${CMAKE_CURRENT_BINARY_DIR}/catch")
-add_target_from_url (catch ${CATCH_URL} ${CATCH_DIR})
+set (CATCH_MD5 "9b3d2cb5c0f9532cddfbbfd0a622f0af")
+add_target_from_url (catch ${CATCH_URL} ${CATCH_DIR} ${CATCH_MD5})
 include_directories (${CATCH_DIR})
 
 # flatc
@@ -45,8 +58,8 @@ ExternalProject_Add (
 	DOWNLOAD_NO_PROGRESS 1
 	INSTALL_COMMAND ""
 	CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} )
-ExternalProject_Get_Property (flatbuf BINARY_DIR)
-ExternalProject_Get_Property (flatbuf SOURCE_DIR)
+ExternalProject_Get_Property (flatc BINARY_DIR)
+ExternalProject_Get_Property (flatc SOURCE_DIR)
 set (FLATC "${BINARY_DIR}/${CMAKE_CFG_INTDIR}/flatc")
 include_directories ("${SOURCE_DIR}/include")
 
@@ -55,7 +68,7 @@ set (FLATBUF_SCHEMAS_DIR "${CMAKE_CURRENT_BINARY_DIR}/schemas")
 file (MAKE_DIRECTORY ${FLATBUF_SCHEMAS_DIR})
 add_custom_target (
 	flatbuf_schemas_gen
-	DEPENDS flatbuf
+	DEPENDS flatc
 	COMMAND ${FLATC} --cpp "${CMAKE_CURRENT_SOURCE_DIR}/src/schemas/tree.fbs"
 	WORKING_DIRECTORY ${FLATBUF_SCHEMAS_DIR} )
 include_directories (${FLATBUF_SCHEMAS_DIR})
@@ -68,10 +81,11 @@ add_library (zenzic_lib ${SOURCES})
 add_dependencies (zenzic_lib flatbuf_schemas_gen)
 add_executable (zenzic ${SOURCES})
 target_link_libraries (zenzic zenzic_lib)
-set (VERSION_H_IN "${CMAKE_CURRENT_SOURCE_DIR}/include/version/version.h.in")
-set (VERSION_H "${CMAKE_CURRENT_BINARY_DIR}/include/version/version.h")
+set (VERSION_H_IN "${CMAKE_CURRENT_SOURCE_DIR}/include/version.hpp.in")
+set (VERSION_H "${CMAKE_CURRENT_BINARY_DIR}/include/version.hpp")
 configure_file ("${VERSION_H_IN}" ${VERSION_H})
 include_directories ("${CMAKE_CURRENT_BINARY_DIR}/include")
+target_link_libraries (zenzic ${Boost_LIBRARIES})
 
 # Tests
 enable_testing ()

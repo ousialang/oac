@@ -7,39 +7,44 @@ import platform
 import shutil
 import sys
 
-DIR_OUSIA = ""
-DIR_PLUGINS = os.path.join(DIR_OUSIA, "plugins/")
+DIR_ZENZI = ""
+DIR_PLUGINS = os.path.join(DIR_ZENZI, "plugins/")
 DIR_BINARY = "TODO"
-OUSIA_INSTALL_DIR_FOR_DARWIN = "/Library/ousia/"
+ZENZI_INSTALL_DIR_FOR_DARWIN = "/Library/zenzi/"
 READ_FILE_PERMISSION_NUMBER = 292
 
+
 def install_for_darwin():
-    if DIR_OUSIA:
-        os.mkdir(OUSIA_INSTALL_DIR_FOR_DARWIN)
+    if DIR_ZENZI:
+        os.mkdir(ZENZI_INSTALL_DIR_FOR_DARWIN)
     else:
         pass
 
-def install_usage_txt(ousia_dir):
-    install_resource(ousia_dir, "usage.txt")
+
+def install_usage_txt(zenzi_dir):
+    install_resource(zenzi_dir, "usage.txt")
+
 
 def install_for_windows():
     pass
 
+
 def install_for_linux():
     pass
 
-def setup_dir(ousia_dir):
+
+def setup_dir(zenzi_dir):
     try:
-        os.makedirs(os.path.join(ousia_dir, "plugins/"))
+        os.makedirs(os.path.join(zenzi_dir, "plugins/"))
     except OSError as e:
         if e.errno != errno.EEXIST:
             raise
     try:
-        os.makedirs(os.path.join(ousia_dir, "modules/"))
+        os.makedirs(os.path.join(zenzi_dir, "modules/"))
     except OSError as e:
         if e.errno != errno.EEXIST:
             raise
-    VERSION_FILE_PATH = os.path.join(ousia_dir, "version.txt")
+    VERSION_FILE_PATH = os.path.join(zenzi_dir, "version.txt")
     if not os.path.exists(VERSION_FILE_PATH):
         with open(VERSION_FILE_PATH, "a", "ascii") as file:
             file.write("{{{VERSION_MAJOR}}}."
@@ -47,23 +52,25 @@ def setup_dir(ousia_dir):
                        "{{{VERSION_FIX}}}-"
                        "{{{VERSION_BUILD}}}")
         # TODO set read-only permissions for version file
-    shutil.copyfile(OUSIA_EXECUTABLE, os.path.join(ousia_dir, "ousia"))
+    shutil.copyfile(ZENZI_EXECUTABLE, os.path.join(zenzi_dir, "ousia"))
+
 
 def uninstall():
-    pass # TODO
+    pass  # TODO
+
 
 if __name__ == "__main__":
-    OUSIA_EXECUTABLE = sys.argv[1]
+    ZENZI_EXECUTABLE = sys.argv[1]
     PLATFORM_NAME = platform.system()
     PLATFORM_IS_DARWIN = PLATFORM_NAME == "Darwin"
     PLATFORM_IS_WINDOWS = PLATFORM_NAME == "Windows"
     PLATFORM_IS_LINUX = PLATFORM_NAME == "Linux"
     if PLATFORM_IS_DARWIN:
-        OUSIA_DIR = "/Library/ousia/"
+        ZENZI_DIR = "/Library/ousia/"
         EXECUTABLES_DIR = "/usr/bin/ousia"
     elif PLATFORM_IS_WINDOWS:
-        OUSIA_DIR = os.environ["ProgramFiles"]
+        ZENZI_DIR = os.environ["ProgramFiles"]
     elif PLATFORM_IS_LINUX:
-        OUSIA_DIR = "/usr/share/ousia/"
-        OUSIA_DIR = "/usr/bin/ousia"
-    setup_dir(OUSIA_DIR)
+        ZENZI_DIR = "/usr/share/ousia/"
+        ZENZI_DIR = "/usr/bin/ousia"
+    setup_dir(zenzi_DIR)

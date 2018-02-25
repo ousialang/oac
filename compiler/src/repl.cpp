@@ -3,7 +3,7 @@
 #include <string.h>
 #include <sysexits.h>
 #include "repl/repl.h"
-#include "version/version.h"
+#include "version.hpp"
 
 #define PROMPT_STRING "> "
 #define INPUT_BUF_SIZE 128

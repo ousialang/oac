@@ -84,26 +84,26 @@ tree* tokens_from_string(char source[]) {
 			  while (!isdigit(source[i])) {
 			    i++;
 			  }
-			}*//*
-			tree_add_sibling(ast, &(token){
-				WORD, &(token_info){ .number = (token_number){ 10 } },
-				i_lexeme, i - i_lexeme
-			});
-			// token.info =
-			token.length = i - i_lexeme;
-		} else if (source[i] == '(' || source[i] == '{' || source[i] == '[') {
-			stack_push(brackets, source[i]);
-		} else if (source[i] == ')' || source[i] == '}' || source[i] == ']') {
-			if (source[i] == matching_bracket(stack_top(brackets))) {
-				stack_pop(brackets);
-			} else {
-				assert(0);
-			}
-		} else if ('"' == source[i]) {
-			//tree_add_sibling_empty(ast, '"');
-		}
-		tree_add_sibling_empty(ast);
-	}
-	return tokens;*/
+			}*/ /*
+	         tree_add_sibling(ast, &(token){
+	             WORD, &(token_info){ .number = (token_number){ 10 } },
+	             i_lexeme, i - i_lexeme
+	         });
+	         // token.info =
+	         token.length = i - i_lexeme;
+	     } else if (source[i] == '(' || source[i] == '{' || source[i] == '[') {
+	         stack_push(brackets, source[i]);
+	     } else if (source[i] == ')' || source[i] == '}' || source[i] == ']') {
+	         if (source[i] == matching_bracket(stack_top(brackets))) {
+	             stack_pop(brackets);
+	         } else {
+	             assert(0);
+	         }
+	     } else if ('"' == source[i]) {
+	         //tree_add_sibling_empty(ast, '"');
+	     }
+	     tree_add_sibling_empty(ast);
+	 }
+	 return tokens;*/
 	return NULL;
 }

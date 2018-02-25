@@ -1,11 +1,11 @@
-table WordWithEditDistance {
-	word:string;
-	edit_distance:uint16;
+table DictionaryEntry {
+	terms_locations:[uint32];
 }
 
-table DeletionsOfWords {
-	word_after_deletion:string;
-	words_with_edit_distance:[WordWithEditDistance];
+table FuzzyDictionary {
+	entries:[string];
+	symspell_prefix_length:uint8;
+	fuzzy_entries:[DictionaryEntry];
 }
 
-root_type DeletionsOfWords;
+root_type FuzzyDictionary;
