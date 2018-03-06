@@ -1,33 +1,33 @@
-= zenzi(1)
+= oa(1)
 Filippo Costa
 v{{{ VERSION }}}
 :doctype: manpage
-:manmanual: zenzi
-:mansource: zenzi
+:manmanual: oa
+:mansource: oa
 :man-linkstyle: pass:[blue R < >]
 
 == Name
 
-zenzi - a programming language for drug-fueled hackers
+oa (Ousia) - a programming language for drug-fueled hackers
 
 == Synopis
 
-*zenzi* <command> [options] [<arguments>]
+*oa* <command> [options] [<arguments>]
 
 == Description
 
-The Zenzi compiler (zenzic for short) is built upon a modular architecture.
+The Ousia compiler is built upon a modular architecture.
 
 == Commands
 
-Zenzi uses a subcommand schema to do things.
+Ousia uses a subcommand schema to do things.
 
 * *beautify* +
-  Beautify Zenzi source files.
+  Beautify Ousia source files.
 * *install* +
   Download and install a module.
 * *license* +
-  Print copyright information about Zenzi.
+  Print copyright information about Ousia.
 * *plugins* +
   List all installed compiler plugins.
 
@@ -37,12 +37,12 @@ See `AUTHORS.txt` for a complete list of contributors.
 
 == Reporting bugs
 
-Pleas report bugs by creating an issue at
-https://github.com/neysofu/zenzi/issues/new. Pull requests are welcome :)
+Please report bugs by creating an issue at
+https://github.com/neysofu/ousia/issues/new. Pull requests are welcome :)
 
 == Notes
 
 . Repository +
-  https://github.com/neysofu/zenzi
+  https://github.com/neysofu/ousia
 . Website +
-  https://zenzi.org
+  https://ousia.org

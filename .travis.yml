@@ -8,4 +8,7 @@ matrix:
       compiler: gcc
 
 script:
-  - cd zenzic && cmake . -G "Unix Makefiles" && make && make test
+  - cd oa && cmake . -G "Unix Makefiles" && make && make test
+  - git remote add gandi git+ssh://135860@git.sd6.gpaas.net/default.git
+  - cd www
+  - ssh 135860@git.sd6.gpaas.net deploy default.git

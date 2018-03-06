@@ -1,0 +1,1 @@
+curl --cert-status --ssl-reqd -fsS ttps://static.ousialang.org/setup.py | sudo /usr/bin/python -

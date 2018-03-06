@@ -1,12 +1,13 @@
 *~
 build/
 .DS_Store
-
+*.py[oc]
 CMakeFiles/
 CMakeCache.txt
 
 # website
-_site/
+static/css/
+!bulma.css
 Gemfile.lock
 yarn.lock
 node_modules/

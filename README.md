@@ -1,34 +1,34 @@
 <p align="center">
     <img
-        src="https://raw.githubusercontent.com/neysofu/zenzi/master/extras/logo.png"
+        src="https://raw.githubusercontent.com/neysofu/ousia/master/extras/logo.png"
         alt="logo">
     </img>
 </p>
 <p align="center">
     <img
-        src="https://img.shields.io/travis/neysofu/zenzi.svg"
+        src="https://img.shields.io/travis/neysofu/ousia.svg"
         alt="Travis CI status">
     </img>
-    <a href="https://github.com/neysofu/zenzi/blob/master/LICENSE.txt">
+    <a href="https://github.com/neysofu/ousia/blob/master/LICENSE.txt">
         <img
             src="https://img.shields.io/badge/license-BSD-blue.svg"
             alt="BSD license">
         </img>
     </a>
-    <a href="https://github.com/neysofu/zenzi/releases">
+    <a href="https://github.com/neysofu/ousia/releases">
         <img
-            src="https://img.shields.io/github/release/neysofu/zenzi.svg"
+            src="https://img.shields.io/github/release/neysofu/ousia.svg"
             alt="Last release">
         </img>
     </a>
-    <a href="https://gitter.im/zenzilang/Lobby">
+    <a href="https://gitter.im/ousialang/Lobby">
         <img
-            src="https://badges.gitter.im/zenzilang/zenzi.svg"
+            src="https://badges.gitter.im/ousialang/ousia.svg"
             alt="Gitter chat">
         </img>
     </a>
 </p>
 
-# Zenzi
+# Ousia
 
-Zenzi is a an experimental programming language.
+Ousia is a an experimental programming language.

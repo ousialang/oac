@@ -1,4 +1,4 @@
-By writing plugins, you can also add your own commands to Zenzi.
+By writing plugins, you can also add your own commands to Ousia.
 
 * bug
 * help
@@ -12,12 +12,7 @@ By writing plugins, you can also add your own commands to Zenzi.
 * update
 * version
 
-    curl -sL https://zenzi.org | bash
-    zenzi install
 
-zenzi bug
+ousia profile --deterministic .
 
-
-zenzi profile --deterministic .
-
-All this commands are also available in the REPL as zenzi functions.
+All this commands are also available in the REPL as ousia functions.

@@ -1,0 +1,13 @@
+attribute "sorted_by_name";
+
+table Command {
+	name:string;
+	short_description:string;
+	is_native:bool;
+}
+
+table Commands {
+	commands:[Command] (sorted_by_name);
+}
+
+root_type Commands;
