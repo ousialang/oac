@@ -14,9 +14,7 @@ pub fn spellcheck(args: Args) -> ! {
     let dictionary = fst::Set::from_path(resource_path("commands"));
     let stream = dictionary.search(levenshtein_automaton).into_stream();
     let results = stream.into_str_vec()?;
-    println!("{} Did you mean '{}'?",
-             FATAL,
-             results[0]);
+    println!("{} Did you mean '{}'?", FATAL, results[0]);
     args[0] = results[0];
     //fuck::add_task(fuck::Spellcorrect(args), None);
 }

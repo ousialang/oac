@@ -11,5 +11,5 @@ pub const Help: Subcommand = Subcommand::Embedded {
 };
 
 fn entry_point(args: getopts::Matches) -> sysexit::Code {
-	sysexit::Success
+    sysexit::Success
 }

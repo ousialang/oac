@@ -3,7 +3,7 @@ extern crate sysexit;
 
 use self::getopts::Options;
 use commander::Subcommand;
-use ::OUSIA_VERSION;
+use OUSIA_VERSION;
 use utils;
 
 pub const Version: Subcommand = Subcommand::Embedded {

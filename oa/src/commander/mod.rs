@@ -18,7 +18,9 @@ fn print_usage() -> ExitCode {
     let usage_message_path = resource_path(vec!["usage.txt".to_owned()]);
     let file = File::open(&usage_message_path);
     let mut usage_message = String::new();
-    file.read_to_string(usage_message).expect("Reading resource file");
+    file.read_to_string(usage_message).expect(
+        "Reading resource file",
+    );
     //let available_commands = serde_json::from_str(usage_message)?;
 	/*Commands* commands = available_commands();
 	if (!commands) { return EX_UNAVAILABLE; }
@@ -63,9 +65,7 @@ fn handle_unexpected_argument(option: String) {
 
 #[derive(Clone)]
 pub enum Subcommand {
-    Plugin {
-        path: &'static Path,
-    },
+    Plugin { path: &'static Path },
     Embedded {
         schema: getopts::Options,
         entry_point: Box<Fn(getopts::Matches) -> ExitCode>,
@@ -73,25 +73,21 @@ pub enum Subcommand {
 }
 
 impl Subcommand {
-
     fn run(&self, args: Args) -> ExitCode {
         match self {
-            Subcommand::Embedded { schema, entry_point } => {
-                entry_point(schema.parse_options(args))
-            },
-            Subcommand::Plugin { path, sanitized_args } => {
-                Command::new(path)
-                    .args(args)
-                    .spawn()
-                    .unwrap()
-                    .wait()
-            },
+            Subcommand::Embedded {
+                schema,
+                entry_point,
+            } => entry_point(schema.parse_options(args)),
+            Subcommand::Plugin {
+                path,
+                sanitized_args,
+            } => Command::new(path).args(args).spawn().unwrap().wait(),
         }
     }
 
     fn new(name: String) -> Option<Subcommand> {
-        Subcommand::from_embedded_table(name)
-                   .or_else(Subcommand::from_resources(name))
+        Subcommand::from_embedded_table(name).or_else(Subcommand::from_resources(name))
     }
 
     fn from_resources(name: String) -> Option<Subcommand> {
@@ -108,20 +104,25 @@ impl Subcommand {
     }
 }
 
-const EMBEDDED_SUBCOMMANDS: HashMap<&'static str, Subcommand> = [
-    //("fuck", subcommands::fuck::Fuck),
-    ("help", subcommands::help::Help),
-    ("version", subcommands::version::Version),
-].iter().cloned().collect();
+const EMBEDDED_SUBCOMMANDS: HashMap<&'static str, Subcommand> =
+    [
+        //("fuck", subcommands::fuck::Fuck),
+        ("help", subcommands::help::Help),
+        ("version", subcommands::version::Version),
+    ].iter()
+        .cloned()
+        .collect();
 
 pub fn main() -> ExitCode {
     let args = args().collect();
     let subcmd_name = args[0];
     match args.len() {
         1 => print_usage(),
-        _ => match Subcommand::new(subcmd_name) {
-            Ok(subcmd) => subcmd.run(),
-            None => spellcheck::spellcheck(subcmd_name),
+        _ => {
+            match Subcommand::new(subcmd_name) {
+                Ok(subcmd) => subcmd.run(),
+                None => spellcheck::spellcheck(subcmd_name),
+            }
         }
     }
 }

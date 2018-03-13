@@ -15,9 +15,12 @@ fn resource_path_prefix() -> PathBuf {
     } else if cfg!(linux) {
         PathBuf::from(r"/usr/share/")
     } else if cfg!(windows) {
-        PathBuf::from(var("%ProgramFiles(x86)%").or_else(
-                      var("%ProgramFiles%")).unwrap())
-    }/* else {
+        PathBuf::from(
+            var("%ProgramFiles(x86)%")
+                .or_else(var("%ProgramFiles%"))
+                .unwrap(),
+        )
+    } /* else {
         compile_error!("unsupported OS")
     }*/
 }
