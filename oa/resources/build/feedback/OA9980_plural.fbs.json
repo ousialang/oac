@@ -1,0 +1,7 @@
+{
+	"formula" : "OA9980",
+	"type" : "Note",
+	"priority" : 0.005,
+	"is_fixable" : true,
+	"body" : "The following source files contain inconsistent indentation: <at line=%I col=%I>%S</at>"
+}

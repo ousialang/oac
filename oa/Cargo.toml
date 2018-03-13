@@ -1,0 +1,15 @@
+[package]
+name = "oa"
+version = "0.1.0"
+build = "build.rs"
+
+[dependencies]
+colored = "1.6.0"
+fst = "0.3.0"
+fst-levenshtein = "0.2.0"
+getopts = "0.2.17"
+libc = "0.2.39"
+phf = "0.7.21"
+serde_json = "1.0.11"
+sysexit = "0.2.0"
+time = "0.1.39"
