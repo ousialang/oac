@@ -1,5 +1,5 @@
 *~
-build/
+target/
 .DS_Store
 *.py[oc]
 CMakeFiles/
