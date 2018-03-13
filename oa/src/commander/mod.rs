@@ -12,8 +12,10 @@ use std::fs::File;
 use std::path::Path;
 use std::process::Command;
 
-fn print_usage() -> sysexit::Code {
-    let usage_message_path = resource_path(vec!["usage.txt"]).expect("Path join");
+use sysexit::Code as ExitCode;
+
+fn print_usage() -> ExitCode {
+    let usage_message_path = resource_path(vec!["usage.txt".to_owned()]);
     let file = File::open(&usage_message_path);
     let mut usage_message = String::new();
     file.read_to_string(usage_message).expect("Reading resource file");
@@ -30,7 +32,7 @@ fn print_usage() -> sysexit::Code {
     sysexit::Success
 }
 
-fn validate_args(args: Args, schema: getopts::Options) -> Result<getopts::Matches, sysexit::Code> {
+fn validate_args(args: Args, schema: getopts::Options) -> Result<getopts::Matches, ExitCode> {
     match schema.parse(args) {
         Err(getopts::Fail::UnrecognizedOption(o)) => Err(handle_unknown_option(o)),
         Err(getopts::Fail::OptionDuplicated(o)) => Err(handle_duplicated_option(o)),
@@ -41,37 +43,38 @@ fn validate_args(args: Args, schema: getopts::Options) -> Result<getopts::Matche
 
 }
 
-fn handle_unknown_option(option: String) -> sysexit::Code {
+fn handle_unknown_option(option: String) {
     println!("{}: '{}' is not a valid option.",
              FATAL,
              option,
     );
 }
 
-fn handle_duplicated_option(option: String) -> sysexit::Code {
+fn handle_duplicated_option(option: String) {
     println!("{}: the option '{}' was given more than once.",
              FATAL,
              option,
     );
 }
 
-fn handle_unexpected_argument(option: String) -> sysexit::Code {
+fn handle_unexpected_argument(option: String) {
     println!("// TODO");
 }
 
+#[derive(Clone)]
 pub enum Subcommand {
     Plugin {
         path: &'static Path,
     },
     Embedded {
         schema: getopts::Options,
-        entry_point: Box<Fn(getopts::Matches) -> sysexit::Code>,
+        entry_point: Box<Fn(getopts::Matches) -> ExitCode>,
     },
 }
 
 impl Subcommand {
 
-    fn run(&self, args: Args) -> sysexit::Code {
+    fn run(&self, args: Args) -> ExitCode {
         match self {
             Subcommand::Embedded { schema, entry_point } => {
                 entry_point(schema.parse_options(args))
@@ -109,9 +112,9 @@ const EMBEDDED_SUBCOMMANDS: HashMap<&'static str, Subcommand> = [
     //("fuck", subcommands::fuck::Fuck),
     ("help", subcommands::help::Help),
     ("version", subcommands::version::Version),
-];
+].iter().cloned().collect();
 
-pub fn main() {
+pub fn main() -> ExitCode {
     let args = args().collect();
     let subcmd_name = args[0];
     match args.len() {
