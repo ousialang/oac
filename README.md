@@ -1,8 +1,13 @@
 <p align="center">
-    <img
-        src="https://raw.githubusercontent.com/neysofu/ousia/master/extras/logo.png"
-        alt="logo">
-    </img>
+    <pre>
+		<code style="text-align: center;">
+		     _
+           _(")_
+          (_ . _)
+           / : \
+          (_/ \_)
+		</code>
+    </pre>
 </p>
 <p align="center">
     <img
@@ -12,7 +17,7 @@
     <a href="https://github.com/neysofu/ousia/blob/master/LICENSE.txt">
         <img
             src="https://img.shields.io/badge/license-BSD-blue.svg"
-            alt="BSD license">
+            alt="BSD-3 Clause license">
         </img>
     </a>
     <a href="https://github.com/neysofu/ousia/releases">
@@ -27,6 +32,13 @@
             alt="Gitter chat">
         </img>
     </a>
+	<a href="https://gitter.im/ousialang/Lobby">
+        <img
+            src="https://img.shields.io/badge/irc-%23ousia%20on%20Freenode-green.svg"
+            alt="IRC channel on Freenode">
+        </img>
+    </a>
+
 </p>
 
 # Ousia
