@@ -1,14 +1,6 @@
 sudo: false
-language: cpp
-matrix:
-  include:
-    - os: linux
-      compiler: clang
-    - os: linux
-      compiler: gcc
+language: rust
 
 script:
-  - cd oa && cmake . -G "Unix Makefiles" && make && make test
-  - git remote add gandi git+ssh://135860@git.sd6.gpaas.net/default.git
-  - cd www
-  - ssh 135860@git.sd6.gpaas.net deploy default.git
+  - cd oa
+  - cargo test
