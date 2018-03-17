@@ -16,6 +16,29 @@
 
         list sort (algo: $MERGESORT)
 
+		print "qwerty"
+		STDOUT print "FATAL!"
+		let sum = foldr '+
+		let product = foldr '*
+
+		for 5 times do {}
+		for a in x do {}
+		for A in X, B in Y do {}
+		for N in 2..10 by 3 {}
+		if condition do {}
+		unless condition do {}
+		while condition do {}
+
+		N as $STRING
+		flip
+		group_by [3]
+		flip
+		zip_with_index
+		map {
+			(x, i) => (x, )
+		}
+		map []
+
 * Strong metaprogramming capabiities
 * I first couldn't decide Ousia's stand in the expressions VS statements
   debates. Now I know. There won't be any difference. Instead, "statements"
