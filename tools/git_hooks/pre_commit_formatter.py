@@ -81,7 +81,7 @@ def format_rust(file_name):
     if PYTHON_33 and shutil.which(RUST_FMT) is not None or not PYTHON_33:
         print_formatting_notice(file_name)
         try:
-            subprocess.call([RUST_FMT,file_name])
+            subprocess.call([RUST_FMT, file_name])
             print_formatting_success(file_name)
             return True
         except (subprocess.CalledProcessError, OSError) as e:
