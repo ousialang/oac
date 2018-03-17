@@ -1,11 +1,14 @@
-*~
 target/
-.DS_Store
-*.py[oc]
-CMakeFiles/
-CMakeCache.txt
 
-# website
+# Rust and Cargo
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Website
 static/css/
 !bulma.css
 Gemfile.lock
@@ -15,12 +18,14 @@ node_modules/
 # Vim
 Session.vim
 .netrwhist
-# swap files
+*~
+tags
 [._]*.s[a-v][a-z]
 [._]*.sw[a-p]
 [._]s[a-v][a-z]
 [._]sw[a-p]
 
-# Linux
+# System specific
+.DS_Store
 .Trash-*
 .nfs*
