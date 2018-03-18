@@ -109,10 +109,10 @@ def format_sources(file_names):
     for file_name in file_names:
         if file_name.endswith(EXTENSIONS_CXX):
             success = format_cxx(file_name)
+        elif file_name.endswith(EXTENSIONS_HTML):
+            success = format_html(file_name)
         elif file_name.endswith(EXTENSIONS_PY):
             success = format_python(file_name)
-        elif file_name.endswith(EXTENSIONS_WEB):
-            success = format_web(file_name)
         elif file_name.endswith(EXTENSIONS_RUST):
             sucess = format_rust(file_name)
         if success:
