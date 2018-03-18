@@ -41,17 +41,6 @@ def needs_formatting(file_name):
     return file_name.endswith(EXTENSIONS)
 
 
-def is_command_possibly_available(command_name):
-    # shutil.which is available only in Python 3.3+
-    if PYTHON_33:
-        return shutil.which(command_name) is not None
-    else:
-        for path in os.environ["PATH"].split(os.pathsep):
-            if os.access(os.path.join(path, my_command), os.X_OK):
-                return True
-        return False
-
-
 def print_formatting_notice(file_name):
     print("Formatting {}...".format(file_name))
 
