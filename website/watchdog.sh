@@ -1,3 +1,7 @@
 #!/usr/bin/env bash
-cd $(dirname $0)
-FLASK_APP=src/index.py python3 -m flask run & sass --watch scss:css
+
+# HOW TO RUN:
+#   $ cd oa/website
+#   $ sh watchdog.sh
+
+FLASK_APP=index.py python3 -m flask run & sass --watch assets/scss:static/css
