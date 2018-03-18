@@ -19,18 +19,11 @@ try:
 except ImportError:
     YAPF = False
 
-try:
-    from BeautifulSoup import BeautifulSoup as bsoup
-    BSOUP = True
-except ImportError:
-    BSOUP = False
-
 PYTHON_33 = sys.version_info >= (3, 3)
 EXTENSIONS_CXX = (".c", ".h", ".cpp", ".cc", ".hpp")
-EXTENSIONS_HTML = (".html", )
 EXTENSIONS_PY = (".py", )
 EXTENSIONS_RUST = (".rs", )
-EXTENSIONS = EXTENSIONS_CXX + EXTENSIONS_HTML + EXTENSIONS_PY + EXTENSIONS_RUST
+EXTENSIONS = EXTENSIONS_CXX + EXTENSIONS_PY + EXTENSIONS_RUST
 HERE = os.path.realpath(__file__)
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 CLANG_FORMAT = "clang-format"
@@ -68,20 +61,6 @@ def format_cxx(file_name):
     return True
 
 
-def format_html(file_name):
-    print_formatting_notice(file_name)
-    try:
-        with open(filename, "r+") as f:
-            pretty_html = bsoup(f.read(), "html.parser").prettify()
-            f.truncate(0)
-            f.write(pretty_html)
-    except:
-        print_formatting_fail(file_name)
-        return False
-    print_formatting_success(file_name)
-    return True
-
-
 def format_python(file_name):
     print_formatting_notice(file_name)
     try:
@@ -109,8 +88,6 @@ def format_sources(file_names):
     for file_name in file_names:
         if file_name.endswith(EXTENSIONS_CXX):
             success = format_cxx(file_name)
-        elif file_name.endswith(EXTENSIONS_HTML):
-            success = format_html(file_name)
         elif file_name.endswith(EXTENSIONS_PY):
             success = format_python(file_name)
         elif file_name.endswith(EXTENSIONS_RUST):
