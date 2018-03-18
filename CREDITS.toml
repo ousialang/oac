@@ -6,7 +6,7 @@
 #   * address
 #   * PGP
 #   * description
-#   * webpage
+#   * website
 
 [[authors]]
 name = "Filippo Costa"
@@ -14,4 +14,4 @@ username = "neysofu"
 address = ["Via Giustiniano, 9", "Trieste 34133 (TS)", "ITALY"]
 email = "filippocosta.italy@gmail.com"
 description = "Lead developer"
-webpage = "https://twitter.com/neysofu"
+website = "https://twitter.com/neysofu"
