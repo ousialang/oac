@@ -1,13 +1,9 @@
 <p align="center">
-    <pre>
-		<code style="text-align: center;">
-		     _
-           _(")_
-          (_ . _)
-           / : \
-          (_/ \_)
-		</code>
-    </pre>
+	<img
+		src="https:://raw.githubusercontent.com/neysofu/ousia/master/extras/logo.png"
+		alt="Ousia logo"
+		width="30%">
+	</img>
 </p>
 <p align="center">
     <img
