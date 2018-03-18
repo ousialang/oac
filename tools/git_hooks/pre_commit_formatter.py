@@ -6,6 +6,8 @@
 # formatting tool is not installed: it's much better to let the user commit
 # their changes and deal with potentially bad formatted source files later.
 
+from __future__ import with_statement
+
 import os
 import shutil
 import subprocess
@@ -18,22 +20,36 @@ except ImportError:
     YAPF = False
 
 try:
-    import jsbeautifier as jsb
-    JSB = True
+    from BeautifulSoup import BeautifulSoup as bsoup
+    BSOUP = True
 except ImportError:
-    JSB = False
+    BSOUP = False
 
 PYTHON_33 = sys.version_info >= (3, 3)
 EXTENSIONS_CXX = (".c", ".h", ".cpp", ".cc", ".hpp")
+EXTENSIONS_HTML = (".html", )
 EXTENSIONS_PY = (".py", )
-EXTENSIONS_WEB = (".html", ".css", ".js")
 EXTENSIONS_RUST = (".rs", )
-EXTENSIONS = EXTENSIONS_CXX + EXTENSIONS_PY + EXTENSIONS_WEB + EXTENSIONS_RUST
-NEEDS_FORMATTING = lambda x: x.endswith(EXTENSIONS)
+EXTENSIONS = EXTENSIONS_CXX + EXTENSIONS_HTML + EXTENSIONS_PY + EXTENSIONS_RUST
 HERE = os.path.realpath(__file__)
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 CLANG_FORMAT = "clang-format"
 RUST_FMT = "rustfmt"
+
+
+def needs_formatting(file_name):
+    return file_name.endswith(EXTENSIONS)
+
+
+def is_command_possibly_available(command_name):
+    # shutil.which is available only in Python 3.3+
+    if PYTHON_33:
+        return shutil.which(command_name) is not None
+    else:
+        for path in os.environ["PATH"].split(os.pathsep):
+            if os.access(os.path.join(path, my_command), os.X_OK):
+                return True
+        return False
 
 
 def print_formatting_notice(file_name):
@@ -48,45 +64,55 @@ def print_formatting_fail(file_name):
     print("Formatting {} -- FAILED".format(file_name))
 
 
+def print_formatting_fatal():
+    print("Ousia's source formatter failed unexpectetly. Abort.")
+
+
 def format_cxx(file_name):
-    # shutil.which is only available in Python 3.3+
-    if PYTHON_33 and shutil.which(CLANG_FORMAT) is not None or not PYTHON_33:
-        print_formatting_notice(file_name)
-        try:
-            subprocess.call([CLANG_FORMAT, "-i", file_name])
-            print_formatting_success(file_name)
-            return True
-        except (subprocess.CalledProcessError, OSError) as e:
-            print_formatting_fail(file_name)
-            return False
+    print_formatting_notice(file_name)
+    try:
+        subprocess.call([CLANG_FORMAT, "-i", file_name])
+    except:
+        print_formatting_fail(file_name)
+        return False
+    print_formatting_success(file_name)
+    return True
+
+
+def format_html(file_name):
+    print_formatting_notice(file_name)
+    try:
+        with open(filename, "r+") as f:
+            pretty_html = bsoup(f.read(), "html.parser").prettify()
+            f.truncate(0)
+            f.write(pretty_html)
+    except:
+        print_formatting_fail(file_name)
+        return False
+    print_formatting_success(file_name)
+    return True
 
 
 def format_python(file_name):
-    if YAPF:
-        print_formatting_notice(file_name)
+    print_formatting_notice(file_name)
+    try:
         FormatFile(file_name, in_place=True)
-        print_formatting_success(file_name)
+    except:
+        print_formatting_fail(file_name)
+        return False
+    print_formatting_success(file_name)
     return YAPF
 
 
-def format_web(file_name):
-    if JSB:
-        print_formatting_notice(file_name)
-        jsb.beautify_file(file_name)
-        print_formatting_success(file_name)
-    return JSB
-
-
 def format_rust(file_name):
-    if PYTHON_33 and shutil.which(RUST_FMT) is not None or not PYTHON_33:
-        print_formatting_notice(file_name)
-        try:
-            subprocess.call([RUST_FMT, file_name])
-            print_formatting_success(file_name)
-            return True
-        except (subprocess.CalledProcessError, OSError) as e:
-            print_formatting_fail(file_name)
-            return False
+    print_formatting_notice(file_name)
+    try:
+        subprocess.call([RUST_FMT, file_name])
+    except:
+        print_formatting_fail(file_name)
+        return False
+    print_formatting_success(file_name)
+    return True
 
 
 def format_sources(file_names):
@@ -106,7 +132,7 @@ def format_sources(file_names):
 
 
 def git_add_file_names(file_names):
-    subprocess.check_output(
+    return subprocess.check_output(
         ["git", "add"] + file_names, stderr=subprocess.STDOUT)
 
 
@@ -115,16 +141,18 @@ def git_status_file_names():
         "git", "diff", "--name-only", "--cached", "--diff-filter=drc",
         "--no-renames"
     ]
-    try:
-        git_status = subprocess.check_output(
-            git_status_argv, stderr=subprocess.STDOUT)
-    except (subprocess.CalledProcessError, OSError) as e:
-        return []
+    git_status = subprocess.check_output(
+        git_status_argv, stderr=subprocess.STDOUT)
     lines = git_status.decode("utf-8").splitlines()
     return [os.path.join(PROJECT_DIR, l) for l in lines]
 
 
 if __name__ == "__main__":
-    file_names = [x for x in git_status_file_names() if NEEDS_FORMATTING(x)]
-    git_add_file_names(format_sources(file_names))
-    sys.exit(0)
+    try:
+        file_names = [
+            x for x in git_status_file_names() if needs_formatting(x)
+        ]
+        git_add_file_names(format_sources(file_names))
+    except subprocess.CalledProcessError as e:
+        print_formatting_fatal()
+        sys.exit(e.returncode)
