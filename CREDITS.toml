@@ -1,6 +1,6 @@
 # Please keep the list alphabetically sorted!
 # Fields:
-#   * name
+#   * name (name surname)
 #   * username (GitHub)
 #   * email
 #   * address
@@ -15,3 +15,31 @@ address = ["Via Giustiniano, 9", "Trieste 34133 (TS)", "ITALY"]
 email = "filippocosta.italy@gmail.com"
 description = "Lead developer"
 website = "https://twitter.com/neysofu"
+
+[[authors]]
+name = "William Swinton"
+description = "Logo (Plato's drawing)"
+
+[[projects]]
+name = "Bulma"
+by = "Jeremy Thomas et al."
+website = "https://bulma.io"
+license = "https://github.com/jgthms/bulma/blob/master/LICENSE"
+
+[[projects]]
+name = "git"
+by = "Linus Torvalds et al."
+website = "https://git-scm.com"
+license = "https://git-scm.com/about/free-and-open-source"
+
+[[projects]]
+name = "Python"
+by = "Python Software Foundation"
+website = "https://www.python.org/"
+license = "https://docs.python.org/3/license.html#terms-and-conditions-for-accessing-or-otherwise-using-python"
+
+[[projects]]
+name = "Rust"
+by = "Rust project developers"
+website = "https://www.rust-lang.org/"
+license = "https://github.com/rust-lang/rust/blob/master/COPYRIGHT"
