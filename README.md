@@ -1,6 +1,6 @@
 <p align="center">
 	<img
-		src="https:://raw.githubusercontent.com/neysofu/ousia/master/extras/logo.png"
+		src="https:://raw.githubusercontent.com/neysofu/ousia/readme-experiments/extras/logo.png"
 		alt="Ousia logo"
 		width="30%">
 	</img>
