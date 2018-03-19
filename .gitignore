@@ -9,6 +9,7 @@ __pycache__/
 *$py.class
 
 # Website
+.sass-cache/
 static/css/
 node_modules/
 
