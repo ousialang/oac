@@ -85,13 +85,14 @@ def format_rust(file_name):
 
 def format_sources(file_names):
     modified_file_names = []
+    success = False
     for file_name in file_names:
         if file_name.endswith(EXTENSIONS_CXX):
             success = format_cxx(file_name)
         elif file_name.endswith(EXTENSIONS_PY):
             success = format_python(file_name)
         elif file_name.endswith(EXTENSIONS_RUST):
-            sucess = format_rust(file_name)
+            success = format_rust(file_name)
         if success:
             modified_file_names.append(file_name)
     return modified_file_names
