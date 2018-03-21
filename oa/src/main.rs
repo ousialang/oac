@@ -1,6 +1,3 @@
-
-#[macro_use]
-extern crate phf;
 extern crate time;
 
 mod commander;
