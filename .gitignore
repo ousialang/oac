@@ -13,7 +13,7 @@ __pycache__/
 static/css/
 node_modules/
 
-# Vim
+# Editors
 Session.vim
 .netrwhist
 *~
@@ -22,6 +22,7 @@ tags
 [._]*.sw[a-p]
 [._]s[a-v][a-z]
 [._]sw[a-p]
+.save
 
 # System specific
 .DS_Store
