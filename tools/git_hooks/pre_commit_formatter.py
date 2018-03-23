@@ -85,7 +85,7 @@ def format_rust(file_name):
 
 def format_sources(file_names):
     modified_file_names = []
-    success = False
+    success = False  # This is not needed, but just to be sure
     for file_name in file_names:
         if file_name.endswith(EXTENSIONS_CXX):
             success = format_cxx(file_name)
