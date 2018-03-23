@@ -1,0 +1,12 @@
+# Papers of interest and somehow related to the development of Ousia.
+# ===================================================================
+
+# Didn't really ended up using it, but nice read. Might come useful if we ever
+# implement parallel parsing.
+Fischer, C. N. (1975). On parsing context free languages in parallel environments (Unpublished doctoral dissertation).
+
+# Awesome paper, a pleasure to read. It gave me some ideas for automatic
+# correction of typos.
+Schulz, K. U., & Mihov, S. (2002). Fast string correction with Levenshtein automata.
+	International Journal on Document Analysis and Recognition, 5(1), 67-85.
+	doi:10.1007/s10032-002-0082-8
