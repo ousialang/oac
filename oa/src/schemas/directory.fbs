@@ -1,9 +1,0 @@
-table Directory {
-	path:string;
-	path_short:string;
-	is_file:bool;
-	children_count:ulong;
-	children:[Directory];
-}
-
-root_type Directory;
