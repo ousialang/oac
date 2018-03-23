@@ -5,7 +5,7 @@ const run_sequence = require("run-sequence");
 const watch = require("gulp-watch");
 
 
-const SCSS_FILES = "./assets/scss/**/*.scss";
+const SCSS_FILES = "./assets/scss/**/*.{scss,sass}";
 
 
 gulp.task("sass:build", function() {
