@@ -4,7 +4,7 @@ version = "0.1.0"
 build = "build.rs"
 
 [dependencies]
-clap = "2.31.2"
+clap = {version = "2.31.2", features = []}
 colored = "1.6.0"
 exitcode = "1.1.2"
 fst = "0.3.0"
