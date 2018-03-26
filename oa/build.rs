@@ -1,23 +1,26 @@
+extern crate chrono;
+
 use std::process::Command;
 
+use chrono::Utc;
+
+
 fn main() {
-    set_env_var("CARGO_PKG_HASH", git_commit_hash());
-    set_env_var("CARGO_PKG_TAGS", String::new());
+    set_rustc_var("CARGO_PKG_HASH", git_commit_hash());
+    set_rustc_var("CARGO_PKG_TAGS", String::new());
+    set_rustc_var("CARGO_PKG_TIMESTAMP_RFC3339", Utc::now().to_rfc3339());
 }
 
-fn set_env_var(key: &str, value: String) {
+
+fn set_rustc_var(key: &str, value: String) {
     println!("cargo:rustc-env={}={}", key, value);
 }
 
 fn git_commit_hash() -> String {
-    match Command::new("git").args(&["rev-parse", "HEAD"]).output() {
-        Ok(o) => {
-            String::from_utf8(o.stdout)
-                .expect("encoding error while reading 'git' output")
-                .chars()
-                .take(8)
-                .collect()
-        }
-        Err(_) => "????????".to_owned(),
-    }
+    let hash = Command::new("git")
+        .args(&["rev-parse", "--short=8", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    String::from_utf8(hash).unwrap().chars().collect()
 }
