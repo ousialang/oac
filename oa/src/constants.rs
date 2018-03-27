@@ -2,6 +2,7 @@ use std::env::var_os;
 use std::path::PathBuf;
 
 
+pub const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 pub const VERSION_MAJOR: &'static str = env!("CARGO_PKG_VERSION_MAJOR");
 pub const VERSION_MINOR: &'static str = env!("CARGO_PKG_VERSION_MINOR");
 pub const VERSION_PATCH: &'static str = env!("CARGO_PKG_VERSION_PATCH");
