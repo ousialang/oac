@@ -1,15 +1,8 @@
-extern crate getopts;
-extern crate sysexit;
+use clap::ArgMatches;
+use exitcode;
+use exitcode::ExitCode;
 
-use self::getopts::Options;
 
-use commander::Subcommand;
-
-pub const Help: Subcommand = Subcommand::Embedded {
-    schema: Options::new(),
-    entry_point: Box::new(entry_point),
-};
-
-fn entry_point(args: getopts::Matches) -> sysexit::Code {
-    sysexit::Success
+pub fn main(args: ArgMatches) -> ExitCode {
+    exitcode::OK
 }

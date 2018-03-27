@@ -1,20 +1,36 @@
-extern crate fst;
-extern crate fst_levenshtein;
+use constants::SUBCOMMANDS_FST;
+use utils::feedback::Level;
+use utils::resources::Resource;
 
-//use subcommands::fuck::{add_task, Spellcorrect};
-use self::fst_levenshtein::Levenshtein;
-use std::env::Args;
-use utils::io::FATAL;
-use utils::resources::resource_path;
+use fst::{IntoStreamer, Streamer, Set, SetBuilder};
+use fst_levenshtein::Levenshtein;
 
-pub fn spellcheck(args: Args) -> ! {
-    let query = args[0];
-    let levenshtein_distance = query.len().log2();
-    let levenshtein_automaton = Levenshtein::new(query, levenshtein_distance)?;
-    let dictionary = fst::Set::from_path(resource_path("commands"));
-    let stream = dictionary.search(levenshtein_automaton).into_stream();
-    let results = stream.into_str_vec()?;
-    println!("{} Did you mean '{}'?", FATAL, results[0]);
-    args[0] = results[0];
-    //fuck::add_task(fuck::Spellcorrect(args), None);
+
+struct SubcommandSpellchecker {
+    query: &str,
+    levenshtein_fst: Levenshtein,
+    dictionary: fst::Set,
+}
+
+impl SubcommandSpellchecker {
+    fn new(query: &str, dictionary: Vec<&str>) -> Option<Spellchecker> {
+        let max_distance = query.len().log2().floor();
+        let dictionary_path = resource_path(SUBCOMMANDS_FST);
+        let dictionary = fst::Set::from_path(dictionary_path);
+        match Levenshtein::new(query, max_distance) {
+            Ok(fst) => Spellchecker {
+                query: query,
+                levenshtein_fst: fst,
+                dictionary: dictionary,
+            },
+            Err(_) => None,
+        }
+    }
+
+    fn suggestions(&self) -> Vec<&str> {
+        self.dictionary
+            .search(self.levenshtein_fst)
+            .into_stream()
+            .into_str_vec()?;
+    }
 }

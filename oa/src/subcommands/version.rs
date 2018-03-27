@@ -1,38 +1,37 @@
-extern crate getopts;
-extern crate sysexit;
+use constants::{OUSIA_VERSION, OusiaVersion};
+use utils::feedback::Level;
 
-use self::getopts::Options;
-use commander::Subcommand;
-use OUSIA_VERSION;
-use utils;
+use clap::ArgMatches;
+use exitcode;
+use exitcode::ExitCode;
 
-pub const Version: Subcommand = Subcommand::Embedded {
-    schema: Options::new(),
-    entry_point: Box::new(entry_point),
-};
 
-fn handle_unknown_arg(option: String) {
-    println!("{} {} is not a known option.", utils::io::FATAL, option);
-}
-
-fn entry_point(matches: getopts::Matches) -> sysexit::Code {
-    match matches.free.len() {
-        0 => print_human_readable_version(),
-        _ => print_machine_readable_version(),
+pub fn main(matches: ArgMatches) -> ExitCode {
+    let version = OUSIA_VERSION();
+    match matches.args.len() {
+        0 => print_human_readable_version(version),
+        _ => print_machine_readable_version(version),
     }
-    sysexit::Success
+    exitcode::OK
 }
 
-fn print_human_readable_version() {
-    println!("Ousia {}.{}.{}-{} ({})",
-        OUSIA_VERSION.major,
-        OUSIA_VERSION.minor,
-        OUSIA_VERSION.patch,
-        OUSIA_VERSION.tags.join("-"),
-        OUSIA_VERSION.hash,
+fn print_human_readable_version(version: OusiaVersion) {
+    let version_hyphenated_tags = {
+        if version.tags.is_empty() {
+            "".to_owned()
+        } else {
+            version.tags.join("-")
+        }
+    };
+    println!("Ousia {}.{}.{}{} ({})",
+        version.major,
+        version.minor,
+        version.patch,
+        version_hyphenated_tags,
+        version.hash,
     );
 }
 
-fn print_machine_readable_version() {
+fn print_machine_readable_version(version: OusiaVersion) {
     // TODO
 }

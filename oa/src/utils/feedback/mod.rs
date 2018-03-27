@@ -2,7 +2,7 @@ extern crate colored;
 
 use self::colored::*;
 
-enum Level {
+pub enum Level {
     Fatal,
     Error,
     Warning,
@@ -11,7 +11,7 @@ enum Level {
 }
 
 impl Level {
-    fn to_colored_string(self) -> ColoredString {
+    pub fn to_colored_string(self) -> ColoredString {
         match self {
             Level::Fatal => "FATAL".red().bold(),
             Level::Error => "ERROR".red().bold(),
@@ -22,7 +22,7 @@ impl Level {
     }
 }
 
-struct Feedback {
+pub struct Feedback {
     id: u32,
     level: Level,
     message: String,
