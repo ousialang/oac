@@ -2,7 +2,7 @@ use subcommands as subcmd;
 use utils::feedback::Level;
 
 use clap;
-use clap::{App, AppSettings, Arg, SubCommand};
+use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use exitcode;
 use exitcode::ExitCode;
 
@@ -11,17 +11,17 @@ pub fn main() -> ExitCode {
     match clap_app().get_matches_safe() {
         Err(e) => CliUsageError::new(e).emit(),
         Ok(args) => {
-            if args.is_present("help") {
-                subcmd::help::main(None)
-            } else if args.is_present("version") {
-                subcmd::version::main(None)
+            if args.is_present("help") && args.subcommand_name().is_none() {
+                subcmd::help::main(ArgMatches::new())
+            } else if args.is_present("version") && args.subcommand_name().is_none() {
+                subcmd::version::main(ArgMatches::new())
             } else {
                 match args.subcommand_name() {
                     // help & version are special because they might also be called with -h,
                     // --help, -V, or --version; their arguments may then not be available (thus
                     // the Some(args))
-                    Some("help") => subcmd::help::main(Some(args)),
-                    Some("version") => subcmd::version::main(Some(args)),
+                    Some("help") => subcmd::help::main(args),
+                    Some("version") => subcmd::version::main(args),
                     Some("fuck") => subcmd::fuck::main(args),
                     _ => exitcode::OK,
                 }
@@ -43,8 +43,15 @@ fn clap_app() -> App<'static, 'static> {
         .setting(AppSettings::VersionlessSubcommands)
         .arg(Arg::with_name("version").short("V").long("version"))
         .arg(Arg::with_name("help").short("h").long("help"))
+        .subcommand(
+            SubCommand::with_name("version")
+                .arg(Arg::with_name("major").short("M").long("major"))
+                .arg(Arg::with_name("minor").short("m").long("minor"))
+                .arg(Arg::with_name("patch").short("p").long("patch"))
+                .arg(Arg::with_name("tags").short("t").long("tags"))
+                .arg(Arg::with_name("commit-hash").short("c").long("commit-hash")),
+        )
         .subcommand(SubCommand::with_name("help"))
-        .subcommand(SubCommand::with_name("version"))
 }
 
 
