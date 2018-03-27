@@ -13,7 +13,7 @@ struct SubcommandSpellchecker {
 }
 
 impl SubcommandSpellchecker {
-    fn new(query: &str, dictionary: Vec<&str>) -> Option<Spellchecker> {
+    fn new(query: &str) -> Option<Spellchecker> {
         let max_distance = query.len().log2().floor();
         let dictionary_path = resource_path(SUBCOMMANDS_FST);
         let dictionary = fst::Set::from_path(dictionary_path);
