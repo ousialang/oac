@@ -21,7 +21,7 @@ pub fn main(args: Option<ArgMatches>) -> ExitCode {
 fn print_human_readable_version() {
     println!("Ousia {}{}{} ({})",
         constants::VERSION,
-        if constants::VERSION_TAGS.is_some() { "" } else { "-" },
+        if constants::VERSION_TAGS.is_some() { "-" } else { "" },
         constants::VERSION_TAGS.map_or_else(|| String::new(), |s| s.replace(" ", "-")),
         constants::VERSION_HASH,
     );
