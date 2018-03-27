@@ -1,24 +1,9 @@
-/*extern crate getopts;
-extern crate sysexit;
+use clap::ArgMatches;
+use exitcode;
+use exitcode::ExitCode;
 
-use commander::Subcommand;
-use ::OUSIA_VERSION;
-use utils;
 
-pub const Fuck: Subcommand = Subcommand::Embedded {
-    name: "fuck",
-    entry_point: entry_point,
-};
-
-fn entry_point(matches: getopts::Matches) -> sysexit::Code {
-    sysexit::Success
+pub fn main(args: ArgMatches) -> ExitCode {
+    // TODO
+    exitcode::OK
 }
-
-type Task = Fn<String, sysexit::Code>;
-
-fn add_task(task: Fn<String, sysexit::Code>, flag: Option<String>) {
-    let mut file = File::open(resource_path(vec!["subcommands", "fuck", "tasks.json"]))?;
-}
-
-mod tasks {
-}*/

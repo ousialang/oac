@@ -17,8 +17,12 @@ pub fn main() -> ExitCode {
                 subcmd::version::main(None)
             } else {
                 match args.subcommand_name() {
+                    // help & version are special because they might also be called with -h,
+                    // --help, -V, or --version; their arguments may then not be available (thus
+                    // the Some(args))
                     Some("help") => subcmd::help::main(Some(args)),
                     Some("version") => subcmd::version::main(Some(args)),
+                    Some("fuck") => subcmd::fuck::main(args),
                     _ => exitcode::OK,
                 }
             }
