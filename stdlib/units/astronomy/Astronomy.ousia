@@ -1,9 +1,0 @@
-package ousia.units.astronomy
-
-import ousia.units
-import ousia.math.Pi
-
-val PC = Unit[Length]("parsec", "pc", 648000 / pi)
-val AU = Unit[Length]("astronomical unit", "au", 149597870700)
-val LY = Unit[Length]("light-year", "ly", 9460730472580800)
-val C = Unit[Length/Time]("speed of light in vacuum", "c", 299792458)

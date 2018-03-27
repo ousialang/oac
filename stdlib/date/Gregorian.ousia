@@ -1,3 +1,0 @@
-package ousia.calendars
-
-class Gregorian extends Calendar

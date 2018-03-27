@@ -1,3 +1,0 @@
-package ZENZI.AUTOMATON
-
-(2, 3, "ol", "a") map (_>2)
