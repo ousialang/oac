@@ -15,3 +15,11 @@ textwrap = { version = "0.9", features = ["term_size"] }
 
 [build-dependencies]
 chrono = "0.4"
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
