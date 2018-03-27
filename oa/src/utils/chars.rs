@@ -1,5 +1,4 @@
 trait CharUtils {
-    fn is_decimal_digit(self) -> bool;
     fn is_symbol(self) -> bool;
     fn is_opening_bracket(self) -> bool;
     fn is_closing_bracket(self) -> bool;
@@ -8,10 +7,6 @@ trait CharUtils {
 }
 
 impl CharUtils for char {
-    fn is_decimal_digit(self) -> bool {
-        self.is_digit(10)
-    }
-
     fn is_symbol(self) -> bool {
         "/+*-!|%&=?^@#.:,<>".contains(self)
     }
