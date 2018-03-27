@@ -1,7 +1,9 @@
 extern crate clap;
+extern crate colored;
 extern crate exitcode;
 extern crate fst;
 extern crate fst_levenshtein;
+extern crate textwrap;
 
 mod commander;
 pub mod constants;

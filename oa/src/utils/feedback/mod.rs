@@ -1,6 +1,4 @@
-extern crate colored;
-
-use self::colored::*;
+use colored::*;
 
 pub enum Level {
     Fatal,
