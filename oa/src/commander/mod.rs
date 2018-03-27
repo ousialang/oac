@@ -10,21 +10,20 @@ use exitcode::ExitCode;
 pub fn main() -> ExitCode {
     match clap_app().get_matches_safe() {
         Err(e) => CliUsageError::new(e).emit(),
-        Ok(args) => {
-            if args.is_present("help") && args.subcommand_name().is_none() {
-                subcmd::help::main(ArgMatches::new())
-            } else if args.is_present("version") && args.subcommand_name().is_none() {
-                subcmd::version::main(ArgMatches::new())
-            } else {
-                match args.subcommand_name() {
-                    // help & version are special because they might also be called with -h,
-                    // --help, -V, or --version; their arguments may then not be available (thus
-                    // the Some(args))
-                    Some("help") => subcmd::help::main(args),
-                    Some("version") => subcmd::version::main(args),
-                    Some("fuck") => subcmd::fuck::main(args),
-                    _ => exitcode::OK,
+        Ok(m) => {
+            match m.subcommand() {
+                ("help", Some(sub_m)) => subcmd::help::main(sub_m),
+                ("version", Some(sub_m)) => subcmd::version::main(sub_m),
+                ("fuck", Some(sub_m)) => subcmd::fuck::main(sub_m),
+                (external, Some(_)) => exitcode::OK, // TODO
+                (_, None) => {
+                    if m.is_present("version") {
+                        subcmd::version::main(&ArgMatches::new())
+                    } else {
+                        subcmd::help::main(&ArgMatches::new())
+                    }
                 }
+                _ => exitcode::SOFTWARE,
             }
         }
     }
@@ -98,22 +97,4 @@ fn print_usage() -> ExitCode {
     println!("");
     println!("Type 'ousia help <command>' for more information about a command.");*/
     exitcode::OK
-}
-
-fn handle_unknown_option(option: &str) {
-    println!("{}: '{}' is not a valid option.",
-        Level::Fatal.to_colored_string(),
-        option,
-    );
-}
-
-fn handle_duplicated_option(option: &str) {
-    println!("{}: the option '{}' was given more than once.",
-        Level::Warning.to_colored_string(),
-        option,
-    );
-}
-
-fn handle_unexpected_argument(option: String) {
-    println!("// TODO");
 }

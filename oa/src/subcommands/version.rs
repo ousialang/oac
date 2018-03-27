@@ -5,16 +5,11 @@ use exitcode;
 use exitcode::ExitCode;
 
 
-pub fn main(args: ArgMatches) -> ExitCode {
-    match args.subcommand_matches("version") {
-        Some(some_args) => {
-            if some_args.args.is_empty() {
-                print_human_readable_version()
-            } else {
-                print_machine_readable_version(some_args)
-            }
-        }
-        None => print_human_readable_version(),
+pub fn main(subcmd_matches: &ArgMatches) -> ExitCode {
+    if subcmd_matches.args.is_empty() {
+        print_human_readable_version()
+    } else {
+        print_machine_readable_version(subcmd_matches)
     }
     exitcode::OK
 }
