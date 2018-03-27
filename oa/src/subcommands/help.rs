@@ -3,6 +3,6 @@ use exitcode;
 use exitcode::ExitCode;
 
 
-pub fn main(args: ArgMatches) -> ExitCode {
+pub fn main(args: Option<ArgMatches>) -> ExitCode {
     exitcode::OK
 }

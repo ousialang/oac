@@ -5,10 +5,15 @@ use exitcode;
 use exitcode::ExitCode;
 
 
-pub fn main(matches: ArgMatches) -> ExitCode {
-    match matches.args.len() {
-        0 => print_human_readable_version(),
-        _ => print_machine_readable_version(),
+pub fn main(args: Option<ArgMatches>) -> ExitCode {
+    match args {
+        Some(some_args) => {
+            match some_args.args.len() {
+                0 => print_human_readable_version(),
+                _ => print_machine_readable_version(),
+            }
+        }
+        None => print_human_readable_version(),
     }
     exitcode::OK
 }

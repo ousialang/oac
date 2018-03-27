@@ -1,28 +1,46 @@
-use subcommands;
+use subcommands as subcmd;
 use utils::feedback::Level;
 
 use clap;
-use clap::{App, AppSettings};
+use clap::{App, AppSettings, Arg, SubCommand};
 use exitcode;
 use exitcode::ExitCode;
 
 
 pub fn main() -> ExitCode {
-    let app = App::new("oa")
-        .setting(AppSettings::AllowExternalSubcommands)
-        .setting(AppSettings::StrictUtf8)
-        .setting(AppSettings::VersionlessSubcommands)
-        .setting(AppSettings::DisableHelpSubcommand);
-    match app.get_matches_safe() {
+    match clap_app().get_matches_safe() {
         Err(e) => CliUsageError::new(e).emit(),
-        Ok(arg_matches) => {
-            match arg_matches.subcommand_name() {
-                Some("help") => subcommands::help::main(arg_matches),
-                Some("version") => subcommands::version::main(arg_matches),
-                _ => exitcode::OK,
+        Ok(args) => {
+            if args.is_present("help") {
+                subcmd::help::main(None)
+            } else if args.is_present("version") {
+                subcmd::version::main(None)
+            } else {
+                match args.subcommand_name() {
+                    Some("help") => subcmd::help::main(Some(args)),
+                    Some("version") => subcmd::version::main(Some(args)),
+                    _ => exitcode::OK,
+                }
             }
         }
     }
+}
+
+fn clap_app() -> App<'static, 'static> {
+    // Clap provides a wonderful set of defaults for CLIs, but we want to provide a unified and
+    // consistent UX: for this reason, we override all Clap's default emitters and helpers and just
+    // use it as a parser.
+    App::new("oa")
+        .setting(AppSettings::StrictUtf8)
+        .setting(AppSettings::ColorNever)
+        .setting(AppSettings::VersionlessSubcommands)
+        .setting(AppSettings::DisableHelpSubcommand)
+        .setting(AppSettings::AllowExternalSubcommands)
+        .setting(AppSettings::VersionlessSubcommands)
+        .arg(Arg::with_name("version").short("V").long("version"))
+        .arg(Arg::with_name("help").short("h").long("help"))
+        .subcommand(SubCommand::with_name("help"))
+        .subcommand(SubCommand::with_name("version"))
 }
 
 
