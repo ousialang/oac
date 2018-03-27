@@ -19,8 +19,9 @@ impl CharUtils for char {
     }
 
     fn is_right_side_of(self, c: char) -> bool {
-        let ascii = self as u8;
-        // https://www.youtube.com/watch?v=aboZctrHfK8
-        c as u8 == ascii - 1 - ((ascii > 42) as u8)
+        match (self, c) {
+            (')', '(') | (']', '[') | ('}', '{') => true,
+            _ => false,
+        }
     }
 }
