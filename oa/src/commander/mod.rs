@@ -1,15 +1,8 @@
 use subcommands;
 use utils::feedback::Level;
-use utils::resources::resource_path;
-
-use std::collections::HashMap;
-use std::env::{args, Args};
-use std::fs::File;
-use std::path::Path;
-use std::process::Command;
 
 use clap;
-use clap::{App, AppSettings, ArgMatches};
+use clap::{App, AppSettings};
 use exitcode;
 use exitcode::ExitCode;
 

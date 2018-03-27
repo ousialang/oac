@@ -3,9 +3,7 @@ pub mod version;
 
 use utils::resources::resource_path;
 
-use std::collections::HashMap;
 use std::env::args;
-use std::path::PathBuf;
 use std::process::Command;
 
 use clap::ArgMatches;

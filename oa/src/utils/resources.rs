@@ -2,7 +2,7 @@ use constants::OUSIA_PATH_FROM_ENV;
 
 use std::env::home_dir;
 use std::env::var;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 
 pub fn resource_path() -> PathBuf {

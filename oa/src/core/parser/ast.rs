@@ -1,4 +1,3 @@
-use utils::chars;
 use utils::feedback::Feedback;
 
 use std::collections::LinkedList;

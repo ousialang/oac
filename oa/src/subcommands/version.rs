@@ -1,5 +1,4 @@
 use constants;
-use utils::feedback::Level;
 
 use clap::ArgMatches;
 use exitcode;
