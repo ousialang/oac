@@ -7,7 +7,6 @@ use chrono::Utc;
 
 fn main() {
     set_rustc_var("CARGO_PKG_HASH", git_commit_hash());
-    set_rustc_var("CARGO_PKG_TAGS", String::new());
     set_rustc_var("CARGO_PKG_TIMESTAMP_RFC3339", Utc::now().to_rfc3339());
 }
 
