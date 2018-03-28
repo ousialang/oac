@@ -19,8 +19,8 @@ impl CharUtils for char {
     }
 
     fn is_right_side_of(self, c: char) -> bool {
-        match (self, c) {
-            (')', '(') | (']', '[') | ('}', '{') => true,
+        match (c, self) {
+            ('(', ')') | ('[', ']') | ('{', '}') => true,
             _ => false,
         }
     }
