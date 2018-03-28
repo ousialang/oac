@@ -22,7 +22,7 @@ pub fn resource_path() -> PathBuf {
                 )
             } else {
                 // FIXME: cfg evaluating to false
-                home_dir().unwrap_or(PathBuf::new())
+                home_dir().map_or_else(|| PathBuf::new(), |p| p.join(".oa/"))
             }
         }
     }
