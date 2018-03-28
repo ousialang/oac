@@ -50,7 +50,16 @@ fn clap_app() -> App<'static, 'static> {
                 .arg(Arg::with_name("tags").short("t").long("tags"))
                 .arg(Arg::with_name("commit-hash").short("c").long("commit-hash")),
         )
-        .subcommand(SubCommand::with_name("help"))
+        .subcommand(SubCommand::with_name("help").arg(
+            Arg::with_name("topic").index(
+                1,
+            ),
+        ))
+        .subcommand(SubCommand::with_name("fuck").arg(
+            Arg::with_name("issue").index(
+                1,
+            ),
+        ))
 }
 
 
@@ -76,25 +85,4 @@ impl CliUsageError {
         );
         exitcode::USAGE
     }
-}
-
-
-fn print_usage() -> ExitCode {
-    /*let usage_message_path = resource_path(vec!["usage.txt".to_owned()]);
-    let file = File::open(&usage_message_path);
-    let mut usage_message = String::new();
-    file.read_to_string(usage_message).expect(
-        "Reading resource file",
-    );
-    //let available_commands = serde_json::from_str(usage_message)?;
-	Commands* commands = available_commands();
-	if (!commands) { return EX_UNAVAILABLE; }
-	println!("Usage: ousia <command> [options] [<arguments>]\n\nCheck out these subcommands:");
-	for cmd in commands {
-        println!("  - {}", cmd.name.bold());
-        println!("    {}", cmd.short_description());
-	}
-    println!("");
-    println!("Type 'ousia help <command>' for more information about a command.");*/
-    exitcode::OK
 }
