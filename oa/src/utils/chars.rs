@@ -1,4 +1,4 @@
-trait CharUtils {
+pub trait CharUtils {
     fn is_symbol(self) -> bool;
     fn is_opening_bracket(self) -> bool;
     fn is_closing_bracket(self) -> bool;
