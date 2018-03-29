@@ -1,9 +1,11 @@
-use constants::OUSIA_PATH_FROM_ENV;
-
 use std::env::home_dir;
-use std::env::var;
+use std::env::{var, var_os};
 use std::path::PathBuf;
 
+
+pub fn OUSIA_PATH_FROM_ENV() -> Option<PathBuf> {
+    var_os("OUSIA_PATH").map(|s| PathBuf::from(s))
+}
 
 pub fn resource_path() -> PathBuf {
     match OUSIA_PATH_FROM_ENV() {
