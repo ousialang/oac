@@ -1,5 +1,6 @@
 use colored::*;
 
+#[derive(Debug)]
 pub enum Level {
     Fatal,
     Error,
@@ -20,6 +21,7 @@ impl Level {
     }
 }
 
+#[derive(Debug)]
 pub struct Feedback {
     id: u32,
     level: Level,

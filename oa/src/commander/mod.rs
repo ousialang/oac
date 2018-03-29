@@ -12,9 +12,10 @@ pub fn main() -> ExitCode {
         Err(e) => CliUsageError::new(e).emit(),
         Ok(m) => {
             match m.subcommand() {
+                ("build", Some(sub_m)) => subcmd::build::main(sub_m),
+                ("fuck", Some(sub_m)) => subcmd::fuck::main(sub_m),
                 ("help", Some(sub_m)) => subcmd::help::main(sub_m),
                 ("version", Some(sub_m)) => subcmd::version::main(sub_m),
-                ("fuck", Some(sub_m)) => subcmd::fuck::main(sub_m),
                 (external, Some(_)) => exitcode::OK, // TODO
                 (_, None) => {
                     if m.is_present("version") {
@@ -59,6 +60,9 @@ fn clap_app() -> App<'static, 'static> {
             Arg::with_name("issue").index(
                 1,
             ),
+        ))
+        .subcommand(SubCommand::with_name("build").arg(
+            Arg::with_name("path").index(1).required(true),
         ))
 }
 

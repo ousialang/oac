@@ -7,19 +7,23 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 
+#[derive(Debug)]
 pub struct Ast {
     expressions: Vec<Expression>,
 }
 
+#[derive(Debug)]
 pub struct Expression {
     tokens: Ast,
 }
 
+#[derive(Debug)]
 pub struct Token {
     location: Range<u64>,
     kind: TokenKind,
 }
 
+#[derive(Debug)]
 pub enum TokenKind {
     NestedScope(NestedScope),
     Number(Number),
@@ -28,27 +32,32 @@ pub enum TokenKind {
     Symbol,
 }
 
+#[derive(Debug)]
 pub struct NestedScope {
     bracket: Bracket,
     contents: Vec<Expression>,
 }
 
+#[derive(Debug)]
 pub enum Bracket {
     Round,
     Square,
     Curly,
 }
 
+#[derive(Debug)]
 pub struct Number {
     decimal_point: Option<u16>,
 }
 
+#[derive(Debug)]
 pub struct Literal {
     true_str: String,
 }
 
 
 type ParserResult = (Option<Ast>, Vec<Feedback>);
+
 
 impl Ast {
     pub fn new() -> Ast {
