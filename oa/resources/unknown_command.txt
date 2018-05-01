@@ -1,2 +1,0 @@
-Unknown command: intsall
-Maybe you meant 'install'?
