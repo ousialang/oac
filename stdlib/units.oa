@@ -1,0 +1,7 @@
+use u = oa.units
+
+let Newton = $u.metre / $u.second^2
+
+1 u.MiB as $u.kb
+$u.second
+42 u.Newton

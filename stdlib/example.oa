@@ -1,42 +1,50 @@
-use SPAM;
-use FOO.Bar;
-use Spam = FOO.Bar;
+# Indentation IS significant, but it's only used for line continuations.
 
-let GREETINGS = (
-	"Hello",
-    "Hola",
-	"Bonjour"
-	"Ciao"
-	"こんにちは"
-	"안녕하세요"
-	"Cześć",
-	"Olá",
-	"Здравствуйте",
-	"Chào bạn",
-	"您好",
-	"Hallo",
-	"Hej",
-	"Ahoj",
-	"سلام" )
+use SPAM
+use FOO.Bar
+use Spam = FOO.Bar
 
-$Greetings FOREACH (_ PRINTLN)
+let greetings = ( "Hello"
+    		    , "Hola"
+			    , "Bonjour"
+			    , "Ciao"
+			    , "こんにちは"
+			    , "안녕하세요"
+			    , "Cześć"
+			    , "Olá"
+			    , "Здравствуйте"
+			    , "Chào bạn"
+			    , "您好"
+			    , "Hallo"
+			    , "Hej"
+			    , "Ahoj"
+			    , "سلام" )
 
-for n in seq {}
+$greetings map (_ println)
+
+for 'n in $Seq {}
+
 for ever {
 	$Welcome_msg print
 }
 
-fn euler_1 {
-	(1..1000) filter (n => $n%3==0 or $n%5==0) sum
-}
+let Euler (
+	(1..1000) filter (n => $n%3==0 or $n%5==0) sum;
+)
 
-fn eurler_2 {
-	fn fibonacci = $n match {
-		1 => 1,
-		2 => 2,
-		_ => ($n-1) fibonacci + ($n-2) fibonacci
+let eurler_2 | range = {
+	range nat map (_ fibonacci) filter (_ is_even and _ < 4000000) sum }
+
+
+# Use in 3D and higher for textured image synthesis are
+# covered by U.S. Patent 6,867,776, if the algorithm is implemented using the
+# specific techniques described in any of the patent claims.
+let simplex-noise | grid: $Matrix = {
+	let skew | coords = {
+		let skewness = (($coords size) sqrt - 1) / ($coords size)
+		$coords map (_ + ($coords sum * $skewness)) }
+	let simplicial-subdivision = {
 	}
-	$range nat map (_ fibonacci) filter (_ is_even and _ < 4000000) sum
 }
 
 fn euler_3 {
@@ -53,7 +61,7 @@ fn euler_6 {
 
 fn euler_7 {
 	use math.PRIMES
-	$math.PRIMES 10001
+	$PRIMES@10001
 }
 
 fn eurler_8 {
@@ -64,31 +72,18 @@ fn euler_9 {
 
 }
 
+$St(1..100) map 'fizzbuzz
 
-let fizzbuzz = ($n % 3, $n % 5) match {
-	(0, 0) => "fizzbuzz"
-	(0, _) => "fizz"
-	(_, 0) => "buzz"
-	(_, _) => $n as $String }
+$USERS sort
+	   map 'cart
+	   filter 'total_price
+	   map (_ with_discount < $MAXIMUM_PRICE)
 
-1..100 foreach (_ fizzbuzz stdout.print)
-
-$users sort
-       map (_ cart)
-	   filter (_ total_price)
-	   map (_ with_discount < $MAXIMUM_PRICE);
-
-($F ++ $G);
+($f ++ $g)
 
 $Functions map reduce 'foldr filter _ total_price
 
 let is_sorted = $list slide (2,1) map (_ <= _) reduce 'and;
-
-let FACTORIAL [N, J>0] = (1 .. N) reduce '*;
-let BOGOSORT [LIST] =
-	if $list is_sorted do $list else $list shuffle
-
-let FACTORIAL [N]
 
 flatten = flatr '++
 
@@ -108,14 +103,16 @@ if $condition all then {
 	$abc
 }
 
-if (CONDITION) then ... else ...
+if $condition then ... else ...
 if X%2 == 0 then while X>3 do i++
 
-while CONDITION do ...
-until CONDITION do ...
-do ... while CONDITION
-do ... until CONDITION
-for e in $sequence, i from $x + 2 by 3 yield
+while $condition {}
+do {} while $condition
+do {} until $condition
+for e in $sequence,
+	i from $x + 2 by 3 do
+{
+	rst }
 
 for ELEMENT in SEQUENCE
 for N from X by J
@@ -131,63 +128,7 @@ import FMT.BLAH.DUH.EUREKA as YIKES
 import FMT.AMEN as BINGO
 import FMT.JEEZ.OUCH
 
-import from YUCK if (_ starts_with "Lol" or ends_with "qwerty" $CASELESS)
-
 2340 kilometres / 977 newtons
-
-DO PRINT "Hello, world!"
-
-1 + (if FOOBAR then 2 else 3)
-
-def PRINT(A,B,C) = A match {
-  B+1 => A
-  A is-negative => B
-  C-B => 2 }
-
-cond {
-  USER can $PARTICIPATE => "313"
-  USER can $MANAGE => "wat"
-  TRUE => "The user can't do anything." }
-
-class RECTANGLE (X, Y, WIDTH, HEIGHT) {
-  let AREA = HEIGHT * WIDTH
-  let PERIMETER = 2 * (HEIGHT + WIDTH)
-  let CONTAINS (X1,Y1) = X-X1 < (WIDTH/2) and
-                         Y-Y1 < (HEIGHT/2)
-  let CENTRE = (X+WIDTH/2, Y+HEIGHT/2)
-  let TRANSLATE (A,B) = {
-    X += A
-	Y += B }}
-
-type TREE = NODE || LEAF
-
-type Square [side] {
-	let area = side^2 }
-
-type Polygon (let points) {
-	let area = points slide [2, 1, mode=cyclic]
-					  map (a, b => $a x * $b y - $xy * $x x)
-					  sum / 2
-	let PERIMETER = $points slide (2,1) map (A,B => A distance B) sum
-	let INTERNAL_ANGLES = (POINTS length - 2) * 180
-	let INTERSECTION (let POLYGON) = {
-
-	}
-}
-
-(1,2,3)
-(1:'a', 2:'b', 3:'c')
-ABC xyz (1, 'a', abc: $XYZ)
-
-(1,2,3) map (_+1) filter (_ is_odd)
-
-type Direction = north, east, south, west;
-
-type Direction = left | right | up | down;
-type Tree = root | inode;
-
-type RIGHT (PARAM: $DEFAULT) extends DIRECTION {
-	val X = 1 }
 
 [undef] def do_something
 def yuck = "Hello, world!"
@@ -197,11 +138,13 @@ def yuck = "Hello, world!"
 
 ($ADD, 2, ($ADD, 1, 3)) lisp.ecl.run
 
-(1,2,3) sort [order: _>_, algo: if $sparse then MERGESORT else QUICKSORT];
+(1,2,3) sort (order = _>_, algo = if $sparse 'mergesort else 'quicksort)
 
 (1,2,3,4,5,6,7,8,9,10) ENUM.map (_*2, ENUM) ENUM.filter (_%3 == 0) ENUM.reduce (_+_);
 
 ('a,('b,1,2),2) as $TREE
+
+$2d20 ($Advantage match { $1 => min, $2 => max })
 
 let 2D6 = (1..6) zip (1..6) probability_of (_+_ == 2 volume_up)
 
@@ -212,15 +155,15 @@ $list filter (_ == 4)
 "Hello, world!" print
 JUKEBOX play (SONGS by "John Williams" last volume_up)
 
-(1,2,3) map (_ + rnd.double)
+(1,2,3) map (_ + $(rnd double))
 
 println "Hello, world!"
 
 "Hello, world".print
-"Hello, world!" split SPACE map CAPITALIZE + " ...Filippo."
-"hello".reverse ++ SEQ
-x => x
-list filter (_%2 == 0) map (_+2)
+"Hello, world!" split $space map $capitalize + " ...Filippo."
+"hello" reverse ++ SEQ
+x => $x
+$list filter (_%2 == 0) map (_+2)
 false ? (1,0)
 
 set x = 2
@@ -236,7 +179,7 @@ Context ("api.google.com", "user:pippoc") http.post print
 
 data Tree = $LEAF || ($LNODE && $RNODE)
 "x" UPPER
-F compose G
+$F compose $G
 assert TRUE
 raise INDEX_OUT_OF_BOUNDS
 1..100
@@ -280,11 +223,7 @@ arr = (true)
 
 if $condition do {...} else {...}
 
-1 u.MiB
-1 u.second
-42 u.Newton
-
-let pi = 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170
+let pi = 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170...
 let euler = 2.7182818284590452353602874713526624977572470936999595749669676277240766303535475945713821785251
 let golden_ratio = 1.618033988749894848204586834365638117720309179805762862135448622705260462818902449707207204189
 

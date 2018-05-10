@@ -1,0 +1,8 @@
+let fibonacci | n: $Nat = $n match (
+	0 => 0,
+	1 => 1,
+	_ => ($n-1) fibonacci + ($n-2) fibonacci )
+
+let fibonacci | 0 = 0
+let fibonacci | 1 = 1
+let fibonacci | n: $Nat = (($n-1) fibonacci) + (($n-2) fibonacci)

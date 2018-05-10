@@ -1,0 +1,67 @@
+# chess.oa
+# ========
+
+use oa.Matrix
+
+trait Board {
+	let board: $Matrix [$Piece, 2] (8, 8) =
+	let player-to-move: 'white
+	let players-allowed-to-castle = (
+		'white => ('kingside, 'queenside),
+		'black => ('kingside, 'queenside), )
+	let result: $Future
+
+
+	let attemp-move | move: $Move = {
+		if ($legal-moves contains $move) {
+		} else {
+
+		}
+	}
+
+
+	let after | move: $Move
+	          |: $legal-moves contains $move = {
+		if $move is-castling {
+			$players-allowed-to-castle
+
+			$player-to-move
+		} else {
+			$board [$move 0] = ()
+			$board [$move 1] = $move piece }}}
+
+trait History {
+	let moves: $Coordinate => $Coordinate = ()
+
+	let number-of-moves-without-capture-or-pawn-move = {
+		($Game ()) :: (_ moves)
+				   map ()
+	}
+
+	let rewind-board =
+}
+
+trait Game {
+	let board: $Board,
+	let History: $History }
+
+trait Timer {
+	let active = 'white
+	let white: $Stopwatch = $Stopwatch new
+	let black: $Stopwatch = $Stopwatch new
+
+	let press = {  }}
+
+trait Player {
+	let move
+
+	let accept-draw
+
+	let offer-draw
+
+	let resign
+}
+
+crate Game {
+	let from
+}

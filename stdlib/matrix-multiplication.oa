@@ -1,0 +1,7 @@
+use oa.Matrix
+
+let * | x: $Matrix[$Num]
+      | y: $Matrix[$Num]
+	  | $x x == $y y = {
+	$x map (a => $y map (b => $a zip $b map 'product sum))
+}

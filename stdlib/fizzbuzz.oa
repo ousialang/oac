@@ -1,0 +1,5 @@
+let fizzbuzz | n: $Nat = ($n % 3, $n % 5) match (
+	(0, 0) => "fizzbuzz",
+	(0, _) => "fizz",
+	(_, 0) => "buzz",
+	(_, _) => $n as $String, )
