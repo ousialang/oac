@@ -1255,6 +1255,15 @@
       (set tmp (new-<fixed> tmp))
       (k_define (intern name) tmp globals))))
 
+(define-function import (file)
+	(let ((stream (fopen file "r")))
+		(or stream (fatal1 "no such file: %s" file))
+		(repl_stream stream)
+		(fclose stream)))
+
+(define-function subr_import (args env)
+	(import (oop-at args 0)))
+
 ;;;;; =============== MAIN ====================
 
 (define-function main (argc argv)
@@ -1297,6 +1306,7 @@
 
   ;;; Built-in stuff. Some of these are useless and must remove them.
   (define-fsubr "define"		subr_define)
+  ;(define-fsubr "use"		subr_import)
   (define-fsubr "lambda"		subr_lambda)
   (define-fsubr "let"			subr_let)
   (define-fsubr "set"			subr_set)
@@ -1366,10 +1376,8 @@
     (let ((arg (oop-at argv 0)))
       (cond
 	((not (strcmp arg "-v"))	(set opt_verbose (+ 1 opt_verbose)))
-	(else				(let ((stream (fopen (oop-at argv 0) "r")))
-					  (or stream (fatal1 "no such file: %s" (oop-at argv 0)))
-					  (repl_stream stream)
-					  (fclose stream))))))
+	(else (import (oop-at argv 0))))))
+
   (and (> opt_verbose 0)
        (let ()
 	 (gc_gcollect)
