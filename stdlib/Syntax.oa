@@ -4,7 +4,6 @@
 # Monadic parser combinators.
 
 trait Syntax: $Monad +  = (
-	
 )
 
 trait Tcp: $Read + $Write (

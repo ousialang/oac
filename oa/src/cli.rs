@@ -4,69 +4,108 @@
 // A Command Line Interface (CLI) powered by 'clap'.
 
 use clap::{App, AppSettings, Arg, SubCommand};
+pub use cli::error::Error;
 
 pub fn cli() -> App<'static, 'static> {
     App::new("oa")
         .setting(AppSettings::StrictUtf8)
         .setting(AppSettings::ColorNever)
         .setting(AppSettings::AllowExternalSubcommands)
-        .arg(Arg::with_name("version").short("V").long("version"))
-        .arg(Arg::with_name("help").short("h").long("help"))
-        .subcommand(
-            SubCommand::with_name("build").arg(Arg::with_name("path").index(1).required(true)),
+        .arg(
+            Arg::with_name(version::VERSION)
+                .short("V")
+                .long(version::VERSION),
         )
-        .subcommand(SubCommand::with_name("do").arg(Arg::with_name("task").index(1).required(true)))
-        .subcommand(SubCommand::with_name("help").arg(Arg::with_name("topic").index(1)))
+        .arg(Arg::with_name(help::HELP).short("h").long(help::HELP))
+        .subcommand(SubCommand::with_name(build::BUILD))
         .subcommand(
-            SubCommand::with_name("version")
-                .arg(Arg::with_name("major").short("M").long("major"))
-                .arg(Arg::with_name("minor").short("m").long("minor"))
-                .arg(Arg::with_name("patch").short("p").long("patch"))
-                .arg(Arg::with_name("tags").short("t").long("tags"))
-                .arg(Arg::with_name("commit-hash").short("c").long("commit-hash"))
+            SubCommand::with_name(doo::DOO).arg(Arg::with_name(doo::TASK).index(1).required(true)),
+        )
+        .subcommand(SubCommand::with_name(help::HELP).arg(Arg::with_name(help::TOPIC).index(1)))
+        .subcommand(
+            SubCommand::with_name(version::VERSION)
                 .arg(
-                    Arg::with_name("release-date-rfc3339")
-                        .short("r")
-                        .long("release-date-rfc3339"),
+                    Arg::with_name(version::MAJOR)
+                        .short("M")
+                        .long(version::MAJOR),
                 )
-                .arg(Arg::with_name("all").short("a").long("all")),
+                .arg(
+                    Arg::with_name(version::MINOR)
+                        .short("m")
+                        .long(version::MINOR),
+                )
+                .arg(
+                    Arg::with_name(version::PATCH)
+                        .short("p")
+                        .long(version::PATCH),
+                )
+                .arg(Arg::with_name(version::TAGS).short("t").long(version::TAGS))
+                .arg(
+                    Arg::with_name(version::COMMIT_HASH)
+                        .short("c")
+                        .long(version::COMMIT_HASH),
+                )
+                .arg(
+                    Arg::with_name(version::RELEASE_DATE_RFC3339)
+                        .short("r")
+                        .long(version::RELEASE_DATE_RFC3339),
+                )
+                .arg(Arg::with_name(version::ALL).short("a").long(version::ALL)),
         )
 }
 
+pub mod build {
+    pub const BUILD: &'static str = "build";
+}
+
+pub mod doo {
+    pub const DOO: &'static str = "do";
+    pub const TASK: &'static str = "task";
+}
+
+pub mod help {
+    pub const HELP: &'static str = "help";
+    pub const TOPIC: &'static str = "topic";
+}
+
+pub mod version {
+    pub const VERSION: &'static str = "version";
+    pub const MAJOR: &'static str = "major";
+    pub const MINOR: &'static str = "minor";
+    pub const PATCH: &'static str = "patch";
+    pub const TAGS: &'static str = "tags";
+    pub const COMMIT_HASH: &'static str = "commit-hash";
+    pub const RELEASE_DATE_RFC3339: &'static str = "release-date-rfc3339";
+    pub const ALL: &'static str = "all";
+}
+
 pub mod error {
-
+    use clap;
     use std::error;
-    use std::fmt::{self, Formatter, Result as FmtResult};
-
-    use clap::Error as ClapError;
+    use std::fmt;
 
     #[derive(Debug)]
     pub struct Error {
-        clap_error: ClapError,
+        clap_error: clap::Error,
     }
 
     impl error::Error for Error {
         fn description(&self) -> &str {
-            match self.clap_error.kind() {
-                _ => self.clap_error.message,
-            }
+            // At the time of writing, 'Error::description()' has just been deprecated in favor of
+            // 'Display::fmt()', so we just spit out Clap's error message.
+            &self.clap_error.message[..]
         }
     }
 
     impl fmt::Display for Error {
-        fn fmt(&self, f: &mut Formatter) -> FmtResult {
-            match self.clap_error {
-                Error::Io(ref err) => write!(f, "IO error: {}", err),
-                Error::Parse(ref err) => write!(f, "Parse error: {}", err),
-            }
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "{}", self.clap_error.message)
         }
     }
 
-    impl From<ClapError> for Error {
-        fn from(clap_error: ClapError) -> Self {
-            Error {
-                clap_error: clap_error,
-            }
+    impl From<clap::Error> for Error {
+        fn from(err: clap::Error) -> Self {
+            Error { clap_error: err }
         }
     }
 }

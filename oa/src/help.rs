@@ -3,15 +3,13 @@
 //
 // A pager-based 'help' subcommand.
 
+use clap::ArgMatches;
 use disk;
+use exitcode::{self, ExitCode};
 use feedback;
-
+use serde_json;
 use std::fs::File;
 use std::io::prelude::*;
-
-use clap::ArgMatches;
-use exitcode::{self, ExitCode};
-use serde_json;
 
 pub fn main(args: ArgMatches) -> ExitCode {
     let query = args.value_of("topic").unwrap();
@@ -38,14 +36,16 @@ struct Settings {
 }
 
 impl Settings {
-    fn local() -> Result<Self, DiskError> {
+    fn local() -> Result<Self, disk::error::Error> {
         disk::subcommand_settings("help")?;
     }
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { pager: "more" }
+        Settings {
+            pager: "more".to_string(),
+        }
     }
 }
 
@@ -63,7 +63,7 @@ enum TopicKind {
 }
 
 impl Topic {
-    fn locate(query: String) -> Result<Option<Self>, disk::Error> {
+    fn locate(query: String) -> Result<Option<Self>, disk::error::Error> {
         let mut path = disk::subcommand_path_in_prefix_dir("help");
         path.push("topics");
         path.push(query);
@@ -71,10 +71,10 @@ impl Topic {
             let mut contents = String::new();
             let f = File::open(path)?;
             f.read_to_string(&mut contents);
-            let topic: Topic = serde_json::from_str(contents)?;
+            let topic: Topic = serde_json::from_str(&contents)?;
             Ok(Some(topic))
         } else {
-            OK(None)
+            Ok(None)
         }
     }
 }

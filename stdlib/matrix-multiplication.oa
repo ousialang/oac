@@ -1,7 +1,7 @@
 use oa.Matrix
 
-let * | x: $Matrix[$Num]
-      | y: $Matrix[$Num]
+let * | x: $Matrix[$Num] x == $n
+      | y: $Matrix[$Num] y == $n
 	  | $x x == $y y = {
-	$x map (a => $y map (b => $a zip $b map 'product sum))
+	$x zip ($y transpose) map (_ zip _ map (_ reduce '*) reduce '+))
 }

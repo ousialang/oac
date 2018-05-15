@@ -10,19 +10,21 @@
 use indexmap::IndexMap;
 use langserver::lsp;
 use serde_json::{self, Value as JsonValue};
+use std::io::BufRead;
 use std::net::TcpStream;
 
 pub struct Message {
-    header: IndexMap<String, String>,
-    content: JsonRpcObject,
+    pub header: IndexMap<String, String>,
+    pub content: JsonRpcObject,
 }
 
 impl Message {
     fn from_stream(stream: TcpStream) -> Result<Message, Error> {
+        let mut reader = BufRead::new(stream);
         let mut header = IndexMap::new();
         // The LS protocol specifies CRLF line endings, but by accepting LF line endings as well we
         // can deal more easily with broken clients.
-        let mut lines = stream
+        let mut lines = reader
             .lines()
             .map(|l| l.unwrap())
             .take_while(|s| !s.is_empty());
@@ -99,7 +101,7 @@ impl Message {
 
     fn wrap(json: JsonRpcObject) -> Message {
         let header = IndexMap::new();
-        header.insert("Content-Length", json.to_string().len());
+        header.insert("Content-Length".to_string(), json.to_string().len());
         Message {
             header: header,
             content: json,
@@ -251,113 +253,108 @@ pub struct Error {
 }
 
 pub mod error {
-
+    use serde_json;
     use std::convert::From;
     use std::error;
-    use std::io::Error as IoError;
-
-    use serde_json::{self, Error as JsonError};
+    use std::fmt;
+    use std::io;
 
     #[derive(Debug)]
     pub enum Error {
-        Header(HeaderError),
-        Json(JsonError),
-        Io(IoError),
-    }
-
-    pub enum HeaderError {
-        MissingHeaderField { missing_header_field_name: String },
-        IllegalHeaderField { line_number: u64 },
-    }
-
-    impl From<HeaderError> for Error {
-        fn from(err: HeaderError) -> Error {
-            Error::Header(err)
-        }
-    }
-
-    impl From<JsonError> for Error {
-        fn from(err: JsonError) -> Error {
-            Error::Json(err)
-        }
-    }
-
-    impl From<IoError> for Error {
-        fn from(err: IoError) -> Error {
-            Error::Io(err)
-        }
+        Header,
+        Json(serde_json::Error),
+        Io(io::Error),
     }
 
     impl error::Error for Error {
         fn description(&self) -> &str {
             match self {
-                Error::Header(_) => "The message has an invalid header.",
+                Error::Header => "The message has an invalid header.",
                 Error::Json(err) => err.description(),
                 Error::Io(err) => err.description(),
             }
         }
     }
 
-    impl fmt::Display for CliError {
-        fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-            match *self {
-                // Both underlying errors already impl `Display`, so we defer to
-                // their implementations.
-                CliError::Io(ref err) => write!(f, "IO error: {}", err),
-                CliError::Parse(ref err) => write!(f, "Parse error: {}", err),
-            }
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "")
+        }
+    }
+
+    impl From<serde_json::Error> for Error {
+        fn from(err: serde_json::Error) -> Error {
+            Error::Json(err)
+        }
+    }
+
+    impl From<io::Error> for Error {
+        fn from(err: io::Error) -> Error {
+            Error::Io(err)
         }
     }
 
     pub mod responses {
 
-        use langserver::jsonrpc::{Id, Response, ResponseBody};
+        use langserver::jsonrpc::{Error, Id, JsonRpcProtocolVersion, Response, ResponseBody};
 
         pub const PARSE_ERROR: Response = Response {
-            body: ResponseBody::Error {
+            jsonrpc: JsonRpcProtocolVersion::TwoPointOh,
+            body: ResponseBody::Error(Error {
                 code: -32700,
-                message: "Parse error",
-            },
+                message: "Parse error".to_string(),
+                data: None,
+            }),
             id: Id::Null,
         };
 
         pub const INVALID_REQUEST: Response = Response {
-            body: ResponseBody::Error {
+            jsonrpc: JsonRpcProtocolVersion::TwoPointOh,
+            body: ResponseBody::Error(Error {
                 code: -32600,
-                message: "Invalid Request",
-            },
+                message: "Invalid Request".to_string(),
+                data: None,
+            }),
             id: Id::Null,
         };
 
         pub const METHOD_NOT_FOUND: Response = Response {
-            body: ResponseBody::Error {
+            jsonrpc: JsonRpcProtocolVersion::TwoPointOh,
+            body: ResponseBody::Error(Error {
                 code: -32601,
-                message: "Method not found",
-            },
+                message: "Method not found".to_string(),
+                data: None,
+            }),
             id: Id::Null,
         };
 
         pub const INVALID_PARAMS: Response = Response {
-            body: ResponseBody::Error {
+            jsonrpc: JsonRpcProtocolVersion::TwoPointOh,
+            body: ResponseBody::Error(Error {
                 code: -32602,
-                message: "Invalid params",
-            },
+                message: "Invalid params".to_string(),
+                data: None,
+            }),
             id: Id::Null,
         };
 
         pub const INTERNAL_ERROR: Response = Response {
-            body: ResponseBody::Error {
+            jsonrpc: JsonRpcProtocolVersion::TwoPointOh,
+            body: ResponseBody::Error(Error {
                 code: -32603,
-                message: "Internal error",
-            },
+                message: "Internal error".to_string(),
+                data: None,
+            }),
             id: Id::Null,
         };
 
         pub const REQUEST_CANCELLED: Response = Response {
-            body: ResponseBody::Error {
+            jsonrpc: JsonRpcProtocolVersion::TwoPointOh,
+            body: ResponseBody::Error(Error {
                 code: -32800,
-                message: "Request cancelled",
-            },
+                message: "Request cancelled".to_string(),
+                data: None,
+            }),
             id: Id::Null,
         };
     }

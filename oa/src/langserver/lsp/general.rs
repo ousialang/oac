@@ -30,7 +30,7 @@ pub struct CancelRequest {
 pub mod utils {
     use langserver::jsonrpc;
     use langserver::lsp;
-    use langserver::lsp::features::utils::CompletionItemKind;
+    use langserver::lsp::features::utils::{CompletionItemKind, SymbolsKind};
     use serde_json::{Number as JsonNumber, Value as JsonValue};
 
     // Start of capabilities-related utilities
@@ -166,7 +166,7 @@ pub mod utils {
     #[serde(rename_all = "camelCase")]
     pub struct ClientCapabilityOfSymbols {
         dynamic_registration: Option<bool>,
-        symbol_kind: Option<Vec<SymbolKind>>,
+        symbol_kind: Option<Vec<SymbolsKind>>,
     }
 
     // fixme
@@ -203,7 +203,7 @@ pub mod utils {
         goto_definition: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "definitionProvider")]
-        goto_type_definition: (),
+        goto_type_definition: Option<()>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "definitionProvider")]
         references: Option<bool>,

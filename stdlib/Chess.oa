@@ -3,13 +3,23 @@
 
 use oa.Matrix
 
-trait Board {
-	let board: $Matrix [$Piece, 2] (8, 8) =
-	let player-to-move: 'white
+trait Piece = $Rook
+            + $Knight
+			+ $Bishop
+			+ $Queen
+			+ $King
+			+ $Pawn
+
+trait Board = {
+	let show =
+
+	let board: $Matrix[$Piece] size == (8, 8) =
+	let player-to-move: $Player.white
 	let players-allowed-to-castle = (
-		'white => ('kingside, 'queenside),
-		'black => ('kingside, 'queenside), )
+		$WHITE => ('kingside, 'queenside),
+		$BLACK => ($KINGSIDE, 'queenside), )
 	let result: $Future
+	let history = $History
 
 
 	let attemp-move | move: $Move = {
@@ -18,7 +28,6 @@ trait Board {
 
 		}
 	}
-
 
 	let after | move: $Move
 	          |: $legal-moves contains $move = {
@@ -30,37 +39,79 @@ trait Board {
 			$board [$move 0] = ()
 			$board [$move 1] = $move piece }}}
 
-trait History {
+trait Board: $Format = {
+	let show = {
+
+	} }
+
+trait History | game: $Game {
 	let moves: $Coordinate => $Coordinate = ()
 
 	let number-of-moves-without-capture-or-pawn-move = {
-		($Game ()) :: (_ moves)
-				   map ()
-	}
+		$rewind-board reverse }
 
-	let rewind-board =
+	let rewind-board = $Game board fold ($Game, _ after _)
 }
 
-trait Game {
-	let board: $Board,
-	let History: $History }
+trait Game ( board: $Board,
+             history: $History,
+		     white: $Player,
+		     black: $Player, )
 
-trait Timer {
-	let active = 'white
+trait Clock: $Default {
+	let active: $Player = $WHITE
+	let delay: $Duration
 	let white: $Stopwatch = $Stopwatch new
 	let black: $Stopwatch = $Stopwatch new
+
+	let default = $Clock ()
 
 	let press = {  }}
 
 trait Player {
-	let move
+	let move: $Move
 
-	let accept-draw
+	let accept-draw: $Bool
 
 	let offer-draw
 
 	let resign
 }
+
+trait Move = (
+	offer-draw = $Bool,
+)
+
+trait Bishop: $Piece + $fmt.Format {
+	let symbol = "b"
+
+	let range = $chessboard filter (
+		c => $position zip $c map '- )}
+
+trait Bishop: $Piece {
+	let symbol = "b"
+	let range = $chessboard filter (
+		c => $position zip $c map '- )}
+
+trait Rook: $Piece {
+	let symbol = "r"
+	let range = $chessboard filter (
+		c => $position zip $c map '== )}
+
+trait Queen: $Piece {
+	let symbol = "q"
+	let range = $chessboard filter (
+		c => $position zip $c map '- )}
+
+trait King: $Piece {
+	let symbol = "k"
+	let range = (-1..2, -1..2)
+		}
+
+trait Knight: $Piece {
+	let symbol = "n"
+	let range = (1..5) map ($c )
+)
 
 crate Game {
 	let from

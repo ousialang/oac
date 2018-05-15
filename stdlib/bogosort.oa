@@ -1,5 +1,4 @@
 use oa.Iter
 
-let bogosort | ls: $Iter
-             | ls item: $Sort =
-	$list (if $list is-not-sorted 'shuffle)
+let bogosort | list: $Iter[$Sort] = {
+	$list (if ($list is-not-sorted) 'shuffle) }

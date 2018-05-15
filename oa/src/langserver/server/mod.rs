@@ -2,12 +2,12 @@
 // =============
 //
 
-use build::Engine;
+use core::Engine;
 use langserver::jsonrpc::{BatchRequests, Error as RpcError, Id, Message, Request};
 use langserver::lsp::general::utils::{ClientCapabilities, ServerCapabilities};
 use langserver::server::error::Error;
 
-use std::io::{Error as IoError, Read, Write};
+use std::io::{self, Write};
 use std::iter;
 use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
@@ -65,10 +65,10 @@ impl LangServer {
 
     pub fn handle(&mut self, m: Message) {
         match m.content {
-            Message::BatchRequests => {}
-            Message::BatchResponses => {}
-            Message::Request => {}
-            Message::Response => match self.history.sent.get(m.content) {},
+            Message::BatchRequests(batch_req) => {}
+            Message::BatchResponses(batch_res) => {}
+            Message::Request(req) => {}
+            Message::Response(res) => match self.history.sent.get(m.content) {},
         }
         self.inbox.push(m);
     }
@@ -76,7 +76,7 @@ impl LangServer {
     fn request<R: Serialize, S: Deserialize<'static>>(
         &mut self,
         request: R,
-    ) -> Option<Future<Item = S, Error = RpcError>> {
+    ) -> Option<Box<Future<Item = S, Error = RpcError>>> {
         let message = Message::request(request);
         let id = self.id.next();
         self.stream.write(message.as_bytes());
@@ -92,10 +92,10 @@ struct IdGenerator {
 impl iter::Iterator for IdGenerator {
     type Item = Id;
 
-    fn next(&mut self) -> Self::Item {
+    fn next(&mut self) -> Option<Self::Item> {
         let id = Id::Number(self.next_id);
         self.next_id += 1;
-        id
+        Some(id)
     }
 }
 

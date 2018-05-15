@@ -35,11 +35,17 @@ license = "https://git-scm.com/about/free-and-open-source"
 [[projects]]
 name = "Python"
 by = "Python Software Foundation"
-website = "https://www.python.org/"
+website = "https://www.python.org"
 license = "https://docs.python.org/3/license.html#terms-and-conditions-for-accessing-or-otherwise-using-python"
 
 [[projects]]
 name = "Rust"
 by = "Rust project developers"
-website = "https://www.rust-lang.org/"
+website = "https://www.rust-lang.org"
 license = "https://github.com/rust-lang/rust/blob/master/COPYRIGHT"
+
+[[projects]]
+name = "Category Theory for Programmers"
+by = "Bartosz Milewski"
+website = "https://bartoszmilewski.com/2014/10/28/category-theory-for-programmers-the-preface"
+license = "CC BY-SA 4.0"

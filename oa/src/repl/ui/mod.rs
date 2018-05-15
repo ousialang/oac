@@ -1,28 +1,24 @@
-use std::io::{self, Error as IoError, Stdin, Stdout};
-
-use exitcode::ExitCode;
+use exitcode::{self, ExitCode};
+use std::io::{self, Stdin, Stdout, Write};
 use termion::clear::All as ClearAll;
 use termion::cursor::Goto as CursorGoto;
 use termion::event::{Event, Key};
-use termion::input::MouseTerminal;
+use termion::input::{MouseTerminal, TermRead};
 use termion::screen::AlternateScreen;
 
 pub struct Ui {
-    screen: AlternateScreen<Stdout>,
     state: State,
     stdin: Stdin,
-    stdout: Stdout,
+    stdout: AlternateScreen<MouseTerminal<Stdout>>,
 }
 
 impl Ui {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let stdin = io::stdin();
-        let mut stdout = MouseTerminal::from(io::stdout());
-        let mut screen = AlternateScreen::from(stdout);
+        let mut stdout = AlternateScreen::from(MouseTerminal::from(io::stdout()));
         writeln!(stdout, "{}{}", ClearAll, CursorGoto(1, 1));
         let mut ui = Ui {
-            screen: screen,
-            state: State::new(),
+            state: State::Virgin,
             stdin: io::stdin(),
             stdout: stdout,
         };
@@ -35,11 +31,11 @@ impl Ui {
             match self.handle_event(e.unwrap()) {
                 Ok(_) => (),
                 Err(exit_code) => {
-                    break;
                     return exit_code;
                 }
             }
         }
+        exitcode::SOFTWARE
     }
 
     fn handle_event(&mut self, event: Event) -> Result<(), ExitCode> {
@@ -55,12 +51,14 @@ impl Ui {
 }
 
 impl Drop for Ui {
-    fn drop(&mut self) -> Result<(), IoError> {
-        self.stdout.flush()
+    fn drop(&mut self) -> () {
+        self.stdout.flush();
+        ()
     }
 }
 
-enum State {
+pub enum State {
+    Virgin,
     Shutdown,
 }
 

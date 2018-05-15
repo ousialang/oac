@@ -1,9 +1,4 @@
 # Indentation IS significant, but it's only used for line continuations.
-
-use SPAM
-use FOO.Bar
-use Spam = FOO.Bar
-
 let greetings = ( "Hello"
     		    , "Hola"
 			    , "Bonjour"
@@ -92,11 +87,6 @@ for X in LIST
 
 }
 
-let fizzbuzz [N%15 == 0] = FIZZ + BUZZ
-let fizzbuzz [N%3 == 0] = FIZZ
-let fizzbuzz [N%5 == 0] = BUZZ
-let fizzbuzz [N] = N to $STRING
-
 if $condition all then {
 	printf [this_obj]
 } else {
@@ -114,7 +104,7 @@ for e in $sequence,
 {
 	rst }
 
-for ELEMENT in SEQUENCE
+for 'x in $List
 for N from X by J
 for N min_of SEQUENCE
 for N max_of SEQUENCE
@@ -136,26 +126,27 @@ def yuck = "Hello, world!"
 
 [1,2,abc:$XYZ]
 
-($ADD, 2, ($ADD, 1, 3)) lisp.ecl.run
+'(add, 2, (add, 1, 3)) ecl.run
 
 (1,2,3) sort (order = _>_, algo = if $sparse 'mergesort else 'quicksort)
 
 (1,2,3,4,5,6,7,8,9,10) ENUM.map (_*2, ENUM) ENUM.filter (_%3 == 0) ENUM.reduce (_+_);
 
-('a,('b,1,2),2) as $TREE
+('a => ('b,1,2)) as $TREE
 
-$2d20 ($Advantage match { $1 => min, $2 => max })
+$2d20 ($Advantage match ($1 => 'min, $2 => 'max))
 
 let 2D6 = (1..6) zip (1..6) probability_of (_+_ == 2 volume_up)
 
-(1 to 1000 filter (_ is_prime) map (_*2) enumerate @1)
+(1 to 1000 filter (_ is-prime) map (_*2) enumerate @ 1)
+$List filter (_ != 4)
 [x for x in list if x != 4]
-$list filter (_ == 4)
 
 "Hello, world!" print
-JUKEBOX play (SONGS by "John Williams" last volume_up)
+$Jukebox queu += $Songs by "John Williams"
+$Jukebox volume-up
 
-(1,2,3) map (_ + $(rnd double))
+(1,2,3) map (_ + ($rnd as $Double))
 
 println "Hello, world!"
 

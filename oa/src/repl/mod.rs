@@ -6,21 +6,18 @@
 
 mod ui;
 
-use disk;
-use langserver::LangServer;
-use repl::ui::Ui;
-
-use std::fs::File;
-
 use clap::ArgMatches;
-use colored::ColoredString;
+use colored::*;
+use disk;
 use exitcode::{self, ExitCode};
 use futures::prelude::Future;
+use langserver::LangServer;
+use repl::ui::Ui;
+use std::fs::File;
 use termion::event::{Event, Key};
 
 pub fn main(args: ArgMatches) -> ExitCode {
     let mut repl = Repl::new();
-    repl.exit_code.wait();
     exitcode::OK
 }
 
@@ -30,20 +27,14 @@ pub struct Repl {
     history: Vec<String>,
     langserver: LangServer,
     ui: Ui,
-    exit_code: Future<Item = ExitCode, Error = ExitCode>,
 }
 
 impl Repl {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Repl {
             history: Vec::new(),
-            langserver: LangServer::new(),
+            langserver: LangServer::new().unwrap(), // FIXME
             ui: Ui::new(),
-            exit_code: Ok(exitcode::OK),
         }
-    }
-
-    fn exit_gracefully(&mut self) {
-        self.stdout.flush().unwrap();
     }
 }
