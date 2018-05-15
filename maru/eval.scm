@@ -1,6 +1,6 @@
 ;;; -*- coke -*-
 
-;; Debuggers
+;;;; Debuggers
 
 (define-form gcdebug prog ())
 ;;(define-form gcdebug prog `(let () ,@prog))
@@ -67,7 +67,7 @@
 (define gc_alloc_count 0)
 (define gc_collection_count	0)
 
-; HERE BE DRAGONS ========================
+;;; HERE BE DRAGONS ============
 
 (define-form size-of-structure (type)	(* 4 (array-at %structure-sizes (eval type))))
 
@@ -116,7 +116,7 @@
     (set gc_memory_last ptr)))
 
 (define-function gc_push_root (ptr)
-  (and (== gc_root_count gc_root_max)
+  (and (= gc_root_count gc_root_max)
        (let* ((roots (malloc (* 4 (set gc_root_max (max 32 (* 2 gc_root_max)))))))
 	 (memcpy roots gc_roots (* 4 gc_root_count))
 	 (and gc_roots (free gc_roots))
@@ -129,7 +129,7 @@
   (or gc_root_count (fatal "root table underflow"))
   (set gc_root_count (- gc_root_count 1))
   (debug (printf "gc del root %d at %p %s\n" gc_root_count ptr))
-  (or (== ptr (oop-at gc_roots gc_root_count)) (fatal "non-lifo root")))
+  (or (= ptr (oop-at gc_roots gc_root_count)) (fatal "non-lifo root")))
 
 (define-function gc_grow_memory (size)
   (let ((brk (new_memory_block size)))
@@ -145,7 +145,7 @@
 
 (define-function gc_malloc (size)
   (set size (& -4 (+ 3 size)))
-  (and (== gc_alloc_count gc_frequency) (gc_gcollect))
+  (and (= gc_alloc_count gc_frequency) (gc_gcollect))
   (let* ((first (<header>-next gc_memory_last))
 	 (chunk first)
 	 (ssize (+ size (size-of-structure <header>))))
@@ -153,15 +153,15 @@
       (while
 	(let ()
 	  (debug (printf "alloc? %d %p %p [%p] %d >= %d %d\n" (<header>-flags chunk) chunk (<header>-next chunk) first (<header>-size chunk) size (<= size (<header>-size chunk))))
-	  (if (== 0 (<header>-flags chunk))
+	  (if (= 0 (<header>-flags chunk))
 	      (let ((csize (<header>-size chunk)))
-		(while (and (== 0 (<header>-flags (<header>-next chunk)))
-			    (== (<header>-next chunk) (+ chunk (+ (size-of-structure <header>) csize))))
+		(while (and (= 0 (<header>-flags (<header>-next chunk)))
+			    (= (<header>-next chunk) (+ chunk (+ (size-of-structure <header>) csize))))
 		  (let ((next (<header>-next chunk)))
 		    (set (<header>-next chunk) (<header>-next next))
 		    (set csize (set (<header>-size chunk) (+ csize (+ (size-of-structure <header>) (<header>-size next)))))
-		    (and (== next gc_memory_last) (set gc_memory_last chunk))))
-		(if (or (< ssize csize) (== size csize))
+		    (and (= next gc_memory_last) (set gc_memory_last chunk))))
+		(if (or (< ssize csize) (= size csize))
 		    (let ()
 		      (debug (printf "csize %d\n" csize))
 		      (and (> csize ssize)
@@ -200,7 +200,7 @@
 	  (debug (printf "collect %p %d\n" ptr (<header>-size ptr)))
 	  (set nfree (+ nfree (<header>-size ptr)))
 	  (set (<header>-flags ptr) 0)))
-      (and (== gc_memory_base (set ptr (<header>-next ptr)))
+      (and (= gc_memory_base (set ptr (<header>-next ptr)))
 	   (set ptr 0)))
     (set gc_objects_live nobjs)
     (set gc_bytes_used nused)
@@ -239,7 +239,7 @@
   (gc_sweep)
   (set gc_alloc_count 0))
 
-;;; ----------------------------------------------------------------
+;;;;; ----------------------------------------------------------------
 
 (define strlen	(extern 'strlen))
 (define strcmp	(extern 'strcmp))
@@ -253,8 +253,8 @@
 (define fclose	(extern 'fclose))
 (define fflush	(extern 'fflush))
 (define fscanf	(extern 'fscanf))
-; TODO:
-;(define import  (extern 'import))
+;;; TODO:
+;;(define import  (extern 'import))
 
 (define EOF	-1)
 
@@ -370,7 +370,7 @@
   `(let ((__arg__ ,arg))
      (and __arg__
 	  (not (& 1 __arg__))
-	  (== ,type (oop-at __arg__ -1)))))
+	  (= ,type (oop-at __arg__ -1)))))
 
 (define-form get-type (arg)
   `(let ((__arg__ ,arg))
@@ -384,12 +384,12 @@
 
 (define-form get (type field object)
   `(let ((__obj__ ,object))
-     (safe (let ((t (get-type __obj__))) (or (== ,type t) (type_check_fail ,type t))))
+     (safe (let ((t (get-type __obj__))) (or (= ,type t) (type_check_fail ,type t))))
      (,(concat-symbol (concat-symbol type '-) field) __obj__)))
 
 (define-form put (type field object value)
   `(let ((__obj__ ,object))
-     (safe (let ((t (get-type __obj__))) (or (== ,type t) (type_check_fail ,type t))))
+     (safe (let ((t (get-type __obj__))) (or (= ,type t) (type_check_fail ,type t))))
      (set (,(concat-symbol (concat-symbol type '-) field) __obj__) ,value)))
 
 (define-form get_long (obj)	`(oop-at ,obj 0))
@@ -398,12 +398,12 @@
 (define-form get_tail (obj)	`(oop-at ,obj 1))
 (define-form set_tail (obj val)	`(set-oop-at ,obj 1 ,val))
 
-(define-function is_blank (c)	(or 	 ( == ?   c)			; sp
-				    	 ( == ?\t c)			; ht
-				    	 ( == ?\n c)			; nl
-				    	 ( == ?\v c)			; vt
-				    	 ( == ?\f c)			; ff
-				    	 ( == ?\r c)))			; cr
+(define-function is_blank (c)	(or 	 ( = ?   c)			; sp
+				    	 ( = ?\t c)			; ht
+				    	 ( = ?\n c)			; nl
+				    	 ( = ?\v c)			; vt
+				    	 ( = ?\f c)			; ff
+				    	 ( = ?\r c)))			; cr
 
 (define-function is_digit10 (c)	    (and (<= ?0  c) (<= c ?9)))		; 0 1 2 3 4 5 6 7 8 9
 
@@ -414,17 +414,17 @@
 (define-function is_alpha (c)	(or (and (<= ?a  c) (<= c ?z))		; a b c d e f g h i j k l m n o p q r s t u v w x y z
 				    (and (<= ?A  c) (<= c ?Z))))	; A B C D E F G H I J K L M N O P Q R S T U V W X Y Z
 
-(define-function is_letter (c)	(or      ( == ?!  c)			; !
+(define-function is_letter (c)	(or      ( = ?!  c)			; !
 				    (and (<= ?#  c) (<= c ?&))		; # $ % &
 				    (and (<= ?*  c) (<= c ?/))		; * + , - . /
-					 ( == ?:  c)			; :
+					 ( = ?:  c)			; :
 				    (and (<= ?<  c) (<= c ?Z))		; < = > ?  @ A B C D E F G H I J K L M N O P Q R S T U V W X Y Z
-					 ( == ?\\ c)			; \
-					 ( == ?^  c)			; ^
-					 ( == ?_  c)			; _
+					 ( = ?\\ c)			; \
+					 ( = ?^  c)			; ^
+					 ( = ?_  c)			; _
 				    (and (<= ?a  c) (<= c ?z))		; a b c d e f g h i j k l m n o p q r s t u v w x y z
-					 ( == ?|  c)			; |
-					 ( == ?~  c)))			; ~
+					 ( = ?|  c)			; |
+					 ( = ?~  c)))			; ~
 
 (define-function new_buffer ()
   (let ((buf (malloc (size-of-structure <buffer>))))
@@ -446,7 +446,7 @@
     (set (<buffer>-size buf) (* 2 size))))
 
 (define-function buffer_append (buf c)
-  (and (== (<buffer>-position buf) (<buffer>-size buf))
+  (and (= (<buffer>-position buf) (<buffer>-size buf))
        (buffer_grow buf))
   (let ((posn (<buffer>-position buf)))
     (set-string-at (<buffer>-contents buf) posn c)
@@ -489,21 +489,21 @@
     ((and (<= ?A c) (<= c ?Z))	(- c (- ?A 10)))
     (else			(fatal "illegal digit in character escape"))))
 
-; Reader functions --------------
+;;; Reader functions --------------
 
 (define-function read_char (c stream)
-  (if (== ?\\ c)
+  (if (= ?\\ c)
       (let ()
 	(set c (getc stream))
 	(cond
-	  ((== c ?a)			?\a)
-	  ((== c ?b)			?\b)
-	  ((== c ?f)			?\f)
-	  ((== c ?n)			?\n)
-	  ((== c ?r)			?\r)
-	  ((== c ?t)			?\t)
-	  ((== c ?v)			?\v)
-	  ((== c ?u)			(let ((a (getc stream))
+	  ((= c ?a)			?\a)
+	  ((= c ?b)			?\b)
+	  ((= c ?f)			?\f)
+	  ((= c ?n)			?\n)
+	  ((= c ?r)			?\r)
+	  ((= c ?t)			?\t)
+	  ((= c ?v)			?\v)
+	  ((= c ?u)			(let ((a (getc stream))
 					      (b (getc stream))
 					      (c (getc stream))
 					      (d (getc stream)))
@@ -511,7 +511,7 @@
 					     (+ (<< (digit_value b) 16)
 						(+ (<< (digit_value c)  8)
 						   (digit_value d)    )))))
-	  ((== c ?x)			(let ((x 0))
+	  ((= c ?x)			(let ((x 0))
 					  (if (is_hexadecimal (set c (getc stream)))
 					      (let ()
 						(set x (digit_value c))
@@ -681,8 +681,8 @@
 (define-function k_print (obj) (do_print obj 0))	(define-function k_println (obj) (do_print obj 0) (printf "\n"))
 (define-function k_dump  (obj) (do_print obj 1))	(define-function k_dumpln  (obj) (do_print obj 1) (printf "\n"))
 
-;;; ----------------------------------------------------------------
-;;; "k_something"... ?
+;;;;; ----------------------------------------------------------------
+;;;;; "k_something"... ?
 
 (define-function k_define (name value env)
   (let ((ass (new-<pair> name value)))
@@ -744,8 +744,8 @@
 	  (new-<pair> (get_head head) tail)))
     tail))
 
-;;; ----------------------------------------------------------------
-;;;  Just a bunch of "define-function". Bah.
+;;;;; ----------------------------------------------------------------
+;;;;;  Just a bunch of "define-function". Bah.
 
 (define-function exlist (list env)
   (if (is <pair> list)
@@ -983,6 +983,8 @@
 (define-binary +  "add")
 (define-binary *  "mul")
 (define-binary /  "div")
+(define-binary << "shl")
+(define-binary >> "shr")
 
 (define-form define-relation (op name)
   `(define-function ,(concat-symbol 'subr_ (string->symbol name)) (args env)
@@ -997,7 +999,7 @@
 (define-relation <= "le")
 (define-relation >  "gt")
 
-; See https://en.wikipedia.org/wiki/Fexpr
+;;; See https://en.wikipedia.org/wiki/Fexpr
 
 (define-function subr_eq (args env)
   (arity2 "=" args)
@@ -1227,9 +1229,9 @@
 (define-function subr_current_environment (args env)
   env)
 
-;;; ======================= Typer =======================
+;;;;; ============ Typer ============
 
-;;; ----------------------------------------------------------------
+;;;;; ----------------------------------------------------------------
 
 (define-function repl_stream (stream)
   (let ((res 0))
@@ -1253,7 +1255,7 @@
       (set tmp (new-<fixed> tmp))
       (k_define (intern name) tmp globals))))
 
-;;; ============================= MAIN =======================================
+;;;;; =============== MAIN ====================
 
 (define-function main (argc argv)
   (set stderr (fdopen 2 "a"))
@@ -1271,14 +1273,14 @@
   (set s_unquote		(intern "unquote"))
   (set s_unquote_splicing	(intern "unquote-splicing"))
 
-  ; Every piece of the interpreter is GCed.
+  ;;; Every piece of the interpreter is GCed.
   (gc_push_root (address-of globals))
   (gc_push_root (address-of expanders))
   (gc_push_root (address-of encoders))
   (gc_push_root (address-of evaluators))
   (gc_push_root (address-of applicators))
 
-  ; Globals are not GCed, even if we hold no references to them. Makes sense.
+  ;;; Globals are not GCed, even if we hold no references to them. Makes sense.
   (let ((tmp (new-<pair> (intern "*globals*") globals)))
     (gc-protect (tmp)
       (set globals (new-<pair> tmp globals))
@@ -1290,9 +1292,10 @@
       (k_set_array_at (get_tail evaluators)  <symbol> (new-<subr> subr_eval_symbol "eval-<symbol>"))
       (k_set_array_at (get_tail evaluators)  <pair>   (new-<subr> subr_eval_pair   "eval-<pair>"  ))
       (k_set_array_at (get_tail applicators) <fixed>  (new-<subr> subr_apply_fixed "apply-<fixed>"))
-      (k_set_array_at (get_tail applicators) <expr>   (new-<subr> subr_apply_expr  "apply-<expr>" ))))
+      (k_set_array_at (get_tail applicators) <expr>   (new-<subr> subr_apply_expr  "apply-<expr>" ))
+	))
 
-  ; Built-in stuff. Some of these are useless and must remove them.
+  ;;; Built-in stuff. Some of these are useless and must remove them.
   (define-fsubr "define"		subr_define)
   (define-fsubr "lambda"		subr_lambda)
   (define-fsubr "let"			subr_let)
@@ -1314,8 +1317,9 @@
   (define-subr  "<="			subr_le)
   (define-subr  "!="			subr_ne)
   (define-subr  "="			subr_eq)
-  (define-subr  "=="			subr_eq)
   (define-subr  ">"			subr_gt)
+  (define-subr  "<<"			subr_shl)
+  (define-subr  ">>"			subr_shr)
   (define-subr  "abort"			subr_abort)
   (define-subr  "exit"			subr_exit)
   (define-subr  "dump"			subr_dump)
@@ -1348,7 +1352,7 @@
   (define-subr  "long->string"		subr_long_string)
   (define-subr  "current-environment"	subr_current_environment)
 
-  ; Mmmmm... ?
+  ;;; Mmmmm... ?
   (set f_set	(k_cdr (k_assq s_set	globals)))		(gc_push_root (address-of f_set   ))
   (set f_quote	(k_cdr (k_assq s_quote	globals)))		(gc_push_root (address-of f_quote ))
   (set f_lambda	(k_cdr (k_assq s_lambda	globals)))		(gc_push_root (address-of f_lambda))
@@ -1356,7 +1360,7 @@
 
   (set trace_stack (new-<array> 32))				(gc_push_root (address-of trace_stack))
 
-  ; This is useful, I can use this for "import statements". TODO:
+  ;;; This is useful, I can use this for "import statements". TODO:
   (while (set argc (- argc 1))
     (set argv (+ argv 4))
     (let ((arg (oop-at argv 0)))
@@ -1366,9 +1370,15 @@
 					  (or stream (fatal1 "no such file: %s" (oop-at argv 0)))
 					  (repl_stream stream)
 					  (fclose stream))))))
+  (and (> opt_verbose 0)
+       (let ()
+	 (gc_gcollect)
+	 (printf "GC: %d objects in %d bytes, %d free\n" gc_objects_live gc_bytes_used gc_bytes_free)))
 
-  ; Success
+  (fprintf stderr "%d objects in %d bytes, %d free\n" gc_objects_live gc_bytes_used gc_bytes_free)
+
+  ;;; Success
   0)
 
-; Mmmm...
+;;; Mmmm...
 (compile-end)
