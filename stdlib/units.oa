@@ -16,9 +16,9 @@ crate shìzhì = {
 	let fēn = $u.chǐ / 100
 	let cùn = $u.chǐ / 10
 	let chǐ = $u.metre / 3
-	let zhàng = 10 $u.chǐ
-	let yǐn = 100 $u.chǐ
-	let lǐ = 1500 $u.chǐ
+	let zhàng = 10 u.chǐ
+	let yǐn = 100 u.chǐ
+	let lǐ = 1500 u.chǐ
 
 	let cuō = $u.millilitre
 	let sháo = $u.centilitre
