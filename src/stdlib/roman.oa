@@ -1,0 +1,22 @@
+trait $Roman = {
+	let from | str: $String = {
+		$str fold (0, _ + $VALUES[_])
+		$str slide 4 map (_ as $Set size < 4) reduce 'all
+		$str slide 2 map (_ sort fold '/ < 10) reduce 'all
+	} where (
+		let values = $Map (
+			'I' => 1,
+			'V' => 5,
+			'X' => 10,
+			'L' => 50,
+			'C' => 100,
+			'D' => 500,
+			'M' => 1000, )
+	)
+
+	let as | $Num = {
+		for 'x, 'y in $String slide 2 1 {
+			$VALUES[] ++ $VALUES[_]
+		}
+	}
+}

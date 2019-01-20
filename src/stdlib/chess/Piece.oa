@@ -1,0 +1,33 @@
+use chess.Game
+
+trait Piece | $Game = {
+	let color: $Player
+	let range
+
+
+	let as | $Char
+}
+
+trait Bishop: $Piece {
+	let range = $chessboard filter (
+		c => $position zip $c map '- )}
+
+trait Bishop: $Piece {
+	let range = $chessboard filter (
+		c => $position zip $c map '- )}
+
+trait Rook: $Piece | $Game {
+	let range = $chessboard filter (
+		c => $position zip $c map '== )}
+
+trait Queen: $Piece | $Game {
+	let range = $chessboard filter (
+		c => $position zip $c map '- )}
+
+trait King: $Piece {
+	let range = (-1..2, -1..2)
+		}
+
+trait Knight: $Piece {
+	let range = (1..5) map ($c )
+)

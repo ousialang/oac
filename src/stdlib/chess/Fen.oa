@@ -1,0 +1,13 @@
+trait Fen {
+	let from | STR: $String = {
+		let fen-chessboard
+		  , fen-player-to-move
+		  , fen-castling
+		  , fen-en-pessant
+		  , fen-halfmove
+		  , fen-move-num = $STR split " "
+		$Chessboard {
+			let player-to-move = $player-to-move
+			}
+	}
+}

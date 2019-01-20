@@ -1,0 +1,1 @@
+let factorial (n: Nat) = 1..n reduce Int.+

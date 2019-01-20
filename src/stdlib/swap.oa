@@ -1,0 +1,4 @@
+let x = "foo"
+let y = "bar"
+
+let x, y = y, x

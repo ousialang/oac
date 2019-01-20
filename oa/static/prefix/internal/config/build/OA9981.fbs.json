@@ -1,7 +1,0 @@
-{
-	"formula" : "OA9981",
-	"type" : "Note",
-	"priority" : 0.1,
-	"is_fixable" : true,
-	"body" : "The source file %s has now a different extension and won't be compiled."
-}

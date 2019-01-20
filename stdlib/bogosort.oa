@@ -1,4 +1,0 @@
-use oa.Iter
-
-let bogosort | list: $Iter[$Sort] = {
-	$list (if ($list is-not-sorted) 'shuffle) }
