@@ -1,17 +1,15 @@
 use clap::ArgMatches;
 use hlua::Lua;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use rusqlite;
 
 use std::env::current_dir;
 use std::fs::File;
 use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-use cache::Cache;
-use feedback::{Feedback, Logger, View};
-use usage;
+use crate::cache::Cache;
+use crate::feedback::{Feedback, Logger, View};
+use crate::usage;
 
 pub struct Hub<V: View> {
     lua: Lua<'static>,
@@ -43,4 +41,10 @@ where
             view: view,
         }
     }
+}
+
+#[derive(Default)]
+pub struct Config {
+    inputs: Vec<PathBuf>,
+    output_path: PathBuf,
 }
