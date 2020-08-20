@@ -8,4 +8,5 @@
 
 # Ousia
 
-Ousia is a an experimental programming language.
+Ousia is an experimental programming language.
+
