@@ -1,4 +1,10 @@
-use oa.Iter
+use std.Iter
+
+|> Iter.take(40) |> Iter.collect
 
 let bogosort | list: Iter(Sort) = {
 	$list (if ($list is-not-sorted) 'shuffle) }
+
+	'shuffle |> Iter.take()
+
+	loop, while: 

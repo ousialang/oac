@@ -1,8 +1,8 @@
-use u => oa.units
+use u => oa/units
 
 let Newton = $u.metre / $u.second^2
 let mile = 1609.344 u.metre
-let nautical-mile = 1852 u.metre
+let nautical_mile = 1852 u.metre
 
 $u.metre as $u.shìzhì. u
 
@@ -20,12 +20,12 @@ crate shìzhì = {
 	let yǐn = 100 u.chǐ
 	let lǐ = 1500 u.chǐ
 
-	let cuō = $u.millilitre
-	let sháo = $u.centilitre
-	let gě = $u.decilitre
-	let shēng = $u.litre
-	let dǒu = $u.decalitre
-	let dàn = $u.hectolitre
+	let cuō = Unit.millilitre
+	let sháo = Unit.centilitre
+	let gě = Unit.decilitre
+	let shēng = Unit.litre
+	let dǒu = Unit.decalitre
+	let dàn = Unit.hectolitre
 }
 
 let knot = $u.nautical-mile / $u.hour

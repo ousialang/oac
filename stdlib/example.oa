@@ -35,9 +35,9 @@ trait Person: News {
 	let 
 }
 
-type U64 = Int | ? in (0..2^64)
+type U64 = Int & (_ in (0..2^64))
 type Bool = True | False
-type Maybe[T] = T | ()
+type Maybe[T] = Some[T] | None
 
 type Family =
 	mother: Person,
@@ -55,7 +55,7 @@ struct Person =
 	mother: Person,
 	father: Person,
 
-let GREETINGS = "Hello"
+let GREETINGS := "Hello"
     		  , "Hola"
 			  , "Bonjour"
 			  , "Ciao"
@@ -86,10 +86,10 @@ let euler (range: Range, seq: Iter[?])
 
 GREETINGS map [io.printl];
 
-for 'n in $Seq {}
+for n? in seq {}
 
-let evens | seq: $Iter = $Seq groups (2, 1) map '1;
-let odds | seq: $Iter = $Seq groups (2, 1) map '2;
+let evens := seq .slide[2, 1] .map[_[0]];
+let odds := seq .slide[2, 1] .map[_[1]];
 
 for ever {
 	$Welcome_msg print
@@ -103,8 +103,7 @@ for ever {
 
 EULER = (1 1000) filter ([$n%3==0 or $n%5==0]) sum
 
-let eurler_2 | range = {
-	range nat map [fibonacci] filter (? is_even and ? < 4000000) sum }
+let euler_2 := range? -> range .map[fibonacci].filter[n? -> n%2==0 and n < 4000000).sum;
 
 
 # Use in 3D and higher for textured image synthesis are
@@ -118,7 +117,11 @@ let simplex-noise | grid: $Matrix = {
 	}
 }
 
-let is_prime (n) = {
+let factorial :=
+  0 -> 1,
+  n? -> n * factorial[n-1];
+
+let is_prime := n? -> {
 	600851475143 int.factors size == 2
 }
 

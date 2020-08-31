@@ -1,3 +1,10 @@
+algdata Leaf := ()
+algdata BTree := 
+
+module Application.Tree {
+  
+}
+
 trait Tree {
 
 }

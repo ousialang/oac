@@ -1,1 +1,3 @@
-"Hello, world!" stdout.print
+mod Application.Main {
+  std::IO::println "Hello, world!"
+}
