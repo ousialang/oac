@@ -1,4 +1,4 @@
-use oa.collections.?
+use oa.collections.*
 
 # I want a language where information flows like inside pipes. This is why
 # postfix syntax is used all over. The language must rely heavily on
@@ -30,6 +30,10 @@ use oa.collections.?
 #   because its behavior is standardized.
 
 # Indentation IS significant, but it's only used for line continuations.
+
+class Person {
+	const 
+}
 
 trait Person: News {
 	let 

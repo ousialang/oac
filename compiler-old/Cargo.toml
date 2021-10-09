@@ -5,9 +5,9 @@ build = "build.rs"
 edition = "2018"
 
 [dependencies]
-bincode = "1.0.0"
-blake2 = "0.7.0"
-chrono = "0.4.2"
+bincode = "1"
+blake2 = "0.7"
+chrono = "0.4"
 clap = { version = "2.31.2", features = [] }
 colored = "1.6.0"
 digest = { version = "0.7", features = ["std"]}
@@ -25,7 +25,6 @@ stopwatch = "0.0.7"
 termion = "1.5.1"
 textwrap = { version = "0.9", features = ["term_size"] }
 toml = "0.4"
-url = "1.7.0"
 
 [build-dependencies]
 chrono = "0.4"
