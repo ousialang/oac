@@ -1,4 +1,20 @@
-use oa.collections.*
+use oa.prelude._
+use oa.collections.List
+
+# Try to parse all statements, in parallel. 
+# E.g. I find statements that start with use, def, const, etc. and I can parse
+# all of those because you can't re-define values (or maybe just macros?) in Ousia.
+# Lines that start with e.g. `myvalue = 5` are not valid at top-level, only
+# inside functions because they are custom syntax (from raw bytes/characters,
+# not just tokens). This way, you can embed HTML, XML, JSON, etc.
+
+# In Ousia, powerful metaprogramming is THE defining feature. Compile-time code
+# evaluation is a first-class feature.
+# When parsing a file, parsing is incremental.
+# 1. Parse the first statement
+# 2. Compile-time evaluate the first statement: it talks to the compiler API,
+# which is extremely powerful and effectively provides an interpreter, and
+# defines new structures and data.
 
 # I want a language where information flows like inside pipes. This is why
 # postfix syntax is used all over. The language must rely heavily on
@@ -41,12 +57,16 @@ trait Person: News {
 
 type U64 = Int & (_ in (0..2^64))
 type Bool = True | False
-type Maybe[T] = Some[T] | None
+enum Opt[T] = Some[T] | None
 
 type Family =
 	mother: Person,
 	father: Person,
 	child: Person | ? age < $mother age & ? age < $father age
+
+type List[T] = struct {
+	elem: T
+}
 
 struct List[T] =
 	element: T,
