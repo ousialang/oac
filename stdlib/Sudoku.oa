@@ -1,5 +1,9 @@
 use oa.Matrix
 
+fun main {
+	printl "Hello, world!"
+}
+
 trait Digit: 1 <= $Num <= 9
 
 trait Sudoku = {

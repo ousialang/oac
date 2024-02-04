@@ -1,6 +1,0 @@
-sudo: false
-language: rust
-
-script:
-  - cd compiler
-  - cargo test

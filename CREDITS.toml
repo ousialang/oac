@@ -11,16 +11,10 @@
 [[authors]]
 name = "Filippo Costa"
 username = "neysofu"
-email = "filippocosta.italy@gmail.com"
-description = "Lead developer"
+email = "filippo@neysofu.me"
+description = "Maintainer"
 website = "https://twitter.com/neysofu"
 
 [[authors]]
 name = "William Swinton"
 description = "Logo (drawing of Plato)"
-
-[[projects]]
-name = "Category Theory for Programmers"
-by = "Bartosz Milewski"
-website = "https://bartoszmilewski.com/2014/10/28/category-theory-for-programmers-the-preface"
-license = "CC BY-SA 4.0"

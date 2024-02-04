@@ -1,63 +1,180 @@
 use oa.prelude._
 use oa.collections.List
 
-# Try to parse all statements, in parallel. 
-# E.g. I find statements that start with use, def, const, etc. and I can parse
-# all of those because you can't re-define values (or maybe just macros?) in Ousia.
-# Lines that start with e.g. `myvalue = 5` are not valid at top-level, only
-# inside functions because they are custom syntax (from raw bytes/characters,
-# not just tokens). This way, you can embed HTML, XML, JSON, etc.
+// Try to parse all statements, in parallel. 
+// E.g. I find statements that start with use, def, const, etc. and I can parse
+// all of those because you can't re-define values (or maybe just macros?) in Ousia.
+// Lines that start with e.g. `myvalue = 5` are not valid at top-level, only
+// inside functions because they are custom syntax (from raw bytes/characters,
+// not just tokens). This way, you can embed HTML, XML, JSON, etc.
 
-# In Ousia, powerful metaprogramming is THE defining feature. Compile-time code
-# evaluation is a first-class feature.
-# When parsing a file, parsing is incremental.
-# 1. Parse the first statement
-# 2. Compile-time evaluate the first statement: it talks to the compiler API,
-# which is extremely powerful and effectively provides an interpreter, and
-# defines new structures and data.
+// In Ousia, powerful metaprogramming is THE defining feature. Compile-time code
+// evaluation is a first-class feature.
+// When parsing a file, parsing is incremental.
+// 1. Parse the first statement
+// 2. Compile-time evaluate the first statement: it talks to the compiler API,
+// which is extremely powerful and effectively provides an interpreter, and
+// defines new structures and data.
+// How do e.g. decorators work? You gotta indent?
 
-# I want a language where information flows like inside pipes. This is why
-# postfix syntax is used all over. The language must rely heavily on
-# compilation efforts and have little noise. All the code is just there.
-#
-# Factoids:
-# - use elegant English
-# - languages distinguish between methods and functions. They are the same
-#   thing in Ousia, you just apply them differently. It's very functional.
-# - Function input type checking is very useful. If you ask for something, the
-#   compiler will try to provide that for you and will give error only if unable
-#   to give you such.
-# - End of statement inference using whitespace
-# - readable
-# - maybe null termination checker? I can still use infinite loops in special
-#   places, but only if I specify so!
-# - terms can be of many types. Types are sets of terms. I ship with many
-#   operators that, similarly to Haskell and other languages, can create new
-#   types from existing types or from the ground up.
-# - Structural type system. I don't care if two libraries use different types,
-#   if they do the same thing I should be able to use them.
-# - effective type system that can prove basically anything, but also flexible
-#   and doesn't get in the way. You prove what you want, nothing more.
-#
-# # is character
-# . is a namespace operator
-# , forms lists
-# ? is a special syntax for anonymous functions. Can be used almost anywhere
-#   because its behavior is standardized.
+// I want a language where information flows like inside pipes. This is why
+// postfix syntax is used all over. The language must rely heavily on
+// compilation efforts and have little noise. All the code is just there.
+//
+// Factoids:
+// - use elegant English
+// - languages distinguish between methods and functions. They are the same
+//   thing in Ousia, you just apply them differently. It's very functional.
+// - Function input type checking is very useful. If you ask for something, the
+//   compiler will try to provide that for you and will give error only if unable
+//   to give you such.
+// - End of statement inference using whitespace
+// - readable
+// - maybe null termination checker? I can still use infinite loops in special
+//   places, but only if I specify so!
+// - terms can be of many types. Types are sets of terms. I ship with many
+//   operators that, similarly to Haskell and other languages, can create new
+//   types from existing types or from the ground up.
+// - Structural type system. I don't care if two libraries use different types,
+//   if they do the same thing I should be able to use them.
+// - effective type system that can prove basically anything, but also flexible
+//   and doesn't get in the way. You prove what you want, nothing more.
+//
+// # is character
+// . is a namespace operator
+// , forms lists
+// ? is a special syntax for anonymous functions. Can be used almost anywhere
+//   because its behavior is standardized.
+//
+// Indentation IS significant, but it's only used for line continuations.
+//
+// Things that "normal" code is usually generic over:
+// - Overflowing behavior
+// - Assertion
+// - Log-level & other logging parameters
+// - Allocator (it should be possible to e.g. run a single function with a
+// custom allocator, and have the rest of the program use another allocator).
 
-# Indentation IS significant, but it's only used for line continuations.
-
-class Person {
-	const 
+// This would always result in copying the string to the heap!
+fun prepend_symbol(str: String): Opt[String] = {
+	// TODO
+	None
 }
 
-trait Person: News {
-	let 
+type Foobar = struct {
+	foo: u32
+	bar: u32
+	spam: u64
+}
+
+// This would result in either copying the substring to the heap, or slicing it
+// with a lifetime. Up to the implementation, depending on the caller pattern.
+fun strip_prefix(str: String): Opt[String] = {
+	// ...
+	// TODO
+	None
+}
+
+type Ordering = Less | Equal | Greater
+
+// Input types are a subset of what you'll need, and return types are a
+// superset of what will be returned.
+
+fun product(orders: Iter[CmpResult], default_argument: Foo = 2, opt: Opt[U64] = None): Opt[CmpResult] {
+	let min = orders.min() // Bound[Ordering, <= max]
+	let max = orders.max()
+
+	switch (min, max), do: {
+		(Less, Greater) => None
+		(Equal, Equal) => Some(Equal)
+		(Less, Equal) => Some(Less)
+		(Equal, Greater) => Some(Greater)
+	}
+}
+
+fun square(x: Number): Number = x*x
+
+// E.g. List[Bool] exposes a certain set of interfaces and methods and whatnot.
+// If the user only uses the subset of APIs that is also compatible with
+// bitarray, then it may be replaced.
+
+type Bool = FALSE | TRUE
+type Opt[T] = Some[T] | None
+
+fun main = {
+	// These are all equivalent.
+	io.println("Hello, world!")
+	io.println("Hello, world!", some_option: FALSE)
+
+	io.println("Hello," ++ " world!")
+	io.println("Hello," .append " world!")
+	io.println("Hello," .String.append " world!")
+
+	for n, in: (1, 2, 3), do: {
+		io.printl n
+	}
+
+	if condition, then: {
+		oa.io.println [this_obj]
+	}, else: {
+		abc
+	}
+
+	if advanced_condition(2, 3), then: {
+
+	}
+
+	do {
+
+	} while ()
+
+	while condition, do: {
+
+	}, else: {
+
+	}
+
+	let value = 42
+	let greetings = (
+		"Hello"
+	    "Hola"
+		"Bonjour"
+		"Ciao"
+		"こんにちは"
+		"안녕하세요"
+		"Cześć"
+		"Olá"
+		"Здравствуйте"
+		"Chào bạn"
+		"您好"
+		"Hallo"
+		"Hej"
+		"Ahoj"
+		"سلام"
+	)
+
+
+	type RgbColor = (
+		r: u8,
+		g: u8,
+		b: u8,
+	)
+
+	(1,2,3,4,5,6,7,8,9,10) .filter (n? % 3 == 0) .map (n? * 2) .reduce Int.sum;
+}
+
+fun fizzbuzz (range) = {
+	for i?, in: range, do: {
+		switch (i % 3, i % 5), do: {
+			(0, 0) -> printl "fizz"
+			(0, _) -> printl "buzz"
+			(_, 0) -> printl "fizzbuzz"
+			(_, _) -> printl i
+		}
+	}
 }
 
 type U64 = Int & (_ in (0..2^64))
-type Bool = True | False
-enum Opt[T] = Some[T] | None
 
 type Family =
 	mother: Person,
@@ -67,6 +184,8 @@ type Family =
 type List[T] = struct {
 	elem: T
 }
+
+bitfield ProcessInfo = (permission_a, permission_b, something_else)
 
 struct List[T] =
 	element: T,
@@ -78,22 +197,6 @@ struct Person =
 	nationality: Array[String],
 	mother: Person,
 	father: Person,
-
-let GREETINGS := "Hello"
-    		  , "Hola"
-			  , "Bonjour"
-			  , "Ciao"
-			  , "こんにちは"
-			  , "안녕하세요"
-			  , "Cześć"
-			  , "Olá"
-			  , "Здравствуйте"
-			  , "Chào bạn"
-			  , "您好"
-			  , "Hallo"
-			  , "Hej"
-			  , "Ahoj"
-			  , "سلام"
 
 printl["The answer is {}"]
 
@@ -141,9 +244,10 @@ let simplex-noise | grid: $Matrix = {
 	}
 }
 
-let factorial :=
-  0 -> 1,
-  n? -> n * factorial[n-1];
+let factorial = switch n? {
+	0 -> 1,
+	n -> n * factorial (n-1),
+}
 
 let is_prime := n? -> {
 	600851475143 int.factors size == 2
@@ -163,7 +267,7 @@ fn euler_7 {
 }
 
 fn eurler_8 {
-	$bigass_n as $string triade (13,13) map (_ product) max
+	$n as $string triade (13,13) map (_ product) max
 }
 
 fn euler_9 {
@@ -195,12 +299,6 @@ flatten = flatr '++
 for X in LIST
     3 times do {
 
-}
-
-if condition then {
-	printf [this_obj]
-} else {
-	$abc
 }
 
 if $condition then ... else ...
