@@ -7,7 +7,7 @@ use oa.collections.List
 // Lines that start with e.g. `myvalue = 5` are not valid at top-level, only
 // inside functions because they are custom syntax (from raw bytes/characters,
 // not just tokens). This way, you can embed HTML, XML, JSON, etc.
-
+//
 // In Ousia, powerful metaprogramming is THE defining feature. Compile-time code
 // evaluation is a first-class feature.
 // When parsing a file, parsing is incremental.
@@ -16,7 +16,7 @@ use oa.collections.List
 // which is extremely powerful and effectively provides an interpreter, and
 // defines new structures and data.
 // How do e.g. decorators work? You gotta indent?
-
+//
 // I want a language where information flows like inside pipes. This is why
 // postfix syntax is used all over. The language must rely heavily on
 // compilation efforts and have little noise. All the code is just there.
@@ -49,11 +49,16 @@ use oa.collections.List
 // Indentation IS significant, but it's only used for line continuations.
 //
 // Things that "normal" code is usually generic over:
-// - Overflowing behavior
-// - Assertion
+// - Overflowing & arithmetic behavior
+// - Assertion, enabled or not
 // - Log-level & other logging parameters
 // - Allocator (it should be possible to e.g. run a single function with a
-// custom allocator, and have the rest of the program use another allocator).
+//   custom allocator, and have the rest of the program use another allocator.
+//   Edit: it can be, with thread local storage!).
+// - Exception table (to e.g. survive failed allocations inside oa.Vec).
+//
+// These are either implemented by duplicating all the module code with
+// different compilation settings, or with thread/task local storage.
 
 // This would always result in copying the string to the heap!
 fun prepend_symbol(str: String): Opt[String] = {
@@ -61,10 +66,48 @@ fun prepend_symbol(str: String): Opt[String] = {
 	None
 }
 
-type Foobar = struct {
+// Function from type to type e.g.
+// - Newtype pattern.
+// - Inheritance.
+// - Many useful kinds of metaprogramming without parsing code, basically.
+// - create a U64 that can't be multiplied
+// - a Vec that can't get any longer than X.
+// - Attempt to upcast a type into a interface implementator based on what "raw"
+//   methods it implements.
+// - A function that returns possibly similar types which are useful for
+//   optimization passes.
+// Function from type to value e.g.
+// - Get the type name.
+// - Its JSON Schema.
+// - Its original code representation.
+// Function from value to type e.g.
+// - from a database connection string to its schema type.
+// - Bindings generator without codegen (I'm not so sure that's a good idea).
+// - (const generics) from a number to an array type.
+// Function from value to value e.g. any normal function.
+
+// Structs are logically related units of data which usually (but not
+// necessarily) live close to each other. They are product types and they can be
+// generic over other types.
+type Foobar[T] = struct {
 	foo: u32
 	bar: u32
-	spam: u64
+	spam_generic: T
+}
+
+// Thanks to the power of proving, types can carry all sorts of invariants
+// expressed as assertions which are checked at compile-time.
+fun shrink[T](vec: Vec[T]) -> Where[Vec[T], v? -> v == vec && v.capacity == v.length] {
+	unimplemented
+}
+
+// Note that `Opt.Ok[T]` is its own type as well.
+type Opt[T] = enum {
+	// The unit type () is the default type for each enum variant, unless
+	// specified. So this is the same as:
+	//   None: ()
+	None
+	Ok: T
 }
 
 // This would result in either copying the substring to the heap, or slicing it
@@ -73,6 +116,8 @@ fun strip_prefix(str: String): Opt[String] = {
 	// ...
 	// TODO
 	None
+
+	generate 2
 }
 
 type Ordering = Less | Equal | Greater
@@ -80,9 +125,20 @@ type Ordering = Less | Equal | Greater
 // Input types are a subset of what you'll need, and return types are a
 // superset of what will be returned.
 
-fun product(orders: Iter[CmpResult], default_argument: Foo = 2, opt: Opt[U64] = None): Opt[CmpResult] {
-	let min = orders.min() // Bound[Ordering, <= max]
+fun min[T](iter: Iter[T]): Opt[T] {
+	unimplemented
+}
+
+fun min_not_empty[T: TotalEq](iter: Iter[T] + Where[!iter.is_empty()]): T {
+	unimplemented
+}
+
+fun product(orders: Iter[CmpResult]): Opt[CmpResult] {
+	// FIXME: min() and max() might not return anything if iter is empty.
+	let min = orders.min()
 	let max = orders.max()
+
+	prove min <= max
 
 	switch (min, max), do: {
 		(Less, Greater) => None
@@ -114,8 +170,8 @@ fun main = {
 		io.printl n
 	}
 
-	if condition, then: {
-		oa.io.println [this_obj]
+	if 2 == 2, then: {
+		io.println [this_obj]
 	}, else: {
 		abc
 	}
@@ -126,7 +182,7 @@ fun main = {
 
 	do {
 
-	} while ()
+	}, while: true
 
 	while condition, do: {
 
@@ -153,7 +209,6 @@ fun main = {
 		"سلام"
 	)
 
-
 	type RgbColor = (
 		r: u8,
 		g: u8,
@@ -165,11 +220,11 @@ fun main = {
 
 fun fizzbuzz (range) = {
 	for i?, in: range, do: {
-		switch (i % 3, i % 5), do: {
-			(0, 0) -> printl "fizz"
-			(0, _) -> printl "buzz"
-			(_, 0) -> printl "fizzbuzz"
-			(_, _) -> printl i
+		match (i % 3, i % 5), do: {
+			(0, 0) -> io.printl "fizz"
+			(0, _) -> io.printl "buzz"
+			(_, 0) -> io.printl "fizzbuzz"
+			(_, _) -> io.printl i
 		}
 	}
 }
@@ -180,6 +235,7 @@ type Family =
 	mother: Person,
 	father: Person,
 	child: Person | ? age < $mother age & ? age < $father age
+
 
 type List[T] = struct {
 	elem: T

@@ -1,0 +1,7 @@
+// This is a comment and it's ignored by the parser.
+fun foobar() {
+	foo = 2
+	return foo
+	bar = 3
+	return bar
+}
