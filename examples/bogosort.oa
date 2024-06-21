@@ -1,0 +1,16 @@
+
+use std.Iter
+
+|> Iter.take(40) |> Iter.collect
+
+fun bogosort(list: Seq) {
+	
+}
+
+let bogosort | list: Iter(Sort) = {
+	$list (if ($list is-not-sorted) 'shuffle) }
+
+	'shuffle |> Iter.take()
+
+	loop, while: 
+}

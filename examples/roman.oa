@@ -1,0 +1,28 @@
+mod RomanNum {
+
+  [contexpr]
+  string2int(str: Str) :=
+    values = 'I' => 1,
+	         'V' => 5,
+			 'X' => 10,
+			 'L' => 50,
+			 'C' => 100,
+			 'D' => 500,
+			 'M' => 1000
+    str
+		$str fold (0, _ + $VALUES[_])
+		$str slide 4 map (_ as $Set size < 4) reduce 'all
+		$str slide 2 map (_ sort fold '/ < 10) reduce 'all
+
+  2int(n: UInt) := {
+    str
+    |> Str.chars
+    |> Iter.slide 2, 1
+    |> Iter.map a, b => {values @ a ++ values @ b}
+  }
+}
+
+mod RomanNum: {
+	fun (str: Str) [
+}
+

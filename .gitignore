@@ -1,4 +1,5 @@
 target/
+a.out
 
 # Rust and Cargo
 **/*.rs.bk

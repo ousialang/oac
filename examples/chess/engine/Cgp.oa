@@ -1,0 +1,16 @@
+# Cgp.oa
+# ======
+#
+# Provides a Cartesian Genetic Programming (CGP) framework.
+
+trait Genome | $Fitness {
+	let genes: $Matrix [$Gene]
+	let fitness: $Genome ->
+
+	let mutate
+
+}
+
+trait Points: $Gene {
+	let time-command
+}

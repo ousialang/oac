@@ -1,0 +1,164 @@
+// This is a comment.
+//
+// Ousia does not support multi-line comments. See
+// <https://futhark-lang.org/blog/2017-10-10-block-comments-are-a-bad-idea.html>
+// for a good explanation.
+
+// Ousia source files can contain arbitrary logic that is interpreted by the
+// compiler during build time.
+
+//. This is a doc comment. It's a statement, like any other. Not magic. So you
+//. need to compile the program to read the comments.
+
+if env["OUSIA_DEBUG"] != "1", do: {
+	println "Ousia is not in debug mode."
+	exit 1
+	// The problem with the above is that the compiler doesn't know when to
+	// recompile it. Should it rerun every time?
+}
+
+print "Hello, world! My name is {name}"
+// `printnl` is just like `print`, but without a newline at the end.
+printnl "Hello, world!\n"
+
+type Vec[T] = struct {
+	len: U64
+	capacity: U64
+	data_ptr: Usize
+}
+
+type String = Vec[U8]
+
+// Many Ousia language constructs reuse the same syntax, which represents
+// something resembling a Lua table: a sequence and a map, together.
+if true, do: {
+	print "true"
+}, else: {
+	print "false"
+}
+
+// Square brackets create a Vector by default.
+let vec = [1, 2, 3]
+for x, in: vec, do: {
+	print x
+}
+// ...becomes:
+let vec = [1, 2, 3]
+while i < vec.len, do: {
+	{
+		let x = vec[i]
+		print x
+	}
+	i += 1
+}
+
+while x < 10, do: {
+	print x
+	x = x + 1
+}
+
+// Function call use the same syntax as well. This results in a somewhat Lisp-y flavor.
+function_call_with_args 1, 2, 3, optional_arg: true
+nested_call 1, 2, call 3
+
+// n / m returns:
+// - None if m == 0
+// - Some(n / m) if m != 0
+
+// This function will:
+// - Accept any `n` that implements the required subset of the `Int` interface
+//   (mod operator, equality, conversion from literal).
+// - Return a type that implements the subset of `String` required at the
+//   callsite. The callsite can use up to the full type of the return value, if
+//   they want. This is, technically speaking, just an optimization, and has
+//   little effects on the actual type system.
+//
+// This is a unique feature of Ousia, and we call it "implicit subtyping".
+fn fizzbuzz (n: Uint, foo: String = "") -> String = {
+	// `mod` in this case is an associated constant, which is basically a
+	// a method. `Int.mod n, 3` would be the same.
+	// Question: should this function accept a signed integer?
+	// It probably should, but it's debatable.
+	switch (n.mod 3, n.mod 5), do: {
+		(0, 0) -> "fizzbuzz"
+		(0, _) -> "fizz"
+		(_, 0) -> "buzz"
+		_ -> n.to_string
+	}
+}
+
+type Maybe[T] = enum {
+	None
+	Some: T
+}
+
+type Try[T, E] = enum {
+	Ok: T
+	Err: E
+}
+
+/// This is a doc comment.
+fn product_order(cmps: Iter[Ord]) -> Maybe[Cmp] = {
+	let min = cmps.min?
+	let max = cmps.max?
+
+	switch (min, max), do: {
+		(Cmp.Lt, Cmp.Eq) -> Some Cmp.Lt
+		(Cmp.Eq, Cmp.Eq) -> Some Cmp.Eq
+		(Cmp.Eq, Cmp.Gt) -> Some Cmp.Gt
+		(Cmp.Lt, Cmp.Gt) -> None
+		_ -> Impossible
+	}
+}
+
+// A function could be generic over a great number of things:
+// - Thread-safety.
+// - Async vs sync.
+// - Input and output types.
+// - Mutability of return references.
+
+type Point = struct {
+	x: Int
+	y: Int
+}
+
+// All Ousia code is defined in relation to its parent module, whether that's
+// implicitly defined by the standard library or custom. A module defines the
+// implicit dependencies of Ousia code, which usually are:
+// - A heap allocator.
+// - Exception handling logic.
+// - Logging.
+// - GC mechanism.
+
+// Enums are standard tagged unions. Enum variants are types too, which means a
+// function can theoretically always return `-> True`.
+
+type Bool = enum {
+	False
+	True
+}
+
+type Person = struct {
+	age: U16
+	name: String
+}
+
+// Ousia has enums, structs, but it also needs a way to represent algebras on
+// top of them, like "this struct minus this value", or "sum of these two
+// enums".
+// - Struct - value -> struct
+// - Enum + enum -> enum
+// - struct * struct (tuple) -> struct
+
+test_provider
+
+u8_wrapper foo, bar, baz, qux, quux, corge, grault, garply, waldo, fred, plugh, xyzzy, thud
+
+test "this is a fest function" (tmp: Directory, a: U32) {
+	// The assert macro is smart, and will print the right error message and diff
+	// depending on the AST of the expression and the value types.
+	assert foo.contains bar
+
+	assert a == 1
+	assert tmp == snapshot
+}

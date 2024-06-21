@@ -1,0 +1,33 @@
+module Examples.Factorial {
+  use std.Range
+  use std.Iter
+  
+  let factorial := n -> range(1, n).to_iter() |> Range::to_iter |> Iter::foldl(UInt::multiply, 1);
+  [pure][contexpr]
+  let factorial :=
+    let inner :=
+      (0, c?) -> c,
+      (n?, c?) -> inner[n - 1, c * n];
+    0 -> 1,
+    n? -> inner[n, 1];
+
+  let factorial.match :=
+    let inner := i?, factorial?, n? -> (factorial cmp n) |> (
+      Sign.Lt -> inner[i+1, factorial * i, n],
+      Sign.Gt -> False,
+      Sign.Eq -> True,
+    );
+    n? -> inner[0, 1, n];
+
+}
+
+module Examples.Routes {
+  let router :=
+    methods.POST, "/v0/users", routes.create_user,
+
+  let v0_routes :=
+    (m.POST, "/users"),
+    (m.GET, "/users", users_index),
+    (m.PATCH | m.UPDATE, "/users", users_update),
+    (m.DELETE, "/users", users_delete),
+}

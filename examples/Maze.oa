@@ -1,0 +1,51 @@
+# Maze.oa
+# =======
+#
+# A graph-based representation of mazes with multiple generation and solving
+# algorithms.
+
+use oa.Graph
+use oa.Matrix
+use oa.random
+
+trait Maze {
+
+	# See [https://en.wikipedia.org/wiki/Graph_(discrete_mathematics)#Simple_graph]:
+	#   A simple graph is an undirected graph without multiple edges or loops.
+	#   In a simple graph the edges form a set (rather than a multiset) and
+	#   each edge is an unordered pair of distinct vertices.
+	let graph: $Graph; $graph is-simple
+	let p0: $Node; $Graph contains $p0
+	let p1: $Node; $Graph contains $p1
+
+	let is-unicursal: $Bool = $graph is-linear
+	let is-perfect: $Bool = $graph is-not-tree
+
+	let solve = {
+		if $is-unicursal {
+			$Graph path
+		} elif $is-perfect {
+			$Graph breadth_search
+		} else {
+			$Graph breadth_search }}
+
+	let solution-by-following-right-wall: $Edges sort = {
+		$Node map (_ edges sort) fold 'preorder as 'stream }
+
+	let random-solution = $p0 edges random.choose match (
+		$p1 => (),
+		_ => $p0 ++ $bruteforce )}
+
+$Maze from-matrix ($Matrix by-growing-tree (_ (-1)))
+
+crate Maze {
+
+	let by-growing-tree | x: $Nat
+	                    | y: $Nat = {
+		let grid = $Matrix (2, ($x, $y))
+		let cells = ($grid nodes random.choose)
+		let walls = ()
+		$Cells.size match {
+			0 => $Cells pop $Cell,
+			_ => ,
+		}}}

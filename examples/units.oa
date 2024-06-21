@@ -1,0 +1,37 @@
+use u => oa/units
+
+let Newton = $u.metre / $u.second^2
+let mile = 1609.344 u.metre
+let nautical_mile = 1852 u.metre
+
+$u.metre as $u.shìzhì. u
+
+let minute = 60 u.second
+let hour = 60 u.minute
+let day = 24 u.hour
+
+crate shìzhì = {
+	let háo = $u.chǐ / 10000
+	let lí  = $u.chǐ / 1000
+	let fēn = $u.chǐ / 100
+	let cùn = $u.chǐ / 10
+	let chǐ = $u.metre / 3
+	let zhàng = 10 u.chǐ
+	let yǐn = 100 u.chǐ
+	let lǐ = 1500 u.chǐ
+
+	let cuō = Unit.millilitre
+	let sháo = Unit.centilitre
+	let gě = Unit.decilitre
+	let shēng = Unit.litre
+	let dǒu = Unit.decalitre
+	let dàn = Unit.hectolitre
+}
+
+let knot = $u.nautical-mile / $u.hour
+
+64 u.mebibyte as $u.kilobyte
+$u.second
+42 u.Newton
+
+trait Unit | x: $Num

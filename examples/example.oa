@@ -1,0 +1,413 @@
+use oa.collections.*
+
+// I want a language where information flows like inside pipes. This is why
+// postfix syntax is used all over. The language must rely heavily on
+// compilation efforts and have little noise. All the code is just there.
+//
+// Factoids:
+// - use elegant English
+// - languages distinguish between methods and functions. They are the same
+//   thing in Ousia, you just apply them differently. It's very functional.
+// - Function input type checking is very useful. If you ask for something, the
+//   compiler will try to provide that for you and will give error only if unable
+//   to give you such.
+// - End of statement inference using whitespace
+// - readable
+// - maybe null termination checker? I can still use infinite loops in special
+//   places, but only if I specify so!
+// - terms can be of many types. Types are sets of terms. I ship with many
+//   operators that, similarly to Haskell and other languages, can create new
+//   types from existing types or from the ground up.
+// - Structural type system. I don't care if two libraries use different types,
+//   if they do the same thing I should be able to use them.
+// - effective type system that can prove basically anything, but also flexible
+//   and doesn't get in the way. You prove what you want, nothing more.
+//
+// # is character
+// . is a namespace operator
+// , forms lists
+// ? is a special syntax for anonymous functions. Can be used almost anywhere
+//   because its behavior is standardized.
+
+// Indentation IS significant, but it's only used for line continuations.
+//
+// Comptime evaluation IS the key.
+
+type RubiksCubeFace := enum {
+	Up,
+	Bottom,
+	Right,
+	Left,
+	Down
+}
+
+def sort(l) {
+	
+} 
+
+class Person {
+	const 
+}
+
+trait Person: News {
+	let 
+}
+
+def sort(l: Iter[Subreddit])
+
+type Bool = enum {
+	True,
+	False
+}
+
+type Person = struct {
+	age: u32
+}
+
+type U64 = Int & (_ in (0..2^64))
+type Bool = True | False
+type Maybe[T] = Some[T] | None
+
+struct Family = {
+	mother: Person,
+	father: Person,
+	child: Person.constraint(x => age < $mother age & ? age < $father age),
+}
+
+struct List[T] =
+	element: T,
+	next: Maybe[List[T]],
+
+struct Person =
+	name: String,
+	birth: Date,
+	nationality: Array[String],
+	mother: Person,
+	father: Person,
+
+let GREETINGS := "Hello"
+    		  , "Hola"
+			  , "Bonjour"
+			  , "Ciao"
+			  , "こんにちは"
+			  , "안녕하세요"
+			  , "Cześć"
+			  , "Olá"
+			  , "Здравствуйте"
+			  , "Chào bạn"
+			  , "您好"
+			  , "Hallo"
+			  , "Hej"
+			  , "Ahoj"
+			  , "سلام"
+
+printl["The answer is {}"]
+
+$engine dispatch_call [method]
+
+greetings reverse map (? ++ " ") flatten;
+GREETINGS match (
+	"Hello" ++ ? => STDIN ++ (? - "Hello"),
+    ? => "error" )
+
+f ++ g;
+
+let euler (range: Range, seq: Iter[?])
+
+GREETINGS map [io.printl];
+
+for n? in seq {}
+
+let evens := seq .slide[2, 1] .map[_[0]];
+let odds := seq .slide[2, 1] .map[_[1]];
+
+for ever {
+	$Welcome_msg print
+}
+
+{
+	1000
+	Range (1, .)
+	. is_even & . is_odd
+}
+
+EULER = (1 1000) filter ([$n%3==0 or $n%5==0]) sum
+
+let euler_2 := range? -> range .map[fibonacci].filter[n? -> n%2==0 and n < 4000000).sum;
+
+
+# Use in 3D and higher for textured image synthesis are
+# covered by U.S. Patent 6,867,776, if the algorithm is implemented using the
+# specific techniques described in any of the patent claims.
+let simplex-noise | grid: $Matrix = {
+	let skew | coords = {
+		let skewness = (($coords size) sqrt - 1) / ($coords size)
+		$coords map (_ + ($coords sum * $skewness)) }
+	let simplicial-subdivision = {
+	}
+}
+
+let factorial :=
+  0 -> 1,
+  n? -> n * factorial[n-1];
+
+let is_prime := n? -> {
+	600851475143 int.factors size == 2
+}
+
+fn euler_4 {
+	(1..20) math.lcm
+}
+
+fn euler_6 {
+	(1..100) map (_^2) sum - ((1..100) sum) ^ 2
+}
+
+fn euler_7 {
+	use math.PRIMES
+	$PRIMES@10001
+}
+
+fn eurler_8 {
+	$bigass_n as $string triade (13,13) map (_ product) max
+}
+
+fn euler_9 {
+
+}
+
+KEYBOARD match
+
+("Qwerty" => 1,
+ "Ok" => 0,
+ "Bah" => -4,
+ -1
+)
+. at .Keyboard
+
+(1..100) map [fizzbuzz]
+
+USERS sort map [cart] filter ]total_price
+	  map [with_discount < $MAXIMUM_PRICE]
+
+(f ++ g)
+
+$Functions map reduce 'foldr filter _ total_price
+
+let is_sorted = $list slide (2,1) map (_ <= _) reduce 'and;
+
+flatten = flatr '++
+
+for X in LIST
+    3 times do {
+
+}
+
+if condition then {
+	printf [this_obj]
+} else {
+	$abc
+}
+
+if $condition then ... else ...
+if X%2 == 0 then while X>3 do i++
+
+while $condition {}
+do {} while (condition)
+do {} until (condition)
+for e in $sequence,
+	i from $x + 2 by 3 do
+{
+	rst }
+
+for 'x in $List
+for N from X by J
+for N min_of SEQUENCE
+for N max_of SEQUENCE
+
+for N from_X by I $STOP;
+for N from_X to Y $STOP;
+
+import YUCK.EEK as AHEM
+
+import FMT.BLAH.DUH.EUREKA as YIKES
+import FMT.AMEN as BINGO
+import FMT.JEEZ.OUCH
+
+2340 u.kilo.metres / 977 u.N
+
+[undef] def do_something
+def yuck = "Hello, world!"
+[curious]
+
+[1,2,abc:$XYZ]
+
+'(add, 2, (add, 1, 3)) ecl.run
+
+(1,2,3) sort (order := ? > ?, algo := MERGESORT)
+
+(1,2,3,4,5,6,7,8,9,10) map (2 * ?) filter (? % 3 == 0) reduce Int.sum;
+
+('a => ('b,1,2)) as $TREE
+
+n d faces map (? min)
+
+let 2D6 = (1..6) zip (1..6) probability_of (_+_ == 2 volume_up)
+
+1..1000 filter (? is_prime) map (2 * ?) enum
+list filter (? != 4)
+[x for x in list if x != 4]
+
+printl "Hello, world!"
+[jukebox] queue += [songs] filter (? by "John Williams")
+Jukebox volume
+
+1,2,3 map (? + random:Double)
+
+println "Hello, world!"
+
+let dispatch_call(Method: STRING, Params: JSON) =
+	( "status" => $ call_status Params
+	, "init"   => $ call_init Params
+	, "exit"   => $ call_exit Params
+	, "status" => $ call_status Params
+	, ? => JSONRPC_INVALID_METHOD ) @ $params
+
+"Hello, world".print
+"Hello, world!" split $Space map (? capitalize ++ " ...Filippo.")
+"hello" reverse ++ SEQ
+?
+$list filter (_%2 == 0) map (_+2)
+false ? (1,0)
+
+set x = 2
+
+let y = 3
+set x = y
+
+$Users map (? name)
+
+$Context ("api.google.com", "user:pippoc") http.post
+
+struct Node =
+	children: Array
+
+type Tree = 
+
+data Tree = $LEAF || ($LNODE && $RNODE)
+"x" upper
+$f · $g
+assert 1
+raise $INDEX_OUT_OF_BOUNDS
+1..100
+
+class TREE (let NODES) {
+
+	def if (CONDITION) then (X) else (Y) = {
+
+	}
+
+	def UNTIL (let CONDITION) {CODE} = while (condition!) (code)
+
+	def travel(distance) = DISTANCE as RGB
+
+$tree parent
+$tree pedigree
+$tree siblings
+$tree children
+$tree is_leaf
+$tree is_root
+
+# Primitives
+
+"Hello, world!" # string
+"x" # char
+10
+2.75
+0xFF
+0b11001
+0o1374 # numbers
+0x24FA5
+(1,2,3) # list
+(1: 'x', 2: 'y', 3: 'z') # hashmaps
+true, false # bool
+
+def @ (funct, arg) = funct (arg)
+
+def add_vector (a,b) = Vectorize ("float32", "float32") {2+2}
+
+arr = (true)
+
+if $condition do {...} else {...}
+
+let pi = 3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170...
+let euler = 2.7182818284590452353602874713526624977572470936999595749669676277240766303535475945713821785251
+let golden_ratio = (5 sqrt + 1) / 2
+
+class Generative(X) {
+
+	let MAP(F) = GENERATIVE (F compose X)
+	let FILTER(P) = GENERATIVE (if P(X) then P else X)
+}
+
+val condition = !true
+val condition = true! and false!
+if not cargo contains box {
+
+}
+
+# range
+
+# Numbers
+$n + $m
+$n - $m
+$n * $m
+$n / $m
+$n % $m
+$n ^ $m
+$n < $m
+$n > $m
+$n >= $m
+$n <= $m
+$n compare $m
+$n sqrt
+$n cbrt
+
+# Bool
+x and y
+x or y
+x !
+x xor y
+
+# Lists
+(1, 2, 3)
+
+expand LIST.[] {RANGE (X,Y) => $list from X to Y}
+
+# Sequences
+list contains element
+list filter (? < 2)
+list fold '++
+list @ (0..4)
+list @ (-1)
+list enum
+list reverse
+list head
+list [-1]
+list size
+list map
+list tail
+list flat_map
+list flatten
+list range
+list sort (SORTING_ALGO_QUICKSORT)
+list zip $that_list
+list shuffle $rnd
+
+# Hash maps
+$hash keys
+$hash values
+
+enum COLORS = Red, Blue, Green
+
+Math_Symbolic {√2 + 2}

@@ -1,0 +1,19 @@
+# Engine.oa
+# =========
+#
+# A simple chess engine
+
+use chess.Player
+
+trait Engine: $Player {
+	let patterns: Set[Pattern]
+	let sum:
+}
+
+trait Database = {
+
+}
+
+let opening-book = $Pattern {
+	let condition = $1
+}

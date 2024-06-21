@@ -1,0 +1,3 @@
+fn foobar(12312) {
+	"foobar"
+}

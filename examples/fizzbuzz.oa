@@ -1,0 +1,10 @@
+module Example.Fizzbuzz {
+  
+  let fizzbuzz := n? -> {
+    let map := (0, 0) -> "fizzbuzz",
+               (0, _) -> "fizz",
+               (_, 0) -> "buzz",
+               (_, _) -> Int.String::from(n);
+    map[n%3, n%5];
+  }
+}
