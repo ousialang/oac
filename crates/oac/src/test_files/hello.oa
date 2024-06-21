@@ -5,10 +5,3 @@ fun foobar() {
 	bar = 3
 	return bar
 }
-
-type U32 = struct {
-	a: U8,
-	b: U8,
-	c: U8,
-	d: U8,
-}
