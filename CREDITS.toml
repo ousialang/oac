@@ -1,19 +1,18 @@
 # Please keep the list alphabetically sorted!
 # Fields:
 #   * name (name surname)
-#   * username (GitHub)
+#   * github (GitHub)
 #   * email
 #   * address
-#   * PGP
 #   * description
 #   * website
 
 [[authors]]
 name = "Filippo Costa"
-username = "neysofu"
+github = "neysofu"
 email = "filippo@neysofu.me"
 description = "Maintainer"
-website = "https://twitter.com/neysofu"
+website = "https://neysofu.me"
 
 [[authors]]
 name = "William Swinton"

@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct TokenList {
-    pub tokens: Vec<Token>,
+    pub tokens: Vec<TokenData>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Token {
+pub enum TokenData {
     Newline,
     Parenthesis { opening: char, is_opening: bool },
     Number(u32),
@@ -45,19 +45,26 @@ impl Default for Position {
     }
 }
 
-pub fn scan(s: String) -> Result<TokenList, String> {
+#[derive(Debug, thiserror::Error)]
+#[error("syntax error: {message}")]
+pub struct SyntaxError {
+    pub message: String,
+    pub position: Position,
+}
+
+pub fn scan(s: String) -> Result<TokenList, SyntaxError> {
     let s_cloned = s.clone();
     let mut chars = s_cloned.chars().peekable();
     let mut tokens = TokenList { tokens: vec![] };
     let mut position = Position::default();
     while let Some(c) = chars.next() {
         if "([{".contains(c) {
-            tokens.tokens.push(Token::Parenthesis {
+            tokens.tokens.push(TokenData::Parenthesis {
                 opening: c,
                 is_opening: true,
             });
         } else if ")]}".contains(c) {
-            tokens.tokens.push(Token::Parenthesis {
+            tokens.tokens.push(TokenData::Parenthesis {
                 opening: c,
                 is_opening: false,
             });
@@ -74,7 +81,7 @@ pub fn scan(s: String) -> Result<TokenList, String> {
             if chars.peek().is_some() {
                 chars.next();
             }
-            tokens.tokens.push(Token::String(string));
+            tokens.tokens.push(TokenData::String(string));
         } else if "*@%=,".contains(c) {
             let mut symbols = String::new();
             symbols.push(c);
@@ -82,7 +89,7 @@ pub fn scan(s: String) -> Result<TokenList, String> {
                 let c = chars.next().unwrap();
                 symbols.push(c);
             }
-            tokens.tokens.push(Token::Symbols(symbols));
+            tokens.tokens.push(TokenData::Symbols(symbols));
         } else if c.is_ascii_digit() {
             let mut number = c.to_digit(10).unwrap();
             while chars.peek().is_some() && chars.peek().unwrap().is_digit(10) {
@@ -90,9 +97,9 @@ pub fn scan(s: String) -> Result<TokenList, String> {
                 let digit = c.to_digit(10).unwrap();
                 number = number * 10 + digit;
             }
-            tokens.tokens.push(Token::Number(number))
+            tokens.tokens.push(TokenData::Number(number))
         } else if c == '\n' {
-            tokens.tokens.push(Token::Newline);
+            tokens.tokens.push(TokenData::Newline);
         } else if c.is_ascii_whitespace() {
         } else if c.is_ascii_alphabetic() {
             let mut word = String::new();
@@ -101,12 +108,12 @@ pub fn scan(s: String) -> Result<TokenList, String> {
                 let c = chars.next().unwrap();
                 word.push(c);
             }
-            tokens.tokens.push(Token::Word(word));
+            tokens.tokens.push(TokenData::Word(word));
         } else {
-            return Err(format!(
-                "Syntax error char {} at position {:?}",
-                c, position
-            ));
+            return Err(SyntaxError {
+                message: format!("unexpected char '{}'", c),
+                position,
+            });
         }
         position.advance(c);
     }

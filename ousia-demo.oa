@@ -17,7 +17,7 @@ if env["OUSIA_DEBUG"] != "1", do: {
 	// recompile it. Should it rerun every time?
 }
 
-print "Hello, world! My name is {name}"
+print "Hello, world! My name is {name}", newline: false
 // `printnl` is just like `print`, but without a newline at the end.
 printnl "Hello, world!\n"
 

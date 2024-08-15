@@ -7,3 +7,4 @@ edition = "2021"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 qbe = "2.1"
+thiserror = "1"
