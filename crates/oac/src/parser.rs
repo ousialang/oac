@@ -1,4 +1,4 @@
-use crate::scanner::{TokenData, TokenList};
+use crate::tokenizer::{TokenData, TokenList};
 
 #[derive(Clone, Debug)]
 pub struct Ast {

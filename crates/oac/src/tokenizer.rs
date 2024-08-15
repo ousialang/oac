@@ -1,11 +1,16 @@
-use std::path::PathBuf;
+//! A simple tokenizer for Ousia source files.
 
-#[derive(Debug)]
+use serde::{Deserialize, Serialize};
+
+/// Continuous sequences of these characters compose symbols.
+const ALLOWED_SYMBOLS: &str = "*@%=,";
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TokenList {
     pub tokens: Vec<TokenData>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TokenData {
     Newline,
     Parenthesis { opening: char, is_opening: bool },
@@ -13,11 +18,11 @@ pub enum TokenData {
     String(String),
     Word(String),
     Symbols(String),
+    Comment(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Position {
-    pub path: Option<PathBuf>,
     pub absolute_i: u32,
     pub line: u32,
     pub column: u32,
@@ -37,7 +42,6 @@ impl Position {
 impl Default for Position {
     fn default() -> Self {
         Self {
-            path: None,
             absolute_i: 1,
             line: 1,
             column: 1,
@@ -45,14 +49,14 @@ impl Default for Position {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Serialize, Deserialize)]
 #[error("syntax error: {message}")]
 pub struct SyntaxError {
     pub message: String,
     pub position: Position,
 }
 
-pub fn scan(s: String) -> Result<TokenList, SyntaxError> {
+pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
     let s_cloned = s.clone();
     let mut chars = s_cloned.chars().peekable();
     let mut tokens = TokenList { tokens: vec![] };
@@ -69,9 +73,12 @@ pub fn scan(s: String) -> Result<TokenList, SyntaxError> {
                 is_opening: false,
             });
         } else if c == '/' && chars.peek() == Some(&'/') {
+            chars.next();
+            let mut comment = String::new();
             while chars.peek().is_some() && *chars.peek().unwrap() != '\n' {
-                chars.next().unwrap();
+                comment.push(chars.next().unwrap());
             }
+            tokens.tokens.push(TokenData::Comment(comment));
         } else if c == '"' {
             let mut string = String::new();
             while chars.peek().is_some() && *chars.peek().unwrap() != '"' {
@@ -82,10 +89,10 @@ pub fn scan(s: String) -> Result<TokenList, SyntaxError> {
                 chars.next();
             }
             tokens.tokens.push(TokenData::String(string));
-        } else if "*@%=,".contains(c) {
+        } else if ALLOWED_SYMBOLS.contains(c) {
             let mut symbols = String::new();
             symbols.push(c);
-            while chars.peek().is_some() && "*@=&,".contains(*chars.peek().unwrap()) {
+            while chars.peek().is_some() && ALLOWED_SYMBOLS.contains(*chars.peek().unwrap()) {
                 let c = chars.next().unwrap();
                 symbols.push(c);
             }
@@ -118,4 +125,23 @@ pub fn scan(s: String) -> Result<TokenList, SyntaxError> {
         position.advance(c);
     }
     Ok(tokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn tokenize_files() {
+        let test_files = fs::read_dir("tokenizer_tests").unwrap();
+
+        for path in test_files {
+            let path = path.unwrap().path();
+            let file_contents = fs::read_to_string(&path).unwrap();
+            let result = tokenize(file_contents);
+            insta::assert_json_snapshot!(path.display().to_string(), result);
+        }
+    }
 }

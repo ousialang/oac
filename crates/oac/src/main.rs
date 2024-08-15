@@ -1,7 +1,7 @@
 mod parser;
 mod qbe_backend;
 mod resolver;
-mod scanner;
+mod tokenizer;
 
 use clap::Parser;
 
@@ -11,7 +11,7 @@ fn main() {
     match oac.subcmd {
         OacSubcommand::Build(build) => {
             let source = std::fs::read_to_string(build.source).unwrap();
-            let tokens = scanner::scan(source).unwrap();
+            let tokens = tokenizer::tokenize(source).unwrap();
             dbg!("{:?}", &tokens);
             let ast = parser::parse(tokens).unwrap();
             dbg!("{:?}", &ast);

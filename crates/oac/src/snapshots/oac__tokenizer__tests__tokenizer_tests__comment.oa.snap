@@ -1,0 +1,14 @@
+---
+source: crates/oac/src/tokenizer.rs
+expression: result
+---
+{
+  "Ok": {
+    "tokens": [
+      {
+        "Comment": " Hello, world!"
+      },
+      "Newline"
+    ]
+  }
+}

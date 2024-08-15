@@ -7,4 +7,6 @@ edition = "2021"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 qbe = "2.1"
+insta = { version = "1", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
 thiserror = "1"
