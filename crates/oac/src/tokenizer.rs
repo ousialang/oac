@@ -1,9 +1,14 @@
-//! A simple tokenizer for Ousia source files.
+//! An eager tokenizer for Ousia source files.
+//!
+//! By "eager", we mean that the tokenizer consumes the entire source file before
+//! returning the data to the next stage (i.e. the parser). Here's a nice thread
+//! about the tradeoffs involved with such an approach:
+//! <https://old.reddit.com/r/ProgrammingLanguages/comments/9ve8ms/scanning_on_demand_or_separate_pass/>.
 
 use serde::{Deserialize, Serialize};
 
-/// Continuous sequences of these characters compose symbols.
-const ALLOWED_SYMBOLS: &str = "*@%=,";
+/// Sequences of these characters compose symbols.
+const ALLOWED_SYMBOLS: &str = "*@%=,+/";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenList {
@@ -72,6 +77,7 @@ pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
                 opening: c,
                 is_opening: false,
             });
+        // Must come before symbol parsing, because slashes are also symbols.
         } else if c == '/' && chars.peek() == Some(&'/') {
             chars.next();
             let mut comment = String::new();

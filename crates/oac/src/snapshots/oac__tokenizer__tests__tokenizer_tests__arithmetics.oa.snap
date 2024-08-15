@@ -1,0 +1,32 @@
+---
+source: crates/oac/src/tokenizer.rs
+expression: result
+---
+{
+  "Ok": {
+    "tokens": [
+      {
+        "Number": 2
+      },
+      {
+        "Symbols": "+"
+      },
+      {
+        "Number": 7
+      },
+      {
+        "Symbols": "/"
+      },
+      {
+        "Number": 32
+      },
+      {
+        "Symbols": "=="
+      },
+      {
+        "Number": 0
+      },
+      "Newline"
+    ]
+  }
+}

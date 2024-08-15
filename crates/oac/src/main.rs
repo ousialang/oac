@@ -5,14 +5,13 @@ mod tokenizer;
 
 use clap::Parser;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let oac = Oac::parse();
 
     match oac.subcmd {
         OacSubcommand::Build(build) => {
             let source = std::fs::read_to_string(build.source).unwrap();
-            let tokens = tokenizer::tokenize(source).unwrap();
-            dbg!("{:?}", &tokens);
+            let tokens = tokenizer::tokenize(source)?;
             let ast = parser::parse(tokens).unwrap();
             dbg!("{:?}", &ast);
             let resolved_program = resolver::resolve(ast.clone()).unwrap();
@@ -21,6 +20,8 @@ fn main() {
             std::fs::write(build.target, qbe_ir.to_string()).unwrap();
         }
     }
+
+    Ok(())
 }
 
 #[derive(clap::Parser)]

@@ -155,6 +155,11 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
 }
 
 pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
+    // Discard all comments.
+    tokens
+        .tokens
+        .retain(|token| !matches!(token, TokenData::Comment(_)));
+
     let mut ast = Ast {
         top_level_functions: vec![],
     };
