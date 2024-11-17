@@ -1,0 +1,5 @@
+// This is a comment and it's ignored by the parser.
+fun main() {
+	print "Hello, world!"
+}
+
