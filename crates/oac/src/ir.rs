@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use tracing::trace;
+
 use crate::parser::{self, Ast, Expression, Literal, Type};
 
 #[derive(Clone, Debug)]
@@ -21,9 +23,9 @@ impl ResolvedProgram {
                         get_expression_type(value, &var_types, &self.function_definitions)?;
                     var_types.insert(variable.clone(), variable_type);
                 }
-                parser::Statement::Return(value) => {
+                parser::Statement::Return { expr } => {
                     let expr_type =
-                        get_expression_type(value, &var_types, &self.function_definitions)?;
+                        get_expression_type(expr, &var_types, &self.function_definitions)?;
                     if return_type == None || return_type == Some(expr_type.clone()) {
                         return_type = Some(expr_type);
                     } else {
@@ -34,8 +36,8 @@ impl ResolvedProgram {
                         ));
                     }
                 }
-                parser::Statement::Expression { .. } => {
-                    todo!("expression statement")
+                parser::Statement::Expression { expr } => {
+                    trace!("Type-checking expression inside function body: {:#?}", expr);
                 }
             }
         }

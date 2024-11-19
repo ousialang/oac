@@ -17,7 +17,7 @@ pub struct Function {
 #[derive(Clone, Debug)]
 pub enum Statement {
     Assign { variable: String, value: Expression },
-    Return(Expression),
+    Return { expr: Expression },
     Expression { expr: Expression },
 }
 
@@ -51,8 +51,8 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
     match tokens.remove(0) {
         TokenData::Word(name) => {
             if name == "return" {
-                let value = parse_expression(tokens)?;
-                return Ok(Statement::Return(value));
+                let expr = parse_expression(tokens)?;
+                return Ok(Statement::Return { expr });
             } else if tokens.first() == Some(&TokenData::Symbols("=".to_string())) {
                 tokens.remove(0);
                 trace!("Parsing assignment statement");
