@@ -114,10 +114,12 @@ pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
         } else if c == '\n' {
             tokens.tokens.push(TokenData::Newline);
         } else if c.is_ascii_whitespace() {
-        } else if c.is_ascii_alphabetic() {
+        } else if c.is_ascii_alphabetic() || c == '_' {
             let mut word = String::new();
             word.push(c);
-            while chars.peek().is_some() && chars.peek().unwrap().is_ascii_alphanumeric() {
+            while chars.peek().is_some() && chars.peek().unwrap().is_ascii_alphanumeric()
+                || *chars.peek().unwrap() == '_'
+            {
                 let c = chars.next().unwrap();
                 word.push(c);
             }
