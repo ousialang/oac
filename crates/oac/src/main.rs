@@ -18,9 +18,9 @@ fn main() -> anyhow::Result<()> {
                 "Successfully parsed and tokenized source file(s): {:#?}",
                 &ast
             );
-            let resolved_program = ir::resolve(ast.clone()).unwrap();
-            debug!("IR generated: {:#?}", resolved_program);
-            let qbe_ir = qbe_backend::compile(ast);
+            let ir = ir::resolve(ast.clone()).unwrap();
+            debug!("IR generated and type-checked: {:#?}", ir);
+            let qbe_ir = qbe_backend::compile(ir);
             std::fs::write(build.target, qbe_ir.to_string()).unwrap();
         }
     }

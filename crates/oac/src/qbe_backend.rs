@@ -1,8 +1,8 @@
 use qbe::*;
 
-use crate::parser::Ast;
+use crate::{ir::ResolvedProgram, parser::Ast};
 
-pub fn compile(_ast: Ast) -> qbe::Module<'static> {
+pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     let mut module = qbe::Module::default();
 
     module.add_data(qbe::DataDef::new(
@@ -52,7 +52,7 @@ pub fn compile(_ast: Ast) -> qbe::Module<'static> {
 mod tests {
     use std::fs;
 
-    use crate::{parser, qbe_backend, tokenizer};
+    use crate::{ir, parser, qbe_backend, tokenizer};
     use std::io::Write;
 
     #[test]
@@ -67,7 +67,8 @@ mod tests {
             let source = std::fs::read_to_string(&path).unwrap();
             let tokens = tokenizer::tokenize(source).unwrap();
             let ast = parser::parse(tokens).unwrap();
-            let qbe_ir = qbe_backend::compile(ast);
+            let ir = ir::resolve(ast).unwrap();
+            let qbe_ir = qbe_backend::compile(ir);
 
             let qbe_ir_filepath = tmp.path().join("test.qbe");
 
