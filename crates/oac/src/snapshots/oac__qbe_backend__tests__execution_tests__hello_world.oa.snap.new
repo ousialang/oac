@@ -1,0 +1,6 @@
+---
+source: crates/oac/src/qbe_backend.rs
+assertion_line: 94
+expression: output
+---
+foobar

@@ -9,6 +9,7 @@ clap = { version = "4", features = ["derive"] }
 qbe = "2.1"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
+tracing = "0.1.40"
 
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }

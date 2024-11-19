@@ -1,9 +1,10 @@
+mod ir;
 mod parser;
 mod qbe_backend;
-mod resolver;
 mod tokenizer;
 
 use clap::Parser;
+use tracing::debug;
 
 fn main() -> anyhow::Result<()> {
     let oac = Oac::parse();
@@ -13,9 +14,12 @@ fn main() -> anyhow::Result<()> {
             let source = std::fs::read_to_string(build.source).unwrap();
             let tokens = tokenizer::tokenize(source)?;
             let ast = parser::parse(tokens).unwrap();
-            dbg!("{:?}", &ast);
-            let resolved_program = resolver::resolve(ast.clone()).unwrap();
-            dbg!("{:?}", resolved_program);
+            debug!(
+                "Successfully parsed and tokenized source file(s): {:#?}",
+                &ast
+            );
+            let resolved_program = ir::resolve(ast.clone()).unwrap();
+            debug!("IR generated: {:#?}", resolved_program);
             let qbe_ir = qbe_backend::compile(ast);
             std::fs::write(build.target, qbe_ir.to_string()).unwrap();
         }

@@ -1,3 +1,5 @@
+//! Type-checking and IR generation.
+
 use std::collections::HashMap;
 
 use crate::parser::{self, Ast, Expression, Literal, Type};
@@ -6,6 +8,75 @@ use crate::parser::{self, Ast, Expression, Literal, Type};
 pub struct ResolvedProgram {
     pub ast: Ast,
     pub function_definitions: HashMap<String, FunctionDefinition>,
+}
+
+impl ResolvedProgram {
+    fn type_check(&self, func_def: &mut FunctionDefinition) -> anyhow::Result<()> {
+        let mut var_types: HashMap<String, parser::Type> = HashMap::new();
+        let mut return_type = None;
+        for statement in &func_def.body {
+            match statement {
+                parser::Statement::Assign { variable, value } => {
+                    let variable_type =
+                        get_expression_type(value, &var_types, &self.function_definitions)?;
+                    var_types.insert(variable.clone(), variable_type);
+                }
+                parser::Statement::Return(value) => {
+                    let expr_type =
+                        get_expression_type(value, &var_types, &self.function_definitions)?;
+                    if return_type == None || return_type == Some(expr_type.clone()) {
+                        return_type = Some(expr_type);
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "mismatched return type: expected {:?}, but got {:?}",
+                            return_type,
+                            expr_type
+                        ));
+                    }
+                }
+                parser::Statement::Expression { .. } => {
+                    todo!("expression statement")
+                }
+            }
+        }
+        func_def.return_type = return_type.expect("return type not set");
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub parameters: Vec<parser::Parameter>,
+    pub body: Vec<parser::Statement>,
+    pub return_type: parser::Type,
+}
+
+pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
+    let mut program = ResolvedProgram {
+        ast: ast.clone(),
+        function_definitions: HashMap::new(),
+    };
+
+    for function in ast.top_level_functions {
+        let mut parameters = Vec::new();
+        for parameter in function.parameters {
+            parameters.push(parameter);
+        }
+        let mut func_def = FunctionDefinition {
+            name: function.name.clone(),
+            parameters: parameters.clone(),
+            body: function.body.clone(),
+            return_type: Type::Int,
+        };
+        program.type_check(&mut func_def)?;
+        program
+            .function_definitions
+            .insert(function.name.clone(), func_def);
+    }
+
+    Ok(program)
 }
 
 fn get_expression_type(
@@ -45,69 +116,4 @@ fn get_expression_type(
             Ok(func.return_type.clone())
         }
     }
-}
-
-impl ResolvedProgram {
-    fn type_check(&self, func_def: &mut FunctionDefinition) -> anyhow::Result<()> {
-        let mut var_types: HashMap<String, parser::Type> = HashMap::new();
-        let mut return_type = None;
-        for statement in &func_def.body {
-            match statement {
-                parser::Statement::Assign { variable, value } => {
-                    let variable_type =
-                        get_expression_type(value, &var_types, &self.function_definitions)?;
-                    var_types.insert(variable.clone(), variable_type);
-                }
-                parser::Statement::Return(value) => {
-                    let expr_type =
-                        get_expression_type(value, &var_types, &self.function_definitions)?;
-                    if return_type == None || return_type == Some(expr_type.clone()) {
-                        return_type = Some(expr_type);
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "mismatched return type: expected {:?}, but got {:?}",
-                            return_type,
-                            expr_type
-                        ));
-                    }
-                }
-            }
-        }
-        func_def.return_type = return_type.expect("return type not set");
-
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct FunctionDefinition {
-    pub name: String,
-    pub parameters: Vec<parser::Parameter>,
-    pub body: Vec<parser::Statement>,
-    pub return_type: parser::Type,
-}
-
-pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
-    let mut program = ResolvedProgram {
-        ast: ast.clone(),
-        function_definitions: HashMap::new(),
-    };
-    for function in ast.top_level_functions {
-        let mut parameters = Vec::new();
-        for parameter in function.parameters {
-            parameters.push(parameter);
-        }
-        let mut func_def = FunctionDefinition {
-            name: function.name.clone(),
-            parameters: parameters.clone(),
-            body: function.body.clone(),
-            return_type: Type::Int,
-        };
-        program.type_check(&mut func_def)?;
-        program
-            .function_definitions
-            .insert(function.name.clone(), func_def);
-    }
-
-    Ok(program)
 }

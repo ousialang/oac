@@ -1,3 +1,5 @@
+use tracing::trace;
+
 use crate::tokenizer::{TokenData, TokenList};
 
 #[derive(Clone, Debug)]
@@ -16,6 +18,7 @@ pub struct Function {
 pub enum Statement {
     Assign { variable: String, value: Expression },
     Return(Expression),
+    Expression { expr: Expression },
 }
 
 #[derive(Clone, Debug)]
@@ -44,7 +47,7 @@ pub enum Type {
 }
 
 fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
-    println!("{:?}", tokens);
+    trace!("Parsing statement: {:#?}", tokens);
     match tokens.remove(0) {
         TokenData::Word(name) => {
             if name == "return" {
@@ -52,14 +55,15 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                 return Ok(Statement::Return(value));
             } else if tokens.first() == Some(&TokenData::Symbols("=".to_string())) {
                 tokens.remove(0);
-                println!("assign");
+                trace!("Parsing assignment statement");
                 let value = parse_expression(tokens)?;
                 return Ok(Statement::Assign {
                     variable: name,
                     value,
                 });
             } else {
-                return Err(anyhow::anyhow!("expected statement instead of {:?}", name));
+                let expr = parse_expression(tokens)?;
+                return Ok(Statement::Expression { expr });
             }
         }
         token => return Err(anyhow::anyhow!("expected statement instead of {:?}", token)),
@@ -128,7 +132,10 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
 
     let mut body = vec![];
     loop {
-        println!("parse statement: {:?}", tokens.first().unwrap());
+        trace!(
+            "Parsing entry in a function body: {:#?}",
+            tokens.first().unwrap()
+        );
         match tokens.first().unwrap() {
             TokenData::Parenthesis {
                 opening: '}',
@@ -191,7 +198,7 @@ fn parse_expression(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
             },
             _,
         ) => {
-            println!("parsing (expr)");
+            trace!("Parsing expression");
             tokens.remove(0);
             let expr = parse_expression(tokens)?;
             anyhow::ensure!(
