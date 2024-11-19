@@ -1,6 +1,6 @@
 use qbe::*;
 
-use crate::{ir::ResolvedProgram, parser::Ast};
+use crate::ir::ResolvedProgram;
 
 pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     let mut module = qbe::Module::default();
@@ -25,12 +25,32 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
         ],
     ));
 
+    for func_def in ir.function_definitions.values() {
+        let qbe_args = func_def
+            .parameters
+            .iter()
+            .map(|param| (qbe::Type::Word, qbe::Value::Temporary(param.name.clone())))
+            .collect::<Vec<_>>();
+
+        let mut qbe_func = qbe::Function::new(
+            qbe::Linkage::public(),
+            func_def.name.clone(),
+            qbe_args,
+            Some(qbe::Type::Word),
+        );
+
+        qbe_func.add_block("start".to_string());
+        qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Const(0))));
+        module.add_function(qbe_func);
+    }
+
     let mut func = qbe::Function::new(
         qbe::Linkage::public(),
         "main".to_string(),
         vec![],
         Some(qbe::Type::Word),
     );
+
     func.add_block("start".to_string());
     func.add_instr(qbe::Instr::Call(
         "printf".into(),

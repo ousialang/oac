@@ -1,5 +1,5 @@
 // This is a comment and it's ignored by the parser.
-fun main() {
+fun privatemain() {
 	print "Hello, world!"
 	return 0
 }
