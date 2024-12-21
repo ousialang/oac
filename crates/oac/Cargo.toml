@@ -10,7 +10,8 @@ qbe = "2.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 thiserror = "1"
-tracing = "0.1.40"
+tracing = "0.1.41"
+tracing-subscriber = {version = "0.3.19", features = ["env-filter"]}
 
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }

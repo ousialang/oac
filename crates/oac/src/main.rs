@@ -1,12 +1,22 @@
+mod builtins;
 mod ir;
 mod parser;
 mod qbe_backend;
 mod tokenizer;
 
+use std::env;
+use std::str::FromStr;
+
 use clap::Parser;
-use tracing::{debug, info, trace};
+use tracing::info;
+use tracing::{debug, trace};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{fmt, EnvFilter, Layer};
 
 fn main() -> anyhow::Result<()> {
+    initialize_logging();
+
     let oac = Oac::parse();
 
     match oac.subcmd {
@@ -54,6 +64,14 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn initialize_logging() {
+    let env_filter = env::var("RUST_LOG").unwrap_or_default();
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_filter(EnvFilter::from_str(&env_filter).unwrap()))
+        .init();
 }
 
 #[derive(clap::Parser)]

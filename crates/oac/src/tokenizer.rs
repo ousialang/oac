@@ -61,6 +61,7 @@ pub struct SyntaxError {
     pub position: Position,
 }
 
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
     let s_cloned = s.clone();
     let mut chars = s_cloned.chars().peekable();

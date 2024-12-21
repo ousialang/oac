@@ -1,11 +1,14 @@
 //! Type-checking and IR generation.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use serde::Serialize;
 use tracing::trace;
 
-use crate::parser::{self, Ast, Expression, Literal, Type};
+use crate::{
+    builtins::BuiltInType,
+    parser::{self, Ast, Expression, Literal},
+};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ResolvedProgram {
@@ -15,7 +18,7 @@ pub struct ResolvedProgram {
 
 impl ResolvedProgram {
     fn type_check(&self, func_def: &mut FunctionDefinition) -> anyhow::Result<()> {
-        let mut var_types: HashMap<String, parser::Type> = HashMap::new();
+        let mut var_types: HashMap<String, BuiltInType> = HashMap::new();
         let mut return_type = None;
         for statement in &func_def.body {
             match statement {
@@ -49,13 +52,20 @@ impl ResolvedProgram {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct FunctionDefinition {
+pub struct FunctionParameter {
     pub name: String,
-    pub parameters: Vec<parser::Parameter>,
-    pub body: Vec<parser::Statement>,
-    pub return_type: parser::Type,
+    pub ty: BuiltInType,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub parameters: Vec<FunctionParameter>,
+    pub body: Vec<parser::Statement>,
+    pub return_type: BuiltInType,
+}
+
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
     let mut program = ResolvedProgram {
         ast: ast.clone(),
@@ -69,9 +79,18 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         }
         let mut func_def = FunctionDefinition {
             name: function.name.clone(),
-            parameters: parameters.clone(),
+            parameters: parameters
+                .clone()
+                .into_iter()
+                .map(|p| {
+                    Ok(FunctionParameter {
+                        name: p.name,
+                        ty: BuiltInType::from_str(&p.ty)?,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
             body: function.body.clone(),
-            return_type: Type::Int,
+            return_type: BuiltInType::Int,
         };
         program.type_check(&mut func_def)?;
         program
@@ -84,12 +103,12 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
 
 fn get_expression_type(
     expr: &Expression,
-    var_types: &HashMap<String, parser::Type>,
+    var_types: &HashMap<String, BuiltInType>,
     fns: &HashMap<String, FunctionDefinition>,
-) -> anyhow::Result<parser::Type> {
+) -> anyhow::Result<BuiltInType> {
     match expr {
-        Expression::Literal(Literal::Int(_)) => Ok(parser::Type::Int),
-        Expression::Literal(Literal::String(_)) => Ok(parser::Type::String),
+        Expression::Literal(Literal::Int(_)) => Ok(BuiltInType::Int),
+        Expression::Literal(Literal::String(_)) => Ok(BuiltInType::String),
         Expression::Variable(name) => var_types
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("unknown variable {}", name))

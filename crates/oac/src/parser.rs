@@ -38,13 +38,7 @@ pub enum Literal {
 #[derive(Clone, Debug, Serialize)]
 pub struct Parameter {
     pub name: String,
-    pub ty: Type,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub enum Type {
-    Int,
-    String,
+    pub ty: String,
 }
 
 fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
@@ -71,6 +65,45 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
     }
 }
 
+fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parameter>> {
+    let mut parameters = vec![];
+    loop {
+        match tokens.first().unwrap() {
+            TokenData::Symbols(s) => {
+                if s == "," {
+                    tokens.remove(0);
+                    continue;
+                } else {
+                    return Err(anyhow::anyhow!("expected ',', parameter name, or ')'"));
+                }
+            }
+            TokenData::Parenthesis {
+                opening: ')',
+                is_opening: false,
+            } => {
+                tokens.remove(0);
+                break;
+            }
+            TokenData::Word(name) => {
+                let name = name.clone();
+                anyhow::ensure!(
+                    tokens.remove(0) == TokenData::Symbols(":".to_string()),
+                    "expected ':' after parameter name"
+                );
+                let ty = match tokens.remove(0) {
+                    TokenData::Word(ty) => ty,
+                    _ => return Err(anyhow::anyhow!("expected parameter type")),
+                };
+
+                parameters.push(Parameter { name, ty });
+            }
+            _ => return Err(anyhow::anyhow!("expected parameter name")),
+        }
+    }
+
+    Ok(parameters)
+}
+
 fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Function> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("fun".to_string()),
@@ -91,31 +124,7 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
         "expected opening parenthesis"
     );
 
-    let mut parameters = vec![];
-    loop {
-        match tokens.first().unwrap() {
-            TokenData::Parenthesis {
-                opening: ')',
-                is_opening: false,
-            } => {
-                tokens.remove(0);
-                break;
-            }
-            TokenData::Word(name) => {
-                parameters.push(Parameter {
-                    name: name.clone(),
-                    ty: Type::Int,
-                });
-
-                tokens.remove(0);
-
-                if tokens.first() == Some(&TokenData::Symbols(",".to_string())) {
-                    tokens.remove(0);
-                }
-            }
-            _ => return Err(anyhow::anyhow!("expected parameter name")),
-        }
-    }
+    let parameters = parse_function_args(tokens)?;
 
     anyhow::ensure!(
         tokens.remove(0)
@@ -162,6 +171,7 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
     })
 }
 
+#[tracing::instrument(level = "trace", skip(tokens))]
 pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
     // Discard all comments.
     tokens
