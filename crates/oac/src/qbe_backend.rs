@@ -1,71 +1,119 @@
+use std::collections::HashMap;
+
 use qbe::*;
 
-use crate::ir::ResolvedProgram;
+type QbeAssignName = String;
+
+use crate::{
+    ir::{self, ResolvedProgram},
+    parser,
+};
 
 pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     let mut module = qbe::Module::default();
 
-    module.add_data(qbe::DataDef::new(
-        Linkage::private(),
-        "fmt".to_string(),
-        None,
-        vec![
-            (qbe::Type::Byte, DataItem::Str("%s\\n\\n".to_string())),
-            (qbe::Type::Byte, DataItem::Const(0)),
-        ],
-    ));
-
-    module.add_data(qbe::DataDef::new(
-        Linkage::private(),
-        "string_contents".to_string(),
-        None,
-        vec![
-            (qbe::Type::Byte, DataItem::Str("foobar".to_string())),
-            (qbe::Type::Byte, DataItem::Const(0)),
-        ],
-    ));
-
     for func_def in ir.function_definitions.values() {
-        let qbe_args = func_def
-            .parameters
-            .iter()
-            .map(|param| (qbe::Type::Word, qbe::Value::Temporary(param.name.clone())))
-            .collect::<Vec<_>>();
-
-        let mut qbe_func = qbe::Function::new(
-            qbe::Linkage::public(),
-            func_def.name.clone(),
-            qbe_args,
-            Some(qbe::Type::Word),
-        );
-
-        qbe_func.add_block("start".to_string());
-        qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Const(0))));
-        module.add_function(qbe_func);
+        compile_function(&mut module, func_def);
     }
 
-    let mut func = qbe::Function::new(
+    module
+}
+
+fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDefinition) {
+    let qbe_args = func_def
+        .parameters
+        .iter()
+        // TODO: string arguments
+        .map(|param| (qbe::Type::Word, qbe::Value::Temporary(param.name.clone())))
+        .collect::<Vec<_>>();
+
+    let mut qbe_func = qbe::Function::new(
         qbe::Linkage::public(),
-        "main".to_string(),
-        vec![],
+        func_def.name.clone(),
+        qbe_args,
+        // TODO: handle return type
         Some(qbe::Type::Word),
     );
 
-    func.add_block("start".to_string());
-    func.add_instr(qbe::Instr::Call(
-        "printf".into(),
-        vec![
-            (qbe::Type::Long, qbe::Value::Global("fmt".into())),
-            (
-                qbe::Type::Long,
-                qbe::Value::Global("string_contents".into()),
-            ),
-        ],
-    ));
-    func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Const(0))));
+    qbe_func.add_block("start".to_string());
 
-    module.add_function(func);
-    module
+    let mut variables = HashMap::new();
+
+    for param in &func_def.parameters {
+        variables.insert(param.name.clone(), param.name.clone());
+    }
+
+    for statement in &func_def.body {
+        match statement {
+            parser::Statement::Return { expr } => {
+                let expr_var = compile_expr(&mut qbe_func, &expr, &mut HashMap::new());
+                qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
+            }
+            parser::Statement::Assign { variable, value } => {
+                let value_var = compile_expr(&mut qbe_func, &value, &mut variables);
+                variables.insert(variable.clone(), value_var);
+            }
+            parser::Statement::Expression { expr } => {
+                compile_expr(&mut qbe_func, &expr, &mut HashMap::new());
+            }
+        }
+    }
+
+    module.add_function(qbe_func);
+}
+
+fn new_id() -> String {
+    format!("id{}", uuid::Uuid::now_v7().as_simple())
+}
+
+fn compile_expr(
+    func: &mut qbe::Function,
+    expr: &parser::Expression,
+    variables: &mut HashMap<String, QbeAssignName>,
+) -> QbeAssignName {
+    let id = new_id();
+    match expr {
+        parser::Expression::Literal(parser::Literal::Int(value)) => {
+            func.assign_instr(
+                Value::Temporary(id.clone()),
+                Type::Word,
+                qbe::Instr::Copy(qbe::Value::Const(*value as u64)),
+            );
+        }
+        parser::Expression::Literal(parser::Literal::String(_value)) => {
+            func.assign_instr(
+                Value::Temporary(id.clone()),
+                Type::Word,
+                qbe::Instr::Copy(qbe::Value::Const(0)), // TODO
+            );
+        }
+        parser::Expression::Variable(name) => {
+            func.assign_instr(
+                Value::Temporary(id.clone()),
+                Type::Word,
+                qbe::Instr::Copy(qbe::Value::Temporary(variables.get(name).unwrap().clone())),
+            );
+        }
+        parser::Expression::Call(name, args) => {
+            let mut arg_vars = vec![];
+            for arg in args {
+                let arg_var = compile_expr(func, arg, variables);
+                arg_vars.push(arg_var);
+            }
+
+            let instr = qbe::Instr::Call(
+                name.clone(),
+                arg_vars
+                    .iter()
+                    .map(|v| (qbe::Type::Word, qbe::Value::Temporary(v.clone())))
+                    .collect::<Vec<_>>(),
+            );
+
+            func.assign_instr(Value::Temporary(id.clone()), Type::Word, instr);
+        }
+    }
+
+    id
 }
 
 #[cfg(test)]
