@@ -1,46 +1,47 @@
+use serde::Serialize;
 use tracing::trace;
 
 use crate::tokenizer::{TokenData, TokenList};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Ast {
     pub top_level_functions: Vec<Function>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Function {
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum Statement {
     Assign { variable: String, value: Expression },
     Return { expr: Expression },
     Expression { expr: Expression },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum Expression {
     Literal(Literal),
     Variable(String),
     Call(String, Vec<Expression>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum Literal {
     Int(u32),
     String(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Parameter {
     pub name: String,
     pub ty: Type,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum Type {
     Int,
     String,

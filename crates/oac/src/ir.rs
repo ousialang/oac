@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 
+use serde::Serialize;
 use tracing::trace;
 
 use crate::parser::{self, Ast, Expression, Literal, Type};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ResolvedProgram {
     pub ast: Ast,
     pub function_definitions: HashMap<String, FunctionDefinition>,
@@ -47,7 +48,7 @@ impl ResolvedProgram {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct FunctionDefinition {
     pub name: String,
     pub parameters: Vec<parser::Parameter>,

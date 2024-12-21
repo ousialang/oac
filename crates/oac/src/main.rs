@@ -4,24 +4,52 @@ mod qbe_backend;
 mod tokenizer;
 
 use clap::Parser;
-use tracing::debug;
+use tracing::{debug, info, trace};
 
 fn main() -> anyhow::Result<()> {
     let oac = Oac::parse();
 
     match oac.subcmd {
         OacSubcommand::Build(build) => {
-            let source = std::fs::read_to_string(build.source).unwrap();
+            let current_dir = std::env::current_dir()?;
+            let target_dir = current_dir.join("target").join("oac");
+            std::fs::create_dir_all(&target_dir)?;
+
+            let source = std::fs::read_to_string(build.source)?;
+            trace!(source_len = source.len(), "Read input file");
+
             let tokens = tokenizer::tokenize(source)?;
-            let ast = parser::parse(tokens).unwrap();
-            debug!(
-                "Successfully parsed and tokenized source file(s): {:#?}",
-                &ast
-            );
-            let ir = ir::resolve(ast.clone()).unwrap();
-            debug!("IR generated and type-checked: {:#?}", ir);
+            let tokens_path = target_dir.join("tokens.json");
+            std::fs::write(&tokens_path, serde_json::to_string_pretty(&tokens)?)?;
+            trace!(tokens_path = %tokens_path.display(), "Tokenized source file");
+
+            let ast = parser::parse(tokens)?;
+            let ast_path = target_dir.join("ast.json");
+            std::fs::write(&ast_path, serde_json::to_string_pretty(&ast)?)?;
+            debug!(ast_path = %ast_path.display(), "Parsed source file");
+
+            let ir = ir::resolve(ast.clone())?;
+            let ir_path = target_dir.join("ir.json");
+            std::fs::write(&ir_path, serde_json::to_string_pretty(&ir)?)?;
+            info!(ir_path = %ir_path.display(), "IR generated and type-checked");
+
             let qbe_ir = qbe_backend::compile(ir);
-            std::fs::write(build.target, qbe_ir.to_string()).unwrap();
+            let qbe_ir_path = target_dir.join("ir.qbe");
+            std::fs::write(&qbe_ir_path, qbe_ir.to_string())?;
+
+            let assembly_path = target_dir.join("assembly.s");
+            std::process::Command::new("qbe")
+                .arg("-o")
+                .arg(&assembly_path)
+                .arg(&qbe_ir_path)
+                .output()?;
+
+            let executable_path = target_dir.join("app");
+            std::process::Command::new("cc")
+                .arg(&assembly_path)
+                .arg("-o")
+                .arg(&executable_path)
+                .output()?;
         }
     }
 
@@ -42,5 +70,4 @@ enum OacSubcommand {
 #[derive(clap::Parser)]
 struct Build {
     source: String,
-    target: String,
 }

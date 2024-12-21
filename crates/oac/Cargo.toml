@@ -8,6 +8,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 qbe = "2.1"
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
 thiserror = "1"
 tracing = "0.1.40"
 
