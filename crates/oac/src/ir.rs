@@ -13,6 +13,7 @@ use crate::{
 #[derive(Clone, Debug, Serialize)]
 pub struct ResolvedProgram {
     pub ast: Ast,
+    pub function_sigs: HashMap<String, FunctionSignature>,
     pub function_definitions: HashMap<String, FunctionDefinition>,
 }
 
@@ -24,12 +25,11 @@ impl ResolvedProgram {
             match statement {
                 parser::Statement::Assign { variable, value } => {
                     let variable_type =
-                        get_expression_type(value, &var_types, &self.function_definitions)?;
+                        get_expression_type(value, &var_types, &self.function_sigs)?;
                     var_types.insert(variable.clone(), variable_type);
                 }
                 parser::Statement::Return { expr } => {
-                    let expr_type =
-                        get_expression_type(expr, &var_types, &self.function_definitions)?;
+                    let expr_type = get_expression_type(expr, &var_types, &self.function_sigs)?;
                     if return_type == None || return_type == Some(expr_type.clone()) {
                         return_type = Some(expr_type);
                     } else {
@@ -45,7 +45,7 @@ impl ResolvedProgram {
                 }
             }
         }
-        func_def.return_type = return_type.expect("return type not set");
+        func_def.sig.return_type = return_type.expect("return type not set");
 
         Ok(())
     }
@@ -58,11 +58,16 @@ pub struct FunctionParameter {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct FunctionSignature {
+    pub parameters: Vec<FunctionParameter>,
+    pub return_type: BuiltInType,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct FunctionDefinition {
     pub name: String,
-    pub parameters: Vec<FunctionParameter>,
     pub body: Vec<parser::Statement>,
-    pub return_type: BuiltInType,
+    pub sig: FunctionSignature,
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
@@ -70,7 +75,26 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
     let mut program = ResolvedProgram {
         ast: ast.clone(),
         function_definitions: HashMap::new(),
+        function_sigs: HashMap::new(),
     };
+
+    // Built-in functions
+    program.function_sigs.insert(
+        "sum".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "a".to_string(),
+                    ty: BuiltInType::Int,
+                },
+                FunctionParameter {
+                    name: "b".to_string(),
+                    ty: BuiltInType::Int,
+                },
+            ],
+            return_type: BuiltInType::Int,
+        },
+    );
 
     for function in ast.top_level_functions {
         let mut parameters = Vec::new();
@@ -79,20 +103,26 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         }
         let mut func_def = FunctionDefinition {
             name: function.name.clone(),
-            parameters: parameters
-                .clone()
-                .into_iter()
-                .map(|p| {
-                    Ok(FunctionParameter {
-                        name: p.name,
-                        ty: BuiltInType::from_str(&p.ty)?,
+            sig: FunctionSignature {
+                parameters: parameters
+                    .clone()
+                    .into_iter()
+                    .map(|p| {
+                        Ok(FunctionParameter {
+                            name: p.name,
+                            ty: BuiltInType::from_str(&p.ty)?,
+                        })
                     })
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?,
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+                return_type: BuiltInType::Int,
+            },
             body: function.body.clone(),
-            return_type: BuiltInType::Int,
         };
         program.type_check(&mut func_def)?;
+
+        program
+            .function_sigs
+            .insert(function.name.clone(), func_def.sig.clone());
         program
             .function_definitions
             .insert(function.name.clone(), func_def);
@@ -108,7 +138,7 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
 fn get_expression_type(
     expr: &Expression,
     var_types: &HashMap<String, BuiltInType>,
-    fns: &HashMap<String, FunctionDefinition>,
+    fns: &HashMap<String, FunctionSignature>,
 ) -> anyhow::Result<BuiltInType> {
     match expr {
         Expression::Literal(Literal::Int(_)) => Ok(BuiltInType::Int),

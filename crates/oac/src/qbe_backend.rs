@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, env::var};
 
 use qbe::*;
+use tracing::trace;
 
 type QbeAssignName = String;
 
@@ -9,8 +10,36 @@ use crate::{
     parser,
 };
 
+fn add_builtins(module: &mut qbe::Module<'static>) {
+    let mut sum = qbe::Function::new(
+        qbe::Linkage::public(),
+        "sum".to_string(),
+        vec![
+            (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
+            (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
+        ],
+        Some(qbe::Type::Word),
+    );
+
+    sum.add_block("start".to_string());
+
+    sum.assign_instr(
+        Value::Temporary("c".to_string()),
+        Type::Word,
+        Instr::Add(
+            Value::Temporary("a".to_string()),
+            Value::Temporary("b".to_string()),
+        ),
+    );
+    sum.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
+
+    module.add_function(sum);
+}
+
 pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     let mut module = qbe::Module::default();
+
+    add_builtins(&mut module);
 
     for func_def in ir.function_definitions.values() {
         compile_function(&mut module, func_def);
@@ -21,6 +50,7 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
 
 fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDefinition) {
     let qbe_args = func_def
+        .sig
         .parameters
         .iter()
         // TODO: string arguments
@@ -39,22 +69,25 @@ fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDe
 
     let mut variables = HashMap::new();
 
-    for param in &func_def.parameters {
+    for param in &func_def.sig.parameters {
         variables.insert(param.name.clone(), param.name.clone());
     }
 
     for statement in &func_def.body {
         match statement {
             parser::Statement::Return { expr } => {
-                let expr_var = compile_expr(&mut qbe_func, &expr, &mut HashMap::new());
+                let expr_var = compile_expr(&mut qbe_func, &expr, &mut variables);
+                trace!(%expr_var, "Emitting return instruction");
                 qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
             }
             parser::Statement::Assign { variable, value } => {
+                trace!(%variable, "Compiling assignment");
+
                 let value_var = compile_expr(&mut qbe_func, &value, &mut variables);
                 variables.insert(variable.clone(), value_var);
             }
             parser::Statement::Expression { expr } => {
-                compile_expr(&mut qbe_func, &expr, &mut HashMap::new());
+                compile_expr(&mut qbe_func, &expr, &mut variables);
             }
         }
     }
@@ -71,6 +104,8 @@ fn compile_expr(
     expr: &parser::Expression,
     variables: &mut HashMap<String, QbeAssignName>,
 ) -> QbeAssignName {
+    trace!(?expr, "Compiling expression");
+
     let id = new_id();
     match expr {
         parser::Expression::Literal(parser::Literal::Int(value)) => {
@@ -88,11 +123,7 @@ fn compile_expr(
             );
         }
         parser::Expression::Variable(name) => {
-            func.assign_instr(
-                Value::Temporary(id.clone()),
-                Type::Word,
-                qbe::Instr::Copy(qbe::Value::Temporary(variables.get(name).unwrap().clone())),
-            );
+            return variables.get(name).unwrap().clone();
         }
         parser::Expression::Call(name, args) => {
             let mut arg_vars = vec![];

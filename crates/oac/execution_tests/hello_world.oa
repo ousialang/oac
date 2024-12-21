@@ -1,4 +1,5 @@
 // This is a comment and it's ignored by the parser.
-fun main(f: String) {
-	return 0
+fun main() {
+	a = sum(1  2)
+	return a
 }
