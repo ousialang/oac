@@ -98,7 +98,11 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
             .insert(function.name.clone(), func_def);
     }
 
-    Ok(program)
+    if !program.function_definitions.contains_key("main") {
+        Err(anyhow::anyhow!("main function not defined"))
+    } else {
+        Ok(program)
+    }
 }
 
 fn get_expression_type(
