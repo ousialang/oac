@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env::var};
+use std::collections::HashMap;
 
 use qbe::*;
 use tracing::trace;
