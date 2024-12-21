@@ -1,6 +1,6 @@
 // This is a comment and it's ignored by the parser.
-fun private_main() {
-	print "Hello, world!"
+fun private_main(f: String) {
+	print f
 	return 0
 }
 

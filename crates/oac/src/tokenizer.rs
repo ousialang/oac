@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Sequences of these characters compose symbols.
-const ALLOWED_SYMBOLS: &str = "*@%=,+/";
+const ALLOWED_SYMBOLS: &str = "*@%=,+/:";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenList {

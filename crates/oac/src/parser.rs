@@ -86,6 +86,7 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
             }
             TokenData::Word(name) => {
                 let name = name.clone();
+                tokens.remove(0);
                 anyhow::ensure!(
                     tokens.remove(0) == TokenData::Symbols(":".to_string()),
                     "expected ':' after parameter name"
