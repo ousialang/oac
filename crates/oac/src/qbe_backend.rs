@@ -244,8 +244,7 @@ fn compile_expr(
 mod tests {
     use std::fs;
 
-    use crate::{compile, ir, parser, qbe_backend, tokenizer, Build};
-    use std::io::Write;
+    use crate::{compile, Build};
 
     #[test]
     fn execution_tests() {
