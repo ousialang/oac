@@ -1,0 +1,16 @@
+fun sum_wrapper(a: I32, b: I32) {
+	a = sum(a b)
+	return a
+}
+
+fun main() {
+	a = 0
+	b = 1
+	c = sum_wrapper(a b)
+
+	print(a)
+	print(b)
+	print(c)
+	
+	return 0
+}
