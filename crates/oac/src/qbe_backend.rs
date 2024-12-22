@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use qbe::*;
 use tracing::trace;
@@ -34,6 +34,35 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
     sum.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
 
     module.add_function(sum);
+    module.add_data(qbe::DataDef::new(
+        Linkage::private(),
+        "integer_fmt".to_string(),
+        None,
+        vec![
+            (qbe::Type::Byte, DataItem::Str("%u\\n".to_string())),
+            (qbe::Type::Byte, DataItem::Const(0)),
+        ],
+    ));
+
+    let mut print = Function::new(
+        qbe::Linkage::public(),
+        "print".to_string(),
+        vec![(Type::Word, Value::Temporary("a".to_string()))],
+        Some(Type::Word),
+    );
+
+    print.add_block("start".to_string());
+    print.add_instr(Instr::Call(
+        "printf".to_string(),
+        vec![
+            (qbe::Type::Long, qbe::Value::Global("integer_fmt".into())),
+            (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
+        ],
+        Some(1),
+    ));
+    print.add_instr(Instr::Ret(Some(Value::Const(0))));
+
+    module.add_function(print);
 }
 
 pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
@@ -138,6 +167,7 @@ fn compile_expr(
                     .iter()
                     .map(|v| (qbe::Type::Word, qbe::Value::Temporary(v.clone())))
                     .collect::<Vec<_>>(),
+                None,
             );
 
             func.assign_instr(Value::Temporary(id.clone()), Type::Word, instr);

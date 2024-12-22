@@ -42,13 +42,18 @@ pub struct Parameter {
 }
 
 fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
-    trace!("Parsing statement: {:#?}", tokens);
-    match tokens.remove(0) {
-        TokenData::Word(name) => {
+    trace!(?tokens, "Parsing statement");
+
+    match tokens.first() {
+        Some(TokenData::Word(name)) => {
+            let name = name.clone();
+
             if name == "return" {
+                tokens.remove(0);
                 let expr = parse_expression(tokens)?;
                 return Ok(Statement::Return { expr });
-            } else if tokens.first() == Some(&TokenData::Symbols("=".to_string())) {
+            } else if tokens.get(1) == Some(&TokenData::Symbols("=".to_string())) {
+                tokens.remove(0);
                 tokens.remove(0);
                 trace!("Parsing assignment statement");
                 let value = parse_expression(tokens)?;
@@ -200,6 +205,8 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
 }
 
 fn parse_expression(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
+    trace!(?tokens, "Parsing expression");
+
     // Parse literal, variable, or function call
     let first_token = tokens.remove(0);
     match (first_token, tokens.first()) {
@@ -210,8 +217,8 @@ fn parse_expression(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
             },
             _,
         ) => {
-            trace!("Parsing expression");
             tokens.remove(0);
+            trace!(?tokens, "Parsing parenthesized expression");
             let expr = parse_expression(tokens)?;
             anyhow::ensure!(
                 tokens.remove(0)
@@ -242,6 +249,7 @@ fn parse_expression(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
                         break;
                     }
                     _ => {
+                        trace!(?tokens, "Parsing function argument");
                         let expr = parse_expression(tokens)?;
                         args.push(expr);
                         // TODO: comma and more args

@@ -1,5 +1,7 @@
 // This is a comment and it's ignored by the parser.
 fun main() {
-	a = sum(1  2)
-	return a
+	print(0)
+	print(1)
+	print(2)
+	return 0
 }
