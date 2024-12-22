@@ -34,6 +34,32 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
     sum.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
 
     module.add_function(sum);
+
+    let mut lt = Function::new(
+        qbe::Linkage::public(),
+        "lt".to_string(),
+        vec![
+            (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
+            (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
+        ],
+        Some(qbe::Type::Word),
+    );
+
+    lt.add_block("start".to_string());
+
+    lt.assign_instr(
+        Value::Temporary("c".to_string()),
+        Type::Word,
+        Instr::Cmp(
+            Type::Word,
+            qbe::Cmp::Slt,
+            Value::Temporary("a".to_string()),
+            Value::Temporary("b".to_string()),
+        ),
+    );
+    lt.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
+    module.add_function(lt);
+
     module.add_data(qbe::DataDef::new(
         Linkage::private(),
         "integer_fmt".to_string(),
@@ -77,6 +103,58 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     module
 }
 
+fn compile_statement(
+    qbe_func: &mut qbe::Function,
+    statement: &parser::Statement,
+    variables: &mut HashMap<String, QbeAssignName>,
+) {
+    match statement {
+        parser::Statement::While { condition, body } => {
+            let condition_label = new_id();
+            let start_label = new_id();
+            let end_block_label = new_id();
+
+            qbe_func.add_block(condition_label.clone());
+            let condition_var = compile_expr(qbe_func, &condition, variables);
+
+            qbe_func.add_instr(qbe::Instr::Jnz(
+                qbe::Value::Temporary(condition_var),
+                start_label.clone(),
+                end_block_label.clone(),
+            ));
+
+            qbe_func.add_block(&start_label);
+            for statement in body {
+                compile_statement(qbe_func, statement, variables);
+            }
+            qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
+
+            qbe_func.add_block(&end_block_label);
+        }
+        parser::Statement::Return { expr } => {
+            let expr_var = compile_expr(qbe_func, &expr, variables);
+            trace!(%expr_var, "Emitting return instruction");
+            qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
+        }
+        parser::Statement::Assign { variable, value } => {
+            trace!(%variable, "Compiling assignment");
+
+            let value_var = compile_expr(qbe_func, &value, variables);
+            if let Some(existing_var) = variables.get(variable.as_str()) {
+                qbe_func.assign_instr(
+                    qbe::Value::Temporary(existing_var.clone()),
+                    qbe::Type::Word,
+                    qbe::Instr::Copy(qbe::Value::Temporary(value_var.clone())),
+                );
+            }
+            variables.insert(variable.clone(), value_var);
+        }
+        parser::Statement::Expression { expr } => {
+            compile_expr(qbe_func, &expr, variables);
+        }
+    }
+}
+
 fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDefinition) {
     let qbe_args = func_def
         .sig
@@ -103,22 +181,7 @@ fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDe
     }
 
     for statement in &func_def.body {
-        match statement {
-            parser::Statement::Return { expr } => {
-                let expr_var = compile_expr(&mut qbe_func, &expr, &mut variables);
-                trace!(%expr_var, "Emitting return instruction");
-                qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
-            }
-            parser::Statement::Assign { variable, value } => {
-                trace!(%variable, "Compiling assignment");
-
-                let value_var = compile_expr(&mut qbe_func, &value, &mut variables);
-                variables.insert(variable.clone(), value_var);
-            }
-            parser::Statement::Expression { expr } => {
-                compile_expr(&mut qbe_func, &expr, &mut variables);
-            }
-        }
+        compile_statement(&mut qbe_func, statement, &mut variables);
     }
 
     module.add_function(qbe_func);

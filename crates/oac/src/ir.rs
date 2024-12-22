@@ -22,30 +22,53 @@ impl ResolvedProgram {
         let mut var_types: HashMap<String, BuiltInType> = HashMap::new();
         let mut return_type = None;
         for statement in &func_def.body {
-            match statement {
-                parser::Statement::Assign { variable, value } => {
-                    let variable_type =
-                        get_expression_type(value, &var_types, &self.function_sigs)?;
-                    var_types.insert(variable.clone(), variable_type);
-                }
-                parser::Statement::Return { expr } => {
-                    let expr_type = get_expression_type(expr, &var_types, &self.function_sigs)?;
-                    if return_type == None || return_type == Some(expr_type.clone()) {
-                        return_type = Some(expr_type);
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "mismatched return type: expected {:?}, but got {:?}",
-                            return_type,
-                            expr_type
-                        ));
-                    }
-                }
-                parser::Statement::Expression { expr } => {
-                    trace!("Type-checking expression inside function body: {:#?}", expr);
-                }
-            }
+            self.type_check_statement(statement, &mut var_types, &mut return_type)?;
         }
         func_def.sig.return_type = return_type.expect("return type not set");
+
+        Ok(())
+    }
+
+    fn type_check_statement(
+        &self,
+        statement: &parser::Statement,
+        var_types: &mut HashMap<String, BuiltInType>,
+        return_type: &mut Option<BuiltInType>,
+    ) -> anyhow::Result<()> {
+        match statement {
+            parser::Statement::While { condition, body } => {
+                let condition_type =
+                    get_expression_type(condition, var_types, &self.function_sigs)?;
+                if condition_type != BuiltInType::Int {
+                    return Err(anyhow::anyhow!(
+                        "expected condition to be of type int, but got {:?}",
+                        condition_type
+                    ));
+                }
+                for statement in body {
+                    self.type_check_statement(statement, var_types, return_type)?;
+                }
+            }
+            parser::Statement::Assign { variable, value } => {
+                let variable_type = get_expression_type(value, &var_types, &self.function_sigs)?;
+                var_types.insert(variable.clone(), variable_type);
+            }
+            parser::Statement::Return { expr } => {
+                let expr_type = get_expression_type(expr, &var_types, &self.function_sigs)?;
+                if *return_type == None || *return_type == Some(expr_type.clone()) {
+                    *return_type = Some(expr_type);
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "mismatched return type: expected {:?}, but got {:?}",
+                        return_type,
+                        expr_type
+                    ));
+                }
+            }
+            parser::Statement::Expression { expr } => {
+                trace!("Type-checking expression inside function body: {:#?}", expr);
+            }
+        }
 
         Ok(())
     }
@@ -79,8 +102,26 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
     };
 
     // Built-in functions
+
     program.function_sigs.insert(
         "sum".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "a".to_string(),
+                    ty: BuiltInType::Int,
+                },
+                FunctionParameter {
+                    name: "b".to_string(),
+                    ty: BuiltInType::Int,
+                },
+            ],
+            return_type: BuiltInType::Int,
+        },
+    );
+
+    program.function_sigs.insert(
+        "lt".to_string(),
         FunctionSignature {
             parameters: vec![
                 FunctionParameter {

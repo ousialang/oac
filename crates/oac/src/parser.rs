@@ -17,9 +17,20 @@ pub struct Function {
 
 #[derive(Clone, Debug, Serialize)]
 pub enum Statement {
-    Assign { variable: String, value: Expression },
-    Return { expr: Expression },
-    Expression { expr: Expression },
+    Assign {
+        variable: String,
+        value: Expression,
+    },
+    Return {
+        expr: Expression,
+    },
+    Expression {
+        expr: Expression,
+    },
+    While {
+        condition: Expression,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -52,6 +63,40 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                 tokens.remove(0);
                 let expr = parse_expression(tokens)?;
                 return Ok(Statement::Return { expr });
+            } else if name == "while" {
+                tokens.remove(0);
+                let condition = parse_expression(tokens)?;
+                anyhow::ensure!(
+                    tokens.remove(0)
+                        == TokenData::Parenthesis {
+                            opening: '{',
+                            is_opening: true
+                        },
+                    "expected opening brace"
+                );
+                let mut body = vec![];
+                loop {
+                    match tokens.first().unwrap() {
+                        TokenData::Parenthesis {
+                            opening: '}',
+                            is_opening: false,
+                        } => {
+                            tokens.remove(0);
+                            break;
+                        }
+                        TokenData::Newline => {
+                            tokens.remove(0);
+                        }
+                        _ => {
+                            let statement = parse_statement(tokens)?;
+                            body.push(statement);
+                        }
+                    }
+                }
+                return Ok(Statement::While {
+                    condition,
+                    body: body,
+                });
             } else if tokens.get(1) == Some(&TokenData::Symbols("=".to_string())) {
                 tokens.remove(0);
                 tokens.remove(0);
