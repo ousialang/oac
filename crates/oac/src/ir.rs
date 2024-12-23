@@ -170,7 +170,7 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
                         })
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?,
-                return_type: BuiltInType::Int,
+                return_type: BuiltInType::from_str(&function.return_type)?,
             },
             body: function.body.clone(),
         };

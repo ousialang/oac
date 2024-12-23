@@ -13,6 +13,7 @@ pub struct Function {
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
+    pub return_type: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -177,6 +178,17 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
 
     let parameters = parse_function_args(tokens)?;
 
+    // parse -> return type
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Symbols("->".to_string()),
+        "expected '->' after function parameters"
+    );
+
+    let return_type = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        _ => return Err(anyhow::anyhow!("expected return type")),
+    };
+
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -219,6 +231,7 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
         name,
         parameters,
         body,
+        return_type,
     })
 }
 

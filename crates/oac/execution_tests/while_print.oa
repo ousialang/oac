@@ -1,5 +1,5 @@
 // This is a comment and it's ignored by the parser.
-fun main() {
+fun main() -> I32 {
 	a = 0
 	while lt(a 10) {
 		print(a)
