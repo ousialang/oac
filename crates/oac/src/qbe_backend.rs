@@ -310,7 +310,7 @@ fn compile_expr(
                     .map(|v| {
                         let qbe_type = match v.1 {
                             BuiltInType::Int => qbe::Type::Word,
-                            BuiltInType::String => qbe::Type::Long,
+                            BuiltInType::I64 | BuiltInType::String => qbe::Type::Long,
                         };
                         (qbe_type, qbe::Value::Temporary(v.0.clone()))
                     })

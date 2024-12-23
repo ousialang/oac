@@ -6,7 +6,7 @@ use serde::Serialize;
 use tracing::trace;
 
 use crate::{
-    builtins::BuiltInType,
+    builtins::{libc_type_signatures, BuiltInType},
     parser::{self, Ast, Expression, Literal},
 };
 
@@ -119,6 +119,23 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
     };
 
     // Built-in functions
+
+    for signature in libc_type_signatures() {
+        program.function_sigs.insert(
+            format!("c_{}", signature.name),
+            FunctionSignature {
+                parameters: signature
+                    .params
+                    .iter()
+                    .map(|param| FunctionParameter {
+                        name: param.name.clone(),
+                        ty: param.r#type.clone(),
+                    })
+                    .collect(),
+                return_type: signature.return_type.clone(),
+            },
+        );
+    }
 
     program.function_sigs.insert(
         "sum".to_string(),
