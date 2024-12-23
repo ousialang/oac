@@ -20,6 +20,10 @@ pub struct ResolvedProgram {
 impl ResolvedProgram {
     fn type_check(&self, func_def: &mut FunctionDefinition) -> anyhow::Result<()> {
         let mut var_types: HashMap<String, BuiltInType> = HashMap::new();
+        for param in &func_def.sig.parameters {
+            var_types.insert(param.name.clone(), param.ty.clone());
+        }
+
         let mut return_type = None;
         for statement in &func_def.body {
             self.type_check_statement(statement, &mut var_types, &mut return_type)?;

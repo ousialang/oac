@@ -1,9 +1,0 @@
----
-source: crates/oac/src/qbe_backend.rs
-assertion_line: 266
-expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
-snapshot_kind: text
----
-COMPILATION ERROR
-
-unknown variable a
