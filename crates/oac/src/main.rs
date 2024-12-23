@@ -55,6 +55,7 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     let qbe_ir = qbe_backend::compile(ir);
     let qbe_ir_path = target_dir.join("ir.qbe");
     std::fs::write(&qbe_ir_path, qbe_ir.to_string())?;
+    info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
 
     let assembly_path = target_dir.join("assembly.s");
     std::process::Command::new("qbe")
@@ -62,6 +63,7 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
         .arg(&assembly_path)
         .arg(&qbe_ir_path)
         .output()?;
+    debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
 
     let executable_path = target_dir.join("app");
     std::process::Command::new("cc")
@@ -69,6 +71,7 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
         .arg("-o")
         .arg(&executable_path)
         .output()?;
+    info!(executable_path = %executable_path.display(), "Assembly compiled to executable");
 
     Ok(())
 }

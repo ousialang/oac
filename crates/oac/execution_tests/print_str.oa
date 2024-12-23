@@ -1,0 +1,4 @@
+fun main() -> I32 {
+	print_str("Hello, world!")
+	return 0
+}

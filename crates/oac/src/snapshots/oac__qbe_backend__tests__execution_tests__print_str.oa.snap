@@ -1,0 +1,5 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: output
+---
+Hello, world!

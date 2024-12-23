@@ -152,6 +152,17 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         },
     );
 
+    program.function_sigs.insert(
+        "print_str".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "a".to_string(),
+                ty: BuiltInType::String,
+            }],
+            return_type: BuiltInType::Int,
+        },
+    );
+
     for function in ast.top_level_functions {
         let mut parameters = Vec::new();
         for parameter in function.parameters {
