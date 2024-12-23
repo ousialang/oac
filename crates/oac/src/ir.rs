@@ -40,6 +40,19 @@ impl ResolvedProgram {
         return_type: &mut Option<BuiltInType>,
     ) -> anyhow::Result<()> {
         match statement {
+            parser::Statement::Conditional { condition, body } => {
+                let condition_type =
+                    get_expression_type(condition, var_types, &self.function_sigs)?;
+                if condition_type != BuiltInType::Int {
+                    return Err(anyhow::anyhow!(
+                        "expected condition to be of type int, but got {:?}",
+                        condition_type
+                    ));
+                }
+                for statement in body {
+                    self.type_check_statement(statement, var_types, return_type)?;
+                }
+            }
             parser::Statement::While { condition, body } => {
                 let condition_type =
                     get_expression_type(condition, var_types, &self.function_sigs)?;

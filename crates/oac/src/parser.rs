@@ -18,6 +18,10 @@ pub struct Function {
 
 #[derive(Clone, Debug, Serialize)]
 pub enum Statement {
+    Conditional {
+        condition: Expression,
+        body: Vec<Statement>,
+    },
     Assign {
         variable: String,
         value: Expression,
@@ -64,6 +68,37 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                 tokens.remove(0);
                 let expr = parse_expression(tokens)?;
                 return Ok(Statement::Return { expr });
+            } else if name == "if" {
+                tokens.remove(0);
+                let condition = parse_expression(tokens)?;
+                anyhow::ensure!(
+                    tokens.remove(0)
+                        == TokenData::Parenthesis {
+                            opening: '{',
+                            is_opening: true
+                        },
+                    "expected opening brace"
+                );
+                let mut body = vec![];
+                loop {
+                    match tokens.first().unwrap() {
+                        TokenData::Parenthesis {
+                            opening: '}',
+                            is_opening: false,
+                        } => {
+                            tokens.remove(0);
+                            break;
+                        }
+                        TokenData::Newline => {
+                            tokens.remove(0);
+                        }
+                        _ => {
+                            let statement = parse_statement(tokens)?;
+                            body.push(statement);
+                        }
+                    }
+                }
+                return Ok(Statement::Conditional { condition, body });
             } else if name == "while" {
                 tokens.remove(0);
                 let condition = parse_expression(tokens)?;

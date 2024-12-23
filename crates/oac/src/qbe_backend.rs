@@ -151,6 +151,25 @@ fn compile_statement(
     variables: &mut Variables,
 ) {
     match statement {
+        parser::Statement::Conditional { condition, body } => {
+            let start_label = new_id();
+            let end_block_label = new_id();
+
+            let condition_var = compile_expr(module, qbe_func, &condition, variables).0;
+
+            qbe_func.add_instr(qbe::Instr::Jnz(
+                qbe::Value::Temporary(condition_var),
+                start_label.clone(),
+                end_block_label.clone(),
+            ));
+
+            qbe_func.add_block(&start_label);
+            for statement in body {
+                compile_statement(module, qbe_func, statement, variables);
+            }
+
+            qbe_func.add_block(&end_block_label);
+        }
         parser::Statement::While { condition, body } => {
             let condition_label = new_id();
             let start_label = new_id();

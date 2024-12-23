@@ -1,0 +1,11 @@
+// This is a comment and it's ignored by the parser.
+fun main() -> I32 {
+	print(0)
+	print(1)
+
+	if lt(sum(0 1) 100) {
+		print(100)
+	}
+
+	return 0
+}
