@@ -23,8 +23,8 @@ impl FromStr for BuiltInType {
 }
 
 pub fn libc_type_signatures() -> Vec<LibcTypeSignature> {
-    let file = std::fs::read_to_string("src/libc_type_signatures.json").unwrap();
-    serde_json::from_str(&file).unwrap()
+    let s = include_str!("libc_type_signatures.json");
+    serde_json::from_str(s).unwrap()
 }
 
 #[derive(Clone, Debug, Deserialize)]

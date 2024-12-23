@@ -18,7 +18,7 @@ pub struct ResolvedProgram {
 }
 
 impl ResolvedProgram {
-    fn type_check(&self, func_def: &mut FunctionDefinition) -> anyhow::Result<()> {
+    fn type_check(&self, func_def: &FunctionDefinition) -> anyhow::Result<()> {
         let mut var_types: HashMap<String, BuiltInType> = HashMap::new();
         for param in &func_def.sig.parameters {
             var_types.insert(param.name.clone(), param.ty.clone());
@@ -28,7 +28,6 @@ impl ResolvedProgram {
         for statement in &func_def.body {
             self.type_check_statement(statement, &mut var_types, &mut return_type)?;
         }
-        func_def.sig.return_type = return_type.expect("return type not set");
 
         Ok(())
     }
@@ -138,6 +137,40 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     program.function_sigs.insert(
+        "sub".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "a".to_string(),
+                    ty: BuiltInType::Int,
+                },
+                FunctionParameter {
+                    name: "b".to_string(),
+                    ty: BuiltInType::Int,
+                },
+            ],
+            return_type: BuiltInType::Int,
+        },
+    );
+
+    program.function_sigs.insert(
+        "eq".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "a".to_string(),
+                    ty: BuiltInType::Int,
+                },
+                FunctionParameter {
+                    name: "b".to_string(),
+                    ty: BuiltInType::Int,
+                },
+            ],
+            return_type: BuiltInType::Int,
+        },
+    );
+
+    program.function_sigs.insert(
         "sum".to_string(),
         FunctionSignature {
             parameters: vec![
@@ -215,14 +248,15 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
             },
             body: function.body.clone(),
         };
-        program.type_check(&mut func_def)?;
 
         program
             .function_sigs
             .insert(function.name.clone(), func_def.sig.clone());
         program
             .function_definitions
-            .insert(function.name.clone(), func_def);
+            .insert(function.name.clone(), func_def.clone());
+
+        program.type_check(&mut func_def)?;
     }
 
     if !program.function_definitions.contains_key("main") {

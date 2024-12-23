@@ -39,6 +39,58 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
     }
 
     {
+        let mut sub = Function::new(
+            qbe::Linkage::public(),
+            "sub".to_string(),
+            vec![
+                (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
+            ],
+            Some(qbe::Type::Word),
+        );
+
+        sub.add_block("start".to_string());
+
+        sub.assign_instr(
+            Value::Temporary("c".to_string()),
+            Type::Word,
+            Instr::Sub(
+                Value::Temporary("a".to_string()),
+                Value::Temporary("b".to_string()),
+            ),
+        );
+        sub.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
+        module.add_function(sub);
+    }
+
+    {
+        let mut eq = Function::new(
+            qbe::Linkage::public(),
+            "eq".to_string(),
+            vec![
+                (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
+            ],
+            Some(qbe::Type::Word),
+        );
+
+        eq.add_block("start".to_string());
+
+        eq.assign_instr(
+            Value::Temporary("c".to_string()),
+            Type::Word,
+            Instr::Cmp(
+                Type::Word,
+                qbe::Cmp::Eq,
+                Value::Temporary("a".to_string()),
+                Value::Temporary("b".to_string()),
+            ),
+        );
+        eq.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
+        module.add_function(eq);
+    }
+
+    {
         let mut lt = Function::new(
             qbe::Linkage::public(),
             "lt".to_string(),
