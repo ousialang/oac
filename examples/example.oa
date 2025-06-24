@@ -74,6 +74,7 @@ struct Family = {
 	child: Person.constraint(x => age < $mother age & ? age < $father age),
 }
 
+
 struct List[T] =
 	element: T,
 	next: Maybe[List[T]],

@@ -2,6 +2,7 @@ mod builtins;
 mod ir;
 mod parser;
 mod qbe_backend;
+mod riscv_smt; // Add the new module
 mod tokenizer;
 
 use std::env;
@@ -25,8 +26,41 @@ fn main() -> anyhow::Result<()> {
             let current_dir = std::env::current_dir()?;
             compile(&current_dir, build)?;
         }
+        OacSubcommand::RiscvSmt(riscv_smt_opts) => {
+            let current_dir = std::env::current_dir()?;
+            process_riscv_smt(&current_dir, riscv_smt_opts)?;
+        }
     }
 
+    Ok(())
+}
+
+fn process_riscv_smt(_current_dir: &Path, opts: RiscvSmtOpts) -> anyhow::Result<()> {
+    let elf_path = Path::new(&opts.elf_file);
+    if opts.check {
+        let result = riscv_smt::check_returns_zero_within_cycles(elf_path)?;
+        if result {
+            println!(
+                "Program {} is SATISFIABLE to return 0 within {} cycles.",
+                opts.elf_file,
+                riscv_smt::MAX_CYCLES
+            );
+        } else {
+            println!(
+                "Program {} is UNSATISFIABLE to return 0 within {} cycles.",
+                opts.elf_file,
+                riscv_smt::MAX_CYCLES
+            );
+        }
+    } else {
+        let smt_expression = riscv_smt::elf_to_smt_returns_zero_within_cycles(elf_path)?;
+        if let Some(output_path) = opts.output {
+            std::fs::write(&output_path, smt_expression)?;
+            info!("SMT expression written to {}", output_path);
+        } else {
+            println!("{}", smt_expression);
+        }
+    }
     Ok(())
 }
 
@@ -93,9 +127,30 @@ struct Oac {
 #[derive(clap::Subcommand)]
 enum OacSubcommand {
     Build(Build),
+    RiscvSmt(RiscvSmtOpts),
 }
 
 #[derive(clap::Parser)]
 struct Build {
     source: String,
+    arch: Option<String>,
+}
+
+#[derive(clap::Parser, Debug)]
+#[clap(
+    name = "riscv-smt",
+    about = "Turn a RISC-V ELF into an SMT expression."
+)]
+struct RiscvSmtOpts {
+    /// Path to the RISC-V ELF file
+    #[clap(short, long)]
+    elf_file: String,
+
+    /// Output SMT file path (optional, prints to stdout if not provided)
+    #[clap(short, long)]
+    output: Option<String>,
+
+    /// Check if the program returns 0 within MAX_CYCLES instead of generating SMT
+    #[clap(short, long, default_value = "false")]
+    check: bool,
 }

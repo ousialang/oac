@@ -11,8 +11,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 thiserror = "1"
 tracing = "0.1.41"
-tracing-subscriber = {version = "0.3.19", features = ["env-filter"]}
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 uuid = { version = "1.11", features = ["v7"] }
+
+# Dependencies for RISC-V ELF to SMT conversion
+goblin = "0.8" # ELF parsing
 
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }
