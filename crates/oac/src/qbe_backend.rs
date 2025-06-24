@@ -391,6 +391,30 @@ fn compile_expr(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
+                Op::Lt => qbe::Instr::Cmp(
+                    qbe::Type::Word,
+                    qbe::Cmp::Slt,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Gt => qbe::Instr::Cmp(
+                    qbe::Type::Word,
+                    qbe::Cmp::Sgt,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Le => qbe::Instr::Cmp(
+                    qbe::Type::Word,
+                    qbe::Cmp::Sle,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Ge => qbe::Instr::Cmp(
+                    qbe::Type::Word,
+                    qbe::Cmp::Sge,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
                 Op::Add => qbe::Instr::Add(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),

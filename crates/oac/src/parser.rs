@@ -60,6 +60,10 @@ pub enum Op {
     Div,
     Eq,
     Neq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
 }
 
 impl Op {
@@ -72,6 +76,10 @@ impl Op {
                 "/" => Some(Op::Div),
                 "==" => Some(Op::Eq),
                 "!=" => Some(Op::Neq),
+                "<" => Some(Op::Lt),
+                ">" => Some(Op::Gt),
+                "<=" => Some(Op::Le),
+                ">=" => Some(Op::Ge),
                 _ => None,
             },
             _ => None,
@@ -80,7 +88,7 @@ impl Op {
 
     fn precedence(&self) -> u8 {
         match self {
-            Op::Eq | Op::Neq => 0,
+            Op::Eq | Op::Neq | Op::Lt | Op::Gt | Op::Le | Op::Ge => 0,
             Op::Add | Op::Sub => 1,
             Op::Mul | Op::Div => 2,
         }
@@ -91,7 +99,7 @@ impl TokenData {
     fn is_op(&self) -> bool {
         matches!(
             self,
-            TokenData::Symbols(s) if s == "+" || s == "-" || s == "*" || s == "/" || s == "==" || s == "!="
+            TokenData::Symbols(s) if s == "+" || s == "-" || s == "*" || s == "/" || s == "==" || s == "!=" || s == "<" || s == ">" || s == "<=" || s == ">="
         )
     }
 }
