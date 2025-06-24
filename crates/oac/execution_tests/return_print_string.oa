@@ -1,0 +1,8 @@
+fun hello() -> String {
+	return "Hello, world!"
+}
+
+fun main() -> I32 {
+	print(hello())
+	return 0
+}

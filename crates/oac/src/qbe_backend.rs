@@ -277,12 +277,16 @@ fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDe
         .map(|param| (qbe::Type::Word, qbe::Value::Temporary(param.name.clone())))
         .collect::<Vec<_>>();
 
+    let return_type = match func_def.sig.return_type {
+        BuiltInType::I64 | BuiltInType::String => qbe::Type::Long,
+        BuiltInType::Int => qbe::Type::Word,
+    };
+
     let mut qbe_func = qbe::Function::new(
         qbe::Linkage::public(),
         func_def.name.clone(),
         qbe_args,
-        // TODO: handle return type
-        Some(qbe::Type::Word),
+        Some(return_type),
     );
 
     qbe_func.add_block("start".to_string());

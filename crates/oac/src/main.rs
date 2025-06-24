@@ -93,6 +93,8 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
 
     let assembly_path = target_dir.join("assembly.s");
     std::process::Command::new("qbe")
+        .arg("-t")
+        .arg("arm64_apple")
         .arg("-o")
         .arg(&assembly_path)
         .arg(&qbe_ir_path)
@@ -100,11 +102,13 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
 
     let executable_path = target_dir.join("app");
-    std::process::Command::new("cc")
+    let cc_output = std::process::Command::new("cc")
         .arg(&assembly_path)
         .arg("-o")
         .arg(&executable_path)
         .output()?;
+    println!("{}", String::from_utf8_lossy(&cc_output.stderr));
+
     info!(executable_path = %executable_path.display(), "Assembly compiled to executable");
 
     Ok(())
