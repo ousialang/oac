@@ -10,6 +10,8 @@ use crate::{
     parser::{self, Ast, Expression, Literal},
 };
 
+use self::parser::Op;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ResolvedProgram {
     pub ast: Ast,
@@ -301,6 +303,21 @@ fn get_expression_type(
                 }
             }
             Ok(func.return_type.clone())
+        }
+        Expression::BinOp(op, left, right) => {
+            let left_type = get_expression_type(left, var_types, fns)?;
+            let right_type = get_expression_type(right, var_types, fns)?;
+
+            if left_type != BuiltInType::Int || right_type != BuiltInType::Int {
+                return Err(anyhow::anyhow!(
+                    "expected both operands of {:?} to be of type int, but got {:?} and {:?}",
+                    op,
+                    left_type,
+                    right_type
+                ));
+            }
+
+            Ok(BuiltInType::Int)
         }
     }
 }

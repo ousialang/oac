@@ -8,7 +8,7 @@ type QbeAssignName = String;
 use crate::{
     builtins::BuiltInType,
     ir::{self, ResolvedProgram},
-    parser,
+    parser::{self, Op},
 };
 
 fn add_builtins(module: &mut qbe::Module<'static>) {
@@ -374,6 +374,45 @@ fn compile_expr(
 
             (id, BuiltInType::Int) // FIXME: not all functions return int
         }
+        parser::Expression::BinOp(op, left, right) => {
+            let left_var = compile_expr(module, func, left, variables).0;
+            let right_var = compile_expr(module, func, right, variables).0;
+
+            let instr = match op {
+                Op::Eq => qbe::Instr::Cmp(
+                    qbe::Type::Word,
+                    qbe::Cmp::Eq,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Neq => qbe::Instr::Cmp(
+                    qbe::Type::Word,
+                    qbe::Cmp::Ne,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Add => qbe::Instr::Add(
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Sub => qbe::Instr::Sub(
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Mul => qbe::Instr::Mul(
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Div => qbe::Instr::Div(
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+            };
+
+            func.assign_instr(Value::Temporary(id.clone()), Type::Word, instr);
+
+            (id, BuiltInType::Int)
+        }
     }
 }
 
@@ -395,6 +434,7 @@ mod tests {
                 &tmp.path(),
                 Build {
                     source: path.to_string_lossy().to_string(),
+                    arch: None,
                 },
             ) {
                 Ok(()) => (),

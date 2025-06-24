@@ -43,12 +43,57 @@ pub enum Expression {
     Literal(Literal),
     Variable(String),
     Call(String, Vec<Expression>),
+    BinOp(Op, Box<Expression>, Box<Expression>),
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub enum Literal {
     Int(u32),
     String(String),
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, Copy)]
+pub enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Neq,
+}
+
+impl Op {
+    fn from_token(token: &TokenData) -> Option<Op> {
+        match token {
+            TokenData::Symbols(s) => match s.as_str() {
+                "+" => Some(Op::Add),
+                "-" => Some(Op::Sub),
+                "*" => Some(Op::Mul),
+                "/" => Some(Op::Div),
+                "==" => Some(Op::Eq),
+                "!=" => Some(Op::Neq),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn precedence(&self) -> u8 {
+        match self {
+            Op::Eq | Op::Neq => 0,
+            Op::Add | Op::Sub => 1,
+            Op::Mul | Op::Div => 2,
+        }
+    }
+}
+
+impl TokenData {
+    fn is_op(&self) -> bool {
+        matches!(
+            self,
+            TokenData::Symbols(s) if s == "+" || s == "-" || s == "*" || s == "/" || s == "==" || s == "!="
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -66,11 +111,11 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
 
             if name == "return" {
                 tokens.remove(0);
-                let expr = parse_expression(tokens)?;
+                let expr = parse_expression(tokens, 0)?;
                 return Ok(Statement::Return { expr });
             } else if name == "if" {
                 tokens.remove(0);
-                let condition = parse_expression(tokens)?;
+                let condition = parse_expression(tokens, 0)?;
                 anyhow::ensure!(
                     tokens.remove(0)
                         == TokenData::Parenthesis {
@@ -101,7 +146,7 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                 return Ok(Statement::Conditional { condition, body });
             } else if name == "while" {
                 tokens.remove(0);
-                let condition = parse_expression(tokens)?;
+                let condition = parse_expression(tokens, 0)?;
                 anyhow::ensure!(
                     tokens.remove(0)
                         == TokenData::Parenthesis {
@@ -137,13 +182,13 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                 tokens.remove(0);
                 tokens.remove(0);
                 trace!("Parsing assignment statement");
-                let value = parse_expression(tokens)?;
+                let value = parse_expression(tokens, 0)?;
                 return Ok(Statement::Assign {
                     variable: name,
                     value,
                 });
             } else {
-                let expr = parse_expression(tokens)?;
+                let expr = parse_expression(tokens, 0)?;
                 return Ok(Statement::Expression { expr });
             }
         }
@@ -297,63 +342,85 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
     Ok(ast)
 }
 
-fn parse_expression(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
-    trace!(?tokens, "Parsing expression");
-
-    // Parse literal, variable, or function call
-    let first_token = tokens.remove(0);
-    match (first_token, tokens.first()) {
-        (
-            TokenData::Parenthesis {
-                opening: '(',
-                is_opening: true,
-            },
-            _,
-        ) => {
-            tokens.remove(0);
-            trace!(?tokens, "Parsing parenthesized expression");
-            let expr = parse_expression(tokens)?;
+fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
+    let next = tokens.remove(0);
+    match next {
+        TokenData::Number(n) => Ok(Expression::Literal(Literal::Int(n))),
+        TokenData::String(s) => Ok(Expression::Literal(Literal::String(s))),
+        TokenData::Word(s) => {
+            if tokens.get(0)
+                == Some(&TokenData::Parenthesis {
+                    opening: '(',
+                    is_opening: true,
+                })
+            {
+                tokens.remove(0);
+                let mut args = vec![];
+                loop {
+                    match tokens.get(0) {
+                        Some(TokenData::Parenthesis {
+                            opening: ')',
+                            is_opening: false,
+                        }) => {
+                            tokens.remove(0);
+                            break;
+                        }
+                        None => return Err(anyhow::anyhow!("unexpected end of file")),
+                        _ => {
+                            let expr = parse_expression(tokens, 0)?;
+                            args.push(expr);
+                            if let Some(TokenData::Symbols(s)) = tokens.get(0) {
+                                if s == "," {
+                                    tokens.remove(0);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Expression::Call(s, args))
+            } else {
+                Ok(Expression::Variable(s))
+            }
+        }
+        TokenData::Parenthesis {
+            opening: '(',
+            is_opening: true,
+        } => {
+            let expr = parse_expression(tokens, 0)?;
             anyhow::ensure!(
                 tokens.remove(0)
                     == TokenData::Parenthesis {
                         opening: ')',
                         is_opening: false
-                    },
-                "Expected closing parenthesis"
+                    }
             );
             Ok(expr)
         }
-        (
-            TokenData::Word(name),
-            Some(TokenData::Parenthesis {
-                opening: '(',
-                is_opening: true,
-            }),
-        ) => {
-            tokens.remove(0);
-            let mut args = vec![];
-            loop {
-                match tokens.get(0) {
-                    Some(TokenData::Parenthesis {
-                        opening: ')',
-                        is_opening: false,
-                    }) => {
-                        tokens.remove(0);
-                        break;
-                    }
-                    _ => {
-                        trace!(?tokens, "Parsing function argument");
-                        let expr = parse_expression(tokens)?;
-                        args.push(expr);
-                        // TODO: comma and more args
-                    }
-                }
-            }
-            Ok(Expression::Call(name, args))
-        }
-        (TokenData::Word(name), _) => Ok(Expression::Variable(name)),
-        (TokenData::String(s), _) => Ok(Expression::Literal(Literal::String(s))),
-        (TokenData::Number(value), _) => Ok(Expression::Literal(Literal::Int(value))),
-        (token, _) => Err(anyhow::anyhow!("unexpected token {:?}", token)),
+        t => Err(anyhow::anyhow!("expected a value, got {:?}", t)),
     }
+}
+
+fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::Result<Expression> {
+    trace!(?tokens, "Parsing expression");
+
+    let mut lhs = parse_atom(tokens)?;
+
+    loop {
+        let op = match tokens.get(0) {
+            Some(token) if token.is_op() => Op::from_token(token).unwrap(),
+            _ => break,
+        };
+
+        let precedence = op.precedence();
+        if precedence >= min_precedence {
+            tokens.remove(0);
+            let rhs = parse_expression(tokens, precedence)?;
+            lhs = Expression::BinOp(op, Box::new(lhs), Box::new(rhs));
+        } else {
+            break;
+        }
+    }
+
+    Ok(lhs)
 }

@@ -1,0 +1,19 @@
+fun fibonacci(n: I32) -> I32 {
+	if eq(n 0) {
+		return 0
+	}
+	if n == 1 {
+		return 1
+	}
+	return fibonacci(sub(n 1)) + fibonacci(sub(n 2))
+}
+
+fun main() -> I32 {
+	i = 0
+	while lt(i 10) {
+		print(fibonacci(i))
+		i = i + 1
+	}
+
+	return 0
+}
