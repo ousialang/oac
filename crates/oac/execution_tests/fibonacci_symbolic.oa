@@ -5,12 +5,13 @@ fun fibonacci(n: I32) -> I32 {
 	if n == 1 {
 		return 1
 	}
+
 	return fibonacci(n-1) + fibonacci(n-2)
 }
 
 fun main() -> I32 {
 	i = 0
-	while i < 10 {
+	while i < 20 {
 		print(fibonacci(i))
 		i = i + 1
 	}
