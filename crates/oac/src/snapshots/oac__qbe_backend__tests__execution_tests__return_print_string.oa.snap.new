@@ -1,0 +1,7 @@
+---
+source: crates/oac/src/qbe_backend.rs
+assertion_line: 497
+expression: output
+snapshot_kind: text
+---
+Hello, test!

@@ -190,7 +190,7 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     add_builtins(&mut module);
 
     for func_def in ir.function_definitions.values() {
-        compile_function(&mut module, func_def);
+        compile_function(&mut module, &ir, func_def);
     }
 
     module
@@ -200,6 +200,7 @@ fn compile_statement(
     module: &mut qbe::Module<'static>,
     qbe_func: &mut qbe::Function,
     statement: &parser::Statement,
+    program: &ResolvedProgram,
     variables: &mut Variables,
 ) {
     match statement {
@@ -207,7 +208,7 @@ fn compile_statement(
             let start_label = new_id();
             let end_block_label = new_id();
 
-            let condition_var = compile_expr(module, qbe_func, &condition, variables).0;
+            let condition_var = compile_expr(module, qbe_func, &condition, program, variables).0;
 
             qbe_func.add_instr(qbe::Instr::Jnz(
                 qbe::Value::Temporary(condition_var),
@@ -217,7 +218,7 @@ fn compile_statement(
 
             qbe_func.add_block(&start_label);
             for statement in body {
-                compile_statement(module, qbe_func, statement, variables);
+                compile_statement(module, qbe_func, statement, program, variables);
             }
 
             qbe_func.add_block(&end_block_label);
@@ -228,7 +229,7 @@ fn compile_statement(
             let end_block_label = new_id();
 
             qbe_func.add_block(condition_label.clone());
-            let condition_var = compile_expr(module, qbe_func, &condition, variables).0;
+            let condition_var = compile_expr(module, qbe_func, &condition, program, variables).0;
 
             qbe_func.add_instr(qbe::Instr::Jnz(
                 qbe::Value::Temporary(condition_var),
@@ -238,21 +239,21 @@ fn compile_statement(
 
             qbe_func.add_block(&start_label);
             for statement in body {
-                compile_statement(module, qbe_func, statement, variables);
+                compile_statement(module, qbe_func, statement, program, variables);
             }
             qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
 
             qbe_func.add_block(&end_block_label);
         }
         parser::Statement::Return { expr } => {
-            let expr_var = compile_expr(module, qbe_func, &expr, variables).0;
+            let expr_var = compile_expr(module, qbe_func, &expr, program, variables).0;
             trace!(%expr_var, "Emitting return instruction");
             qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
         }
         parser::Statement::Assign { variable, value } => {
             trace!(%variable, "Compiling assignment");
 
-            let value_var = compile_expr(module, qbe_func, &value, variables);
+            let value_var = compile_expr(module, qbe_func, &value, program, variables);
             if let Some(existing_var) = variables.get(variable.as_str()) {
                 qbe_func.assign_instr(
                     qbe::Value::Temporary(existing_var.0.clone()),
@@ -263,12 +264,16 @@ fn compile_statement(
             variables.insert(variable.clone(), value_var);
         }
         parser::Statement::Expression { expr } => {
-            compile_expr(module, qbe_func, &expr, variables);
+            compile_expr(module, qbe_func, &expr, program, variables);
         }
     }
 }
 
-fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDefinition) {
+fn compile_function(
+    module: &mut qbe::Module<'static>,
+    program: &ResolvedProgram,
+    func_def: &ir::FunctionDefinition,
+) {
     let qbe_args = func_def
         .sig
         .parameters
@@ -298,7 +303,7 @@ fn compile_function(module: &mut qbe::Module<'static>, func_def: &ir::FunctionDe
     }
 
     for statement in &func_def.body {
-        compile_statement(module, &mut qbe_func, statement, &mut variables);
+        compile_statement(module, &mut qbe_func, statement, program, &mut variables);
     }
 
     module.add_function(qbe_func);
@@ -314,6 +319,7 @@ fn compile_expr(
     module: &mut qbe::Module<'static>,
     func: &mut qbe::Function,
     expr: &parser::Expression,
+    program: &ResolvedProgram,
     variables: &mut Variables,
 ) -> (QbeAssignName, BuiltInType) {
     trace!(?expr, "Compiling expression");
@@ -354,7 +360,7 @@ fn compile_expr(
         parser::Expression::Call(name, args) => {
             let mut arg_vars = vec![];
             for arg in args {
-                let arg_var = compile_expr(module, func, arg, variables);
+                let arg_var = compile_expr(module, func, arg, program, variables);
                 arg_vars.push(arg_var);
             }
 
@@ -362,7 +368,6 @@ fn compile_expr(
                 name.clone(),
                 arg_vars
                     .iter()
-                    // FIXME: word argument even for strings
                     .map(|v| {
                         let qbe_type = match v.1 {
                             BuiltInType::Int => qbe::Type::Word,
@@ -374,13 +379,20 @@ fn compile_expr(
                 None,
             );
 
-            func.assign_instr(Value::Temporary(id.clone()), Type::Word, instr);
+            let sig = program.function_sigs.get(name).unwrap();
 
-            (id, BuiltInType::Int) // FIXME: not all functions return int
+            let tmp_id_type = match sig.return_type {
+                BuiltInType::I64 | BuiltInType::String => qbe::Type::Long,
+                BuiltInType::Int => qbe::Type::Word,
+            };
+
+            func.assign_instr(Value::Temporary(id.clone()), tmp_id_type, instr);
+
+            (id, sig.return_type.clone())
         }
         parser::Expression::BinOp(op, left, right) => {
-            let left_var = compile_expr(module, func, left, variables).0;
-            let right_var = compile_expr(module, func, right, variables).0;
+            let left_var = compile_expr(module, func, left, program, variables).0;
+            let right_var = compile_expr(module, func, right, program, variables).0;
 
             let instr = match op {
                 Op::Eq => qbe::Instr::Cmp(
