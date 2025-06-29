@@ -4,7 +4,20 @@ use tracing::trace;
 use crate::tokenizer::{TokenData, TokenList};
 
 #[derive(Clone, Debug, Serialize)]
+pub struct TypeDefinition {
+    pub name: String,
+    pub struct_fields: Vec<StructField>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StructField {
+    pub name: String,
+    pub ty: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct Ast {
+    pub type_definitions: Vec<TypeDefinition>,
     pub top_level_functions: Vec<Function>,
 }
 
@@ -244,6 +257,73 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
     Ok(parameters)
 }
 
+fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TypeDefinition> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("struct".to_string()),
+        "expected 'struct' keyword"
+    );
+
+    let name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        _ => return Err(anyhow::anyhow!("expected struct name")),
+    };
+
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace"
+    );
+
+    let mut struct_fields = vec![];
+    loop {
+        match tokens.first().unwrap() {
+            TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            } => {
+                tokens.remove(0);
+                break;
+            }
+            TokenData::Newline => {
+                tokens.remove(0);
+            }
+            _ => {
+                let field_name = match tokens.remove(0) {
+                    TokenData::Word(name) => name,
+                    _ => return Err(anyhow::anyhow!("expected field name")),
+                };
+                anyhow::ensure!(
+                    tokens.remove(0) == TokenData::Symbols(":".to_string()),
+                    "expected ':' after field name"
+                );
+                let ty = match tokens.remove(0) {
+                    TokenData::Word(ty) => ty,
+                    _ => return Err(anyhow::anyhow!("expected field type")),
+                };
+
+                let next_tok = tokens.remove(0);
+                anyhow::ensure!(
+                    next_tok == TokenData::Symbols(",".to_string())
+                        || next_tok == TokenData::Newline,
+                    "expected ',' or newline after field type"
+                );
+                struct_fields.push(StructField {
+                    name: field_name,
+                    ty,
+                });
+            }
+        }
+    }
+
+    Ok(TypeDefinition {
+        name,
+        struct_fields,
+    })
+}
+
 fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Function> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("fun".to_string()),
@@ -331,11 +411,16 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         .retain(|token| !matches!(token, TokenData::Comment(_)));
 
     let mut ast = Ast {
+        type_definitions: vec![],
         top_level_functions: vec![],
     };
 
     while let Some(token) = tokens.tokens.first() {
         match token {
+            TokenData::Word(name) if name == "struct" => {
+                let type_definition = parse_struct_declaration(&mut tokens.tokens)?;
+                ast.type_definitions.push(type_definition);
+            }
             TokenData::Word(name) if name == "fun" => {
                 let function = parse_function_declaration(&mut tokens.tokens)?;
                 ast.top_level_functions.push(function);

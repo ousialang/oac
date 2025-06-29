@@ -7,7 +7,7 @@ type QbeAssignName = String;
 
 use crate::{
     builtins::BuiltInType,
-    ir::{self, ResolvedProgram},
+    ir::{self, ResolvedProgram, Type as IrType},
     parser::{self, Op},
 };
 
@@ -283,8 +283,9 @@ fn compile_function(
         .collect::<Vec<_>>();
 
     let return_type = match func_def.sig.return_type {
-        BuiltInType::I64 | BuiltInType::String => qbe::Type::Long,
-        BuiltInType::Int => qbe::Type::Word,
+        IrType::BuiltIn(BuiltInType::I64) | IrType::BuiltIn(BuiltInType::String) => qbe::Type::Long,
+        IrType::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
+        IrType::Struct(_) => todo!(),
     };
 
     let mut qbe_func = qbe::Function::new(
@@ -313,7 +314,7 @@ fn new_id() -> String {
     format!("id{}", uuid::Uuid::now_v7().as_simple())
 }
 
-type Variables = HashMap<String, (QbeAssignName, BuiltInType)>;
+type Variables = HashMap<String, (QbeAssignName, ir::Type)>;
 
 fn compile_expr(
     module: &mut qbe::Module<'static>,
@@ -321,7 +322,7 @@ fn compile_expr(
     expr: &parser::Expression,
     program: &ResolvedProgram,
     variables: &mut Variables,
-) -> (QbeAssignName, BuiltInType) {
+) -> (QbeAssignName, ir::Type) {
     trace!(?expr, "Compiling expression");
 
     let id = new_id();
@@ -333,7 +334,7 @@ fn compile_expr(
                 qbe::Instr::Copy(qbe::Value::Const(*value as u64)),
             );
 
-            (id, BuiltInType::Int)
+            (id, IrType::BuiltIn(BuiltInType::Int))
         }
         parser::Expression::Literal(parser::Literal::String(value)) => {
             let const_name = new_id();
@@ -352,7 +353,7 @@ fn compile_expr(
                 qbe::Instr::Copy(qbe::Value::Global(const_name)),
             );
 
-            (id, BuiltInType::String)
+            (id, IrType::BuiltIn(BuiltInType::String))
         }
         parser::Expression::Variable(name) => {
             return variables.get(name).unwrap().clone();
@@ -370,8 +371,10 @@ fn compile_expr(
                     .iter()
                     .map(|v| {
                         let qbe_type = match v.1 {
-                            BuiltInType::Int => qbe::Type::Word,
-                            BuiltInType::I64 | BuiltInType::String => qbe::Type::Long,
+                            IrType::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
+                            IrType::BuiltIn(BuiltInType::I64)
+                            | IrType::BuiltIn(BuiltInType::String) => qbe::Type::Long,
+                            IrType::Struct(_) => todo!(),
                         };
                         (qbe_type, qbe::Value::Temporary(v.0.clone()))
                     })
@@ -382,8 +385,11 @@ fn compile_expr(
             let sig = program.function_sigs.get(name).unwrap();
 
             let tmp_id_type = match sig.return_type {
-                BuiltInType::I64 | BuiltInType::String => qbe::Type::Long,
-                BuiltInType::Int => qbe::Type::Word,
+                IrType::BuiltIn(BuiltInType::I64) | IrType::BuiltIn(BuiltInType::String) => {
+                    qbe::Type::Long
+                }
+                IrType::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
+                IrType::Struct(_) => todo!(),
             };
 
             func.assign_instr(Value::Temporary(id.clone()), tmp_id_type, instr);
@@ -451,7 +457,7 @@ fn compile_expr(
 
             func.assign_instr(Value::Temporary(id.clone()), Type::Word, instr);
 
-            (id, BuiltInType::Int)
+            (id, IrType::BuiltIn(BuiltInType::Int))
         }
     }
 }

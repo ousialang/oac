@@ -1,6 +1,6 @@
 //! Type-checking and IR generation.
 
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 use serde::Serialize;
 use tracing::trace;
@@ -10,18 +10,17 @@ use crate::{
     parser::{self, Ast, Expression, Literal},
 };
 
-use self::parser::Op;
-
 #[derive(Clone, Debug, Serialize)]
 pub struct ResolvedProgram {
     pub ast: Ast,
+    pub type_definitions: HashMap<String, Type>,
     pub function_sigs: HashMap<String, FunctionSignature>,
     pub function_definitions: HashMap<String, FunctionDefinition>,
 }
 
 impl ResolvedProgram {
     fn type_check(&self, func_def: &FunctionDefinition) -> anyhow::Result<()> {
-        let mut var_types: HashMap<String, BuiltInType> = HashMap::new();
+        let mut var_types: HashMap<String, Type> = HashMap::new();
         for param in &func_def.sig.parameters {
             var_types.insert(param.name.clone(), param.ty.clone());
         }
@@ -37,14 +36,14 @@ impl ResolvedProgram {
     fn type_check_statement(
         &self,
         statement: &parser::Statement,
-        var_types: &mut HashMap<String, BuiltInType>,
-        return_type: &mut Option<BuiltInType>,
+        var_types: &mut HashMap<String, Type>,
+        return_type: &mut Option<Type>,
     ) -> anyhow::Result<()> {
         match statement {
             parser::Statement::Conditional { condition, body } => {
                 let condition_type =
                     get_expression_type(condition, var_types, &self.function_sigs)?;
-                if condition_type != BuiltInType::Int {
+                if condition_type != Type::BuiltIn(BuiltInType::Int) {
                     return Err(anyhow::anyhow!(
                         "expected condition to be of type int, but got {:?}",
                         condition_type
@@ -57,7 +56,7 @@ impl ResolvedProgram {
             parser::Statement::While { condition, body } => {
                 let condition_type =
                     get_expression_type(condition, var_types, &self.function_sigs)?;
-                if condition_type != BuiltInType::Int {
+                if condition_type != Type::BuiltIn(BuiltInType::Int) {
                     return Err(anyhow::anyhow!(
                         "expected condition to be of type int, but got {:?}",
                         condition_type
@@ -95,13 +94,19 @@ impl ResolvedProgram {
 #[derive(Clone, Debug, Serialize)]
 pub struct FunctionParameter {
     pub name: String,
-    pub ty: BuiltInType,
+    pub ty: Type,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct FunctionSignature {
     pub parameters: Vec<FunctionParameter>,
-    pub return_type: BuiltInType,
+    pub return_type: Type,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub enum Type {
+    BuiltIn(BuiltInType),
+    Struct(String),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -117,7 +122,18 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         ast: ast.clone(),
         function_definitions: HashMap::new(),
         function_sigs: HashMap::new(),
+        type_definitions: HashMap::new(),
     };
+
+    program
+        .type_definitions
+        .insert("I32".to_string(), Type::BuiltIn(BuiltInType::Int));
+    program
+        .type_definitions
+        .insert("I64".to_string(), Type::BuiltIn(BuiltInType::I64));
+    program
+        .type_definitions
+        .insert("String".to_string(), Type::BuiltIn(BuiltInType::String));
 
     // Built-in functions
 
@@ -130,10 +146,10 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
                     .iter()
                     .map(|param| FunctionParameter {
                         name: param.name.clone(),
-                        ty: param.r#type.clone(),
+                        ty: Type::BuiltIn(param.r#type.clone()),
                     })
                     .collect(),
-                return_type: signature.return_type.clone(),
+                return_type: Type::BuiltIn(signature.return_type.clone()),
             },
         );
     }
@@ -144,14 +160,14 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
             parameters: vec![
                 FunctionParameter {
                     name: "a".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
                 FunctionParameter {
                     name: "b".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
             ],
-            return_type: BuiltInType::Int,
+            return_type: Type::BuiltIn(BuiltInType::Int),
         },
     );
 
@@ -161,14 +177,14 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
             parameters: vec![
                 FunctionParameter {
                     name: "a".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
                 FunctionParameter {
                     name: "b".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
             ],
-            return_type: BuiltInType::Int,
+            return_type: Type::BuiltIn(BuiltInType::Int),
         },
     );
 
@@ -178,14 +194,14 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
             parameters: vec![
                 FunctionParameter {
                     name: "a".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
                 FunctionParameter {
                     name: "b".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
             ],
-            return_type: BuiltInType::Int,
+            return_type: Type::BuiltIn(BuiltInType::Int),
         },
     );
 
@@ -195,14 +211,14 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
             parameters: vec![
                 FunctionParameter {
                     name: "a".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
                 FunctionParameter {
                     name: "b".to_string(),
-                    ty: BuiltInType::Int,
+                    ty: Type::BuiltIn(BuiltInType::Int),
                 },
             ],
-            return_type: BuiltInType::Int,
+            return_type: Type::BuiltIn(BuiltInType::Int),
         },
     );
 
@@ -211,9 +227,9 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         FunctionSignature {
             parameters: vec![FunctionParameter {
                 name: "a".to_string(),
-                ty: BuiltInType::Int,
+                ty: Type::BuiltIn(BuiltInType::Int),
             }],
-            return_type: BuiltInType::Int,
+            return_type: Type::BuiltIn(BuiltInType::Int),
         },
     );
 
@@ -222,9 +238,9 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         FunctionSignature {
             parameters: vec![FunctionParameter {
                 name: "a".to_string(),
-                ty: BuiltInType::String,
+                ty: Type::BuiltIn(BuiltInType::String),
             }],
-            return_type: BuiltInType::Int,
+            return_type: Type::BuiltIn(BuiltInType::Int),
         },
     );
 
@@ -240,13 +256,15 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
                     .clone()
                     .into_iter()
                     .map(|p| {
-                        Ok(FunctionParameter {
-                            name: p.name,
-                            ty: BuiltInType::from_str(&p.ty)?,
-                        })
+                        let ty = program.type_definitions.get(&p.ty).unwrap().clone();
+                        Ok(FunctionParameter { name: p.name, ty })
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?,
-                return_type: BuiltInType::from_str(&function.return_type)?,
+                return_type: program
+                    .type_definitions
+                    .get(&function.return_type)
+                    .unwrap()
+                    .clone(),
             },
             body: function.body.clone(),
         };
@@ -270,12 +288,12 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
 
 fn get_expression_type(
     expr: &Expression,
-    var_types: &HashMap<String, BuiltInType>,
+    var_types: &HashMap<String, Type>,
     fns: &HashMap<String, FunctionSignature>,
-) -> anyhow::Result<BuiltInType> {
+) -> anyhow::Result<Type> {
     match expr {
-        Expression::Literal(Literal::Int(_)) => Ok(BuiltInType::Int),
-        Expression::Literal(Literal::String(_)) => Ok(BuiltInType::String),
+        Expression::Literal(Literal::Int(_)) => Ok(Type::BuiltIn(BuiltInType::Int)),
+        Expression::Literal(Literal::String(_)) => Ok(Type::BuiltIn(BuiltInType::String)),
         Expression::Variable(name) => var_types
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("unknown variable {}", name))
@@ -308,7 +326,9 @@ fn get_expression_type(
             let left_type = get_expression_type(left, var_types, fns)?;
             let right_type = get_expression_type(right, var_types, fns)?;
 
-            if left_type != BuiltInType::Int || right_type != BuiltInType::Int {
+            if left_type != Type::BuiltIn(BuiltInType::Int)
+                || right_type != Type::BuiltIn(BuiltInType::Int)
+            {
                 return Err(anyhow::anyhow!(
                     "expected both operands of {:?} to be of type int, but got {:?} and {:?}",
                     op,
@@ -317,7 +337,7 @@ fn get_expression_type(
                 ));
             }
 
-            Ok(BuiltInType::Int)
+            Ok(Type::BuiltIn(BuiltInType::Int))
         }
     }
 }
