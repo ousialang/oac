@@ -1,0 +1,9 @@
+struct String {
+	size: I32,
+	capacity: I32,
+}
+
+fun main() -> I32 {
+	s = String struct { size: 0, capacity: 0, }
+	return 0
+}

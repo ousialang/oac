@@ -92,13 +92,21 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
 
     let assembly_path = target_dir.join("assembly.s");
-    std::process::Command::new("qbe")
+    let qbe_output = std::process::Command::new("qbe")
         .arg("-t")
         .arg("arm64_apple")
         .arg("-o")
         .arg(&assembly_path)
         .arg(&qbe_ir_path)
         .output()?;
+
+    if !qbe_output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Compilation of QBE IR to assembly failed: {}",
+            String::from_utf8_lossy(&qbe_output.stderr)
+        ));
+    }
+
     debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
 
     let executable_path = target_dir.join("app");

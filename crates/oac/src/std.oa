@@ -1,0 +1,4 @@
+struct NewString {
+	data: I32,
+	size: I32,
+}

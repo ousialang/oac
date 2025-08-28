@@ -3,13 +3,13 @@ use tracing::trace;
 
 use crate::tokenizer::{TokenData, TokenList};
 
-#[derive(Clone, Debug, Serialize)]
-pub struct TypeDefinition {
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct StructDef {
     pub name: String,
     pub struct_fields: Vec<StructField>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct StructField {
     pub name: String,
     pub ty: String,
@@ -17,7 +17,7 @@ pub struct StructField {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Ast {
-    pub type_definitions: Vec<TypeDefinition>,
+    pub type_definitions: Vec<StructDef>,
     pub top_level_functions: Vec<Function>,
 }
 
@@ -31,6 +31,9 @@ pub struct Function {
 
 #[derive(Clone, Debug, Serialize)]
 pub enum Statement {
+    StructDef {
+        def: StructDef,
+    },
     Conditional {
         condition: Expression,
         body: Vec<Statement>,
@@ -57,6 +60,11 @@ pub enum Expression {
     Variable(String),
     Call(String, Vec<Expression>),
     BinOp(Op, Box<Expression>, Box<Expression>),
+    FieldAccess(Box<Expression>, String),
+    StructValue {
+        struct_name: String,
+        field_values: Vec<(String, Expression)>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -257,7 +265,7 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
     Ok(parameters)
 }
 
-fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TypeDefinition> {
+fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<StructDef> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("struct".to_string()),
         "expected 'struct' keyword"
@@ -318,7 +326,7 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TypeD
         }
     }
 
-    Ok(TypeDefinition {
+    Ok(StructDef {
         name,
         struct_fields,
     })
@@ -435,13 +443,60 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
     Ok(ast)
 }
 
+fn parse_struct_value(
+    tokens: &mut Vec<TokenData>,
+    struct_name: String,
+) -> anyhow::Result<Expression> {
+    tokens.remove(0);
+    assert_eq!(
+        tokens.remove(0),
+        TokenData::Parenthesis {
+            opening: '{',
+            is_opening: true,
+        }
+    );
+
+    let mut fields = vec![];
+    while tokens.get(0)
+        != Some(&TokenData::Parenthesis {
+            opening: '{',
+            is_opening: false,
+        })
+        && tokens.get(0)
+            != Some(&TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            })
+    {
+        trace!(?tokens, "Parsing field");
+        let field_name = match tokens.remove(0) {
+            TokenData::Word(name) => name,
+            _ => return Err(anyhow::anyhow!("expected field name")),
+        };
+        assert_eq!(tokens.remove(0), TokenData::Symbols(":".to_string()));
+
+        fields.push((field_name, parse_expression(tokens, 0)?));
+
+        assert_eq!(tokens.remove(0), TokenData::Symbols(",".to_string()));
+    }
+
+    tokens.remove(0);
+
+    Ok(Expression::StructValue {
+        struct_name,
+        field_values: fields,
+    })
+}
+
 fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
     let next = tokens.remove(0);
     match next {
         TokenData::Number(n) => Ok(Expression::Literal(Literal::Int(n))),
         TokenData::String(s) => Ok(Expression::Literal(Literal::String(s))),
         TokenData::Word(s) => {
-            if tokens.get(0)
+            if tokens.get(0) == Some(&TokenData::Word("struct".to_string())) {
+                parse_struct_value(tokens, s)
+            } else if tokens.get(0)
                 == Some(&TokenData::Parenthesis {
                     opening: '(',
                     is_opening: true,
@@ -500,20 +555,35 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
     let mut lhs = parse_atom(tokens)?;
 
     loop {
-        let op = match tokens.get(0) {
-            Some(token) if token.is_op() => Op::from_token(token).unwrap(),
+        match tokens.get(0) {
+            Some(TokenData::Symbols(s)) if s == "." => {
+                tokens.remove(0); // Consume '.'
+                let field_name = expect_identifier(tokens.remove(0))?;
+                lhs = Expression::FieldAccess(Box::new(lhs), field_name);
+                continue;
+            }
+            Some(token) if token.is_op() => {
+                let op = Op::from_token(token).unwrap();
+                let precedence = op.precedence();
+                if precedence >= min_precedence {
+                    tokens.remove(0);
+                    let rhs = parse_expression(tokens, precedence)?;
+                    lhs = Expression::BinOp(op, Box::new(lhs), Box::new(rhs));
+                } else {
+                    break;
+                }
+            }
             _ => break,
-        };
-
-        let precedence = op.precedence();
-        if precedence >= min_precedence {
-            tokens.remove(0);
-            let rhs = parse_expression(tokens, precedence)?;
-            lhs = Expression::BinOp(op, Box::new(lhs), Box::new(rhs));
-        } else {
-            break;
         }
     }
 
     Ok(lhs)
+}
+
+fn expect_identifier(token: TokenData) -> anyhow::Result<String> {
+    if let TokenData::Word(s) = token {
+        Ok(s)
+    } else {
+        Err(anyhow::anyhow!("Expected identifier, found {:?}", token))
+    }
 }

@@ -7,8 +7,8 @@ type QbeAssignName = String;
 
 use crate::{
     builtins::BuiltInType,
-    ir::{self, ResolvedProgram, Type as IrType},
-    parser::{self, Op},
+    ir::{self, ResolvedProgram},
+    parser::{self, Op, StructDef},
 };
 
 fn add_builtins(module: &mut qbe::Module<'static>) {
@@ -184,13 +184,50 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
     }
 }
 
+fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type<'static> {
+    match ty {
+        ir::TypeDef::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
+        ir::TypeDef::BuiltIn(BuiltInType::I64) => qbe::Type::Long,
+        ir::TypeDef::BuiltIn(BuiltInType::String) => qbe::Type::Long,
+        ir::TypeDef::Struct(_) => qbe::Type::Long,
+    }
+}
+
+fn compile_type(module: &mut qbe::Module, program: &ResolvedProgram, type_def: &ir::TypeDef) {
+    trace!("Compiling type {:?}", type_def);
+
+    match type_def {
+        ir::TypeDef::BuiltIn(_) => {} // We generated those already
+        ir::TypeDef::Struct(StructDef {
+            struct_fields,
+            name,
+        }) => {
+            let mut items = vec![];
+            for field in struct_fields.iter() {
+                let field_type = program.type_definitions.get(&field.ty).unwrap();
+                let qbe_type = type_to_qbe(field_type);
+                items.push((qbe_type, 1));
+            }
+            module.add_type(qbe::TypeDef {
+                name: name.to_string(),
+                align: None,
+                items,
+            });
+        }
+    }
+}
+
 pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     let mut module = qbe::Module::default();
 
     add_builtins(&mut module);
 
+    for type_def in ir.type_definitions.values() {
+        compile_type(&mut module, &ir, type_def);
+    }
+
     for func_def in ir.function_definitions.values() {
-        compile_function(&mut module, &ir, func_def);
+        compile_function(&mut module, ir.clone(), func_def.clone());
     }
 
     module
@@ -198,17 +235,35 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
 
 fn compile_statement(
     module: &mut qbe::Module<'static>,
-    qbe_func: &mut qbe::Function,
+    qbe_func: &mut qbe::Function<'static>,
     statement: &parser::Statement,
-    program: &ResolvedProgram,
+    program: ResolvedProgram,
     variables: &mut Variables,
 ) {
     match statement {
+        parser::Statement::StructDef { def } => {
+            let struct_type = program.type_definitions.get(&def.name).unwrap();
+            if let ir::TypeDef::Struct(s) = struct_type {
+                module.add_type(qbe::TypeDef {
+                    name: s.name.to_string(),
+                    align: None,
+                    items: s
+                        .struct_fields
+                        .iter()
+                        .map(|field| {
+                            let field_type = program.type_definitions.get(&field.ty).unwrap();
+                            (type_to_qbe(field_type), 1)
+                        })
+                        .collect(),
+                });
+            }
+        }
         parser::Statement::Conditional { condition, body } => {
             let start_label = new_id();
             let end_block_label = new_id();
 
-            let condition_var = compile_expr(module, qbe_func, &condition, program, variables).0;
+            let condition_var =
+                compile_expr(module, qbe_func, &condition, program.clone(), variables).0;
 
             qbe_func.add_instr(qbe::Instr::Jnz(
                 qbe::Value::Temporary(condition_var),
@@ -218,7 +273,7 @@ fn compile_statement(
 
             qbe_func.add_block(&start_label);
             for statement in body {
-                compile_statement(module, qbe_func, statement, program, variables);
+                compile_statement(module, qbe_func, statement, program.clone(), variables);
             }
 
             qbe_func.add_block(&end_block_label);
@@ -229,7 +284,8 @@ fn compile_statement(
             let end_block_label = new_id();
 
             qbe_func.add_block(condition_label.clone());
-            let condition_var = compile_expr(module, qbe_func, &condition, program, variables).0;
+            let condition_var =
+                compile_expr(module, qbe_func, &condition, program.clone(), variables).0;
 
             qbe_func.add_instr(qbe::Instr::Jnz(
                 qbe::Value::Temporary(condition_var),
@@ -239,21 +295,21 @@ fn compile_statement(
 
             qbe_func.add_block(&start_label);
             for statement in body {
-                compile_statement(module, qbe_func, statement, program, variables);
+                compile_statement(module, qbe_func, statement, program.clone(), variables);
             }
             qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
 
             qbe_func.add_block(&end_block_label);
         }
         parser::Statement::Return { expr } => {
-            let expr_var = compile_expr(module, qbe_func, &expr, program, variables).0;
+            let expr_var = compile_expr(module, qbe_func, &expr, program.clone(), variables).0;
             trace!(%expr_var, "Emitting return instruction");
             qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
         }
         parser::Statement::Assign { variable, value } => {
             trace!(%variable, "Compiling assignment");
 
-            let value_var = compile_expr(module, qbe_func, &value, program, variables);
+            let value_var = compile_expr(module, qbe_func, &value, program.clone(), variables);
             if let Some(existing_var) = variables.get(variable.as_str()) {
                 qbe_func.assign_instr(
                     qbe::Value::Temporary(existing_var.0.clone()),
@@ -264,35 +320,36 @@ fn compile_statement(
             variables.insert(variable.clone(), value_var);
         }
         parser::Statement::Expression { expr } => {
-            compile_expr(module, qbe_func, &expr, program, variables);
+            compile_expr(module, qbe_func, &expr, program.clone(), variables);
         }
     }
 }
 
 fn compile_function(
     module: &mut qbe::Module<'static>,
-    program: &ResolvedProgram,
-    func_def: &ir::FunctionDefinition,
+    program: ResolvedProgram,
+    func_def: ir::FunctionDefinition,
 ) {
     let qbe_args = func_def
         .sig
         .parameters
         .iter()
-        // TODO: string arguments
-        .map(|param| (qbe::Type::Word, qbe::Value::Temporary(param.name.clone())))
+        .map(|param| {
+            let ty = program.type_definitions.get(&param.ty).unwrap();
+            (type_to_qbe(ty), qbe::Value::Temporary(param.name.clone()))
+        })
         .collect::<Vec<_>>();
 
-    let return_type = match func_def.sig.return_type {
-        IrType::BuiltIn(BuiltInType::I64) | IrType::BuiltIn(BuiltInType::String) => qbe::Type::Long,
-        IrType::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
-        IrType::Struct(_) => todo!(),
-    };
+    let return_type_def = program
+        .type_definitions
+        .get(&func_def.sig.return_type)
+        .unwrap();
 
     let mut qbe_func = qbe::Function::new(
         qbe::Linkage::public(),
         func_def.name.clone(),
         qbe_args,
-        Some(return_type),
+        Some(type_to_qbe(return_type_def)),
     );
 
     qbe_func.add_block("start".to_string());
@@ -304,29 +361,86 @@ fn compile_function(
     }
 
     for statement in &func_def.body {
-        compile_statement(module, &mut qbe_func, statement, program, &mut variables);
+        compile_statement(
+            module,
+            &mut qbe_func,
+            statement,
+            program.clone(),
+            &mut variables,
+        );
     }
 
     module.add_function(qbe_func);
 }
 
 fn new_id() -> String {
-    format!("id{}", uuid::Uuid::now_v7().as_simple())
+    format!(".L{}", uuid::Uuid::now_v7().as_simple())
 }
 
-type Variables = HashMap<String, (QbeAssignName, ir::Type)>;
+type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
 
 fn compile_expr(
     module: &mut qbe::Module<'static>,
-    func: &mut qbe::Function,
+    func: &mut qbe::Function<'static>,
     expr: &parser::Expression,
-    program: &ResolvedProgram,
+    program: ResolvedProgram,
     variables: &mut Variables,
-) -> (QbeAssignName, ir::Type) {
+) -> (QbeAssignName, ir::TypeRef) {
     trace!(?expr, "Compiling expression");
 
     let id = new_id();
     match expr {
+        parser::Expression::FieldAccess(expr, field) => {
+            let (expr_var, expr_type) =
+                compile_expr(module, func, expr, program.clone(), variables);
+            let type_def = program.type_definitions.get(&expr_type).unwrap().clone();
+            let return_type = if let ir::TypeDef::Struct(s) = type_def {
+                s.struct_fields
+                    .iter()
+                    .find(|f| f.name == *field)
+                    .unwrap()
+                    .ty
+                    .clone()
+            } else {
+                panic!("Expected struct type")
+            };
+
+            func.assign_instr(
+                Value::Temporary(id.clone()),
+                type_to_qbe(program.type_definitions.get(&return_type).unwrap()),
+                Instr::Load(
+                    type_to_qbe(program.type_definitions.get(&return_type).unwrap()),
+                    Value::Temporary(format!("{}.{}", expr_var, field)),
+                ),
+            );
+
+            (id, return_type)
+        }
+        parser::Expression::StructValue {
+            struct_name,
+            field_values,
+        } => {
+            let struct_def = program.type_definitions.get(struct_name).unwrap();
+            if let ir::TypeDef::Struct(s) = struct_def {
+                for (field_name, field_value) in field_values {
+                    let (field_var, _) =
+                        compile_expr(module, func, field_value, program.clone(), variables);
+                    let field = s
+                        .struct_fields
+                        .iter()
+                        .find(|f| &f.name == field_name)
+                        .unwrap();
+                    let field_type = program.type_definitions.get(&field.ty).unwrap().clone();
+                    func.add_instr(Instr::Store(
+                        type_to_qbe(&field_type),
+                        Value::Temporary(field_var),
+                        Value::Temporary(format!("{}.{}", id, field_name)),
+                    ));
+                }
+            }
+
+            (id, struct_name.to_string())
+        }
         parser::Expression::Literal(parser::Literal::Int(value)) => {
             func.assign_instr(
                 Value::Temporary(id.clone()),
@@ -334,7 +448,7 @@ fn compile_expr(
                 qbe::Instr::Copy(qbe::Value::Const(*value as u64)),
             );
 
-            (id, IrType::BuiltIn(BuiltInType::Int))
+            (id, "I32".to_string())
         }
         parser::Expression::Literal(parser::Literal::String(value)) => {
             let const_name = new_id();
@@ -353,7 +467,7 @@ fn compile_expr(
                 qbe::Instr::Copy(qbe::Value::Global(const_name)),
             );
 
-            (id, IrType::BuiltIn(BuiltInType::String))
+            (id, "String".to_string())
         }
         parser::Expression::Variable(name) => {
             return variables.get(name).unwrap().clone();
@@ -361,7 +475,7 @@ fn compile_expr(
         parser::Expression::Call(name, args) => {
             let mut arg_vars = vec![];
             for arg in args {
-                let arg_var = compile_expr(module, func, arg, program, variables);
+                let arg_var = compile_expr(module, func, arg, program.clone(), variables);
                 arg_vars.push(arg_var);
             }
 
@@ -370,35 +484,29 @@ fn compile_expr(
                 arg_vars
                     .iter()
                     .map(|v| {
-                        let qbe_type = match v.1 {
-                            IrType::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
-                            IrType::BuiltIn(BuiltInType::I64)
-                            | IrType::BuiltIn(BuiltInType::String) => qbe::Type::Long,
-                            IrType::Struct(_) => todo!(),
-                        };
+                        let type_def = program.type_definitions.get(&v.1).unwrap();
+                        let qbe_type = type_to_qbe(type_def);
                         (qbe_type, qbe::Value::Temporary(v.0.clone()))
                     })
                     .collect::<Vec<_>>(),
                 None,
             );
 
-            let sig = program.function_sigs.get(name).unwrap();
-
-            let tmp_id_type = match sig.return_type {
-                IrType::BuiltIn(BuiltInType::I64) | IrType::BuiltIn(BuiltInType::String) => {
-                    qbe::Type::Long
-                }
-                IrType::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
-                IrType::Struct(_) => todo!(),
-            };
+            let sig = program.function_sigs.get(name).unwrap().clone();
+            let return_type_def = program
+                .type_definitions
+                .get(&sig.return_type)
+                .unwrap()
+                .clone();
+            let tmp_id_type = type_to_qbe(&return_type_def);
 
             func.assign_instr(Value::Temporary(id.clone()), tmp_id_type, instr);
 
             (id, sig.return_type.clone())
         }
         parser::Expression::BinOp(op, left, right) => {
-            let left_var = compile_expr(module, func, left, program, variables).0;
-            let right_var = compile_expr(module, func, right, program, variables).0;
+            let left_var = compile_expr(module, func, left, program.clone(), variables).0;
+            let right_var = compile_expr(module, func, right, program.clone(), variables).0;
 
             let instr = match op {
                 Op::Eq => qbe::Instr::Cmp(
@@ -455,24 +563,43 @@ fn compile_expr(
                 ),
             };
 
-            func.assign_instr(Value::Temporary(id.clone()), Type::Word, instr);
+            func.assign_instr(qbe::Value::Temporary(id.clone()), qbe::Type::Word, instr);
 
-            (id, IrType::BuiltIn(BuiltInType::Int))
+            (id, "I32".to_string())
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use crate::{compile, ir, parser::parse, tokenizer::tokenize, Build};
+    use std::{fs, path::Path};
 
-    use crate::{compile, Build};
+    use super::compile as compile_qbe;
+
+    fn compile_and_compare(fixture_name: &str) {
+        let path_str = format!("crates/oac/execution_tests/{}.oa", fixture_name);
+        let path = Path::new(&path_str);
+        let file_contents = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("Could not read test fixture: {}", path.display()));
+
+        let tokens = tokenize(file_contents).unwrap();
+        let program = parse(tokens).unwrap();
+        let ir = ir::resolve(program).unwrap();
+
+        let qbe_module = compile_qbe(ir);
+
+        let qbe_ir = format!("{}", qbe_module);
+        insta::assert_snapshot!(qbe_ir);
+    }
 
     #[test]
     fn execution_tests() {
         let test_files = fs::read_dir("execution_tests").unwrap();
 
         for path in test_files {
+            println!("Testing {}", path.as_ref().unwrap().path().display());
+
             let path = path.unwrap().path();
             let tmp = tempfile::tempdir().unwrap();
 

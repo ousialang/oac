@@ -31,12 +31,12 @@ pub fn libc_type_signatures() -> Vec<LibcTypeSignature> {
 #[serde(rename_all = "camelCase")]
 pub struct LibcTypeSignature {
     pub name: String,
-    pub return_type: BuiltInType,
+    pub return_type: String,
     pub params: Vec<LibcTypeSignatureParam>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct LibcTypeSignatureParam {
     pub name: String,
-    pub r#type: BuiltInType,
+    pub r#type: String,
 }
