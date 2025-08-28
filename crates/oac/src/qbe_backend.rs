@@ -14,7 +14,7 @@ type QbeAssignName = String;
 struct CodegenCtx {
     module: qbe::Module<'static>,
     resolved: Arc<ResolvedProgram>,
-    qbe_typedefs_by_name: HashMap<String, qbe::TypeDef<'static>>,
+    qbe_types_by_name: HashMap<String, qbe::Type<'static>>,
 }
 
 fn add_builtins(ctx: &mut CodegenCtx) {
@@ -188,6 +188,13 @@ fn add_builtins(ctx: &mut CodegenCtx) {
 
         ctx.module.add_function(print_str);
     }
+
+    ctx.qbe_types_by_name
+        .insert("I32".to_string(), qbe::Type::Word);
+    ctx.qbe_types_by_name
+        .insert("I64".to_string(), qbe::Type::Long);
+    ctx.qbe_types_by_name
+        .insert("String".to_string(), qbe::Type::Long);
 }
 
 fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type<'static> {
@@ -221,7 +228,9 @@ fn compile_type(ctx: &mut CodegenCtx, type_def: &ir::TypeDef) {
             };
 
             ctx.module.add_type(typedef.clone());
-            ctx.qbe_typedefs_by_name.insert(name.to_string(), typedef);
+            // TODO: instead in the hashmap once i figure out the lifetime issue.
+            //ctx.qbe_types_by_name
+            //    .insert(name.to_string(), qbe::Type::Aggregate(&typedef));
         }
     }
 }
@@ -230,7 +239,7 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     let mut ctx = CodegenCtx {
         module: qbe::Module::default(),
         resolved: Arc::new(ir),
-        qbe_typedefs_by_name: HashMap::new(),
+        qbe_types_by_name: HashMap::new(),
     };
 
     add_builtins(&mut ctx);
@@ -341,6 +350,7 @@ fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
         .parameters
         .iter()
         .map(|param| {
+            // FIXME: read from the hashmap instead of rebuilding the type.
             let ty = ctx.resolved.type_definitions.get(&param.ty).unwrap();
             (type_to_qbe(ty), qbe::Value::Temporary(param.name.clone()))
         })
