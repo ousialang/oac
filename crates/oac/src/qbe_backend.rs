@@ -3,17 +3,18 @@ use std::{collections::HashMap, sync::Arc, vec};
 use qbe::*;
 use tracing::trace;
 
-type QbeAssignName = String;
-
 use crate::{
     builtins::BuiltInType,
     ir::{self, ResolvedProgram},
     parser::{self, Op, StructDef},
 };
 
+type QbeAssignName = String;
+
 struct CodegenCtx {
     module: qbe::Module<'static>,
     resolved: Arc<ResolvedProgram>,
+    qbe_typedefs_by_name: HashMap<String, qbe::TypeDef<'static>>,
 }
 
 fn add_builtins(ctx: &mut CodegenCtx) {
@@ -213,11 +214,14 @@ fn compile_type(ctx: &mut CodegenCtx, type_def: &ir::TypeDef) {
                 let qbe_type = type_to_qbe(field_type);
                 items.push((qbe_type, 1));
             }
-            ctx.module.add_type(qbe::TypeDef {
+            let typedef = qbe::TypeDef {
                 name: name.to_string(),
                 align: None,
                 items,
-            });
+            };
+
+            ctx.module.add_type(typedef.clone());
+            ctx.qbe_typedefs_by_name.insert(name.to_string(), typedef);
         }
     }
 }
@@ -226,6 +230,7 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
     let mut ctx = CodegenCtx {
         module: qbe::Module::default(),
         resolved: Arc::new(ir),
+        qbe_typedefs_by_name: HashMap::new(),
     };
 
     add_builtins(&mut ctx);
