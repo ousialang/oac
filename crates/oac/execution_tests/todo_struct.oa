@@ -4,6 +4,7 @@ struct Foo {
 }
 
 fun main() -> I32 {
+	//s = Foo struct { a: 0, b: 0, }
 	print_str("Hello, world!")
 	return 0
 }
