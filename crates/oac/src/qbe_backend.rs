@@ -11,7 +11,11 @@ use crate::{
     parser::{self, Op, StructDef},
 };
 
-fn add_builtins(module: &mut qbe::Module<'static>) {
+struct CodegenCtx {
+    module: qbe::Module<'static>,
+}
+
+fn add_builtins(ctx: &mut CodegenCtx) {
     {
         let mut sum = qbe::Function::new(
             qbe::Linkage::public(),
@@ -35,7 +39,7 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
         );
         sum.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
 
-        module.add_function(sum);
+        ctx.module.add_function(sum);
     }
 
     {
@@ -60,7 +64,7 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
             ),
         );
         sub.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
-        module.add_function(sub);
+        ctx.module.add_function(sub);
     }
 
     {
@@ -87,7 +91,7 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
             ),
         );
         eq.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
-        module.add_function(eq);
+        ctx.module.add_function(eq);
     }
 
     {
@@ -114,11 +118,11 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
             ),
         );
         lt.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
-        module.add_function(lt);
+        ctx.module.add_function(lt);
     }
 
     {
-        module.add_data(qbe::DataDef::new(
+        ctx.module.add_data(qbe::DataDef::new(
             Linkage::private(),
             "integer_fmt".to_string(),
             None,
@@ -148,11 +152,11 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
         ));
         print.add_instr(Instr::Ret(Some(Value::Const(0))));
 
-        module.add_function(print);
+        ctx.module.add_function(print);
     }
 
     {
-        module.add_data(qbe::DataDef::new(
+        ctx.module.add_data(qbe::DataDef::new(
             Linkage::private(),
             "string_fmt".to_string(),
             None,
@@ -180,7 +184,7 @@ fn add_builtins(module: &mut qbe::Module<'static>) {
         ));
         print_str.add_instr(Instr::Ret(Some(Value::Const(0))));
 
-        module.add_function(print_str);
+        ctx.module.add_function(print_str);
     }
 }
 
@@ -193,7 +197,7 @@ fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type<'static> {
     }
 }
 
-fn compile_type(module: &mut qbe::Module, program: &ResolvedProgram, type_def: &ir::TypeDef) {
+fn compile_type(ctx: &mut CodegenCtx, program: &ResolvedProgram, type_def: &ir::TypeDef) {
     trace!("Compiling type {:?}", type_def);
 
     match type_def {
@@ -208,7 +212,7 @@ fn compile_type(module: &mut qbe::Module, program: &ResolvedProgram, type_def: &
                 let qbe_type = type_to_qbe(field_type);
                 items.push((qbe_type, 1));
             }
-            module.add_type(qbe::TypeDef {
+            ctx.module.add_type(qbe::TypeDef {
                 name: name.to_string(),
                 align: None,
                 items,
@@ -218,23 +222,25 @@ fn compile_type(module: &mut qbe::Module, program: &ResolvedProgram, type_def: &
 }
 
 pub fn compile(ir: ResolvedProgram) -> qbe::Module<'static> {
-    let mut module = qbe::Module::default();
+    let mut ctx = CodegenCtx {
+        module: qbe::Module::default(),
+    };
 
-    add_builtins(&mut module);
+    add_builtins(&mut ctx);
 
     for type_def in ir.type_definitions.values() {
-        compile_type(&mut module, &ir, type_def);
+        compile_type(&mut ctx, &ir, type_def);
     }
 
     for func_def in ir.function_definitions.values() {
-        compile_function(&mut module, ir.clone(), func_def.clone());
+        compile_function(&mut ctx, ir.clone(), func_def.clone());
     }
 
-    module
+    ctx.module
 }
 
 fn compile_statement(
-    module: &mut qbe::Module<'static>,
+    ctx: &mut CodegenCtx,
     qbe_func: &mut qbe::Function<'static>,
     statement: &parser::Statement,
     program: ResolvedProgram,
@@ -244,7 +250,7 @@ fn compile_statement(
         parser::Statement::StructDef { def } => {
             let struct_type = program.type_definitions.get(&def.name).unwrap();
             if let ir::TypeDef::Struct(s) = struct_type {
-                module.add_type(qbe::TypeDef {
+                ctx.module.add_type(qbe::TypeDef {
                     name: s.name.to_string(),
                     align: None,
                     items: s
@@ -263,7 +269,7 @@ fn compile_statement(
             let end_block_label = new_id();
 
             let condition_var =
-                compile_expr(module, qbe_func, &condition, program.clone(), variables).0;
+                compile_expr(ctx, qbe_func, &condition, program.clone(), variables).0;
 
             qbe_func.add_instr(qbe::Instr::Jnz(
                 qbe::Value::Temporary(condition_var),
@@ -273,7 +279,7 @@ fn compile_statement(
 
             qbe_func.add_block(&start_label);
             for statement in body {
-                compile_statement(module, qbe_func, statement, program.clone(), variables);
+                compile_statement(ctx, qbe_func, statement, program.clone(), variables);
             }
 
             qbe_func.add_block(&end_block_label);
@@ -285,7 +291,7 @@ fn compile_statement(
 
             qbe_func.add_block(condition_label.clone());
             let condition_var =
-                compile_expr(module, qbe_func, &condition, program.clone(), variables).0;
+                compile_expr(ctx, qbe_func, &condition, program.clone(), variables).0;
 
             qbe_func.add_instr(qbe::Instr::Jnz(
                 qbe::Value::Temporary(condition_var),
@@ -295,21 +301,21 @@ fn compile_statement(
 
             qbe_func.add_block(&start_label);
             for statement in body {
-                compile_statement(module, qbe_func, statement, program.clone(), variables);
+                compile_statement(ctx, qbe_func, statement, program.clone(), variables);
             }
             qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
 
             qbe_func.add_block(&end_block_label);
         }
         parser::Statement::Return { expr } => {
-            let expr_var = compile_expr(module, qbe_func, &expr, program.clone(), variables).0;
+            let expr_var = compile_expr(ctx, qbe_func, &expr, program.clone(), variables).0;
             trace!(%expr_var, "Emitting return instruction");
             qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
         }
         parser::Statement::Assign { variable, value } => {
             trace!(%variable, "Compiling assignment");
 
-            let value_var = compile_expr(module, qbe_func, &value, program.clone(), variables);
+            let value_var = compile_expr(ctx, qbe_func, &value, program.clone(), variables);
             if let Some(existing_var) = variables.get(variable.as_str()) {
                 qbe_func.assign_instr(
                     qbe::Value::Temporary(existing_var.0.clone()),
@@ -320,13 +326,13 @@ fn compile_statement(
             variables.insert(variable.clone(), value_var);
         }
         parser::Statement::Expression { expr } => {
-            compile_expr(module, qbe_func, &expr, program.clone(), variables);
+            compile_expr(ctx, qbe_func, &expr, program.clone(), variables);
         }
     }
 }
 
 fn compile_function(
-    module: &mut qbe::Module<'static>,
+    ctx: &mut CodegenCtx,
     program: ResolvedProgram,
     func_def: ir::FunctionDefinition,
 ) {
@@ -362,7 +368,7 @@ fn compile_function(
 
     for statement in &func_def.body {
         compile_statement(
-            module,
+            ctx,
             &mut qbe_func,
             statement,
             program.clone(),
@@ -370,7 +376,7 @@ fn compile_function(
         );
     }
 
-    module.add_function(qbe_func);
+    ctx.module.add_function(qbe_func);
 }
 
 fn new_id() -> String {
@@ -380,7 +386,7 @@ fn new_id() -> String {
 type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
 
 fn compile_expr(
-    module: &mut qbe::Module<'static>,
+    ctx: &mut CodegenCtx,
     func: &mut qbe::Function<'static>,
     expr: &parser::Expression,
     program: ResolvedProgram,
@@ -391,8 +397,7 @@ fn compile_expr(
     let id = new_id();
     match expr {
         parser::Expression::FieldAccess(expr, field) => {
-            let (expr_var, expr_type) =
-                compile_expr(module, func, expr, program.clone(), variables);
+            let (expr_var, expr_type) = compile_expr(ctx, func, expr, program.clone(), variables);
             let type_def = program.type_definitions.get(&expr_type).unwrap().clone();
             let return_type = if let ir::TypeDef::Struct(s) = type_def {
                 s.struct_fields
@@ -424,7 +429,7 @@ fn compile_expr(
             if let ir::TypeDef::Struct(s) = struct_def {
                 for (field_name, field_value) in field_values {
                     let (field_var, _) =
-                        compile_expr(module, func, field_value, program.clone(), variables);
+                        compile_expr(ctx, func, field_value, program.clone(), variables);
                     let field = s
                         .struct_fields
                         .iter()
@@ -452,7 +457,7 @@ fn compile_expr(
         }
         parser::Expression::Literal(parser::Literal::String(value)) => {
             let const_name = new_id();
-            module.add_data(qbe::DataDef::new(
+            ctx.module.add_data(qbe::DataDef::new(
                 Linkage::private(),
                 const_name.clone(),
                 None,
@@ -475,7 +480,7 @@ fn compile_expr(
         parser::Expression::Call(name, args) => {
             let mut arg_vars = vec![];
             for arg in args {
-                let arg_var = compile_expr(module, func, arg, program.clone(), variables);
+                let arg_var = compile_expr(ctx, func, arg, program.clone(), variables);
                 arg_vars.push(arg_var);
             }
 
@@ -505,8 +510,8 @@ fn compile_expr(
             (id, sig.return_type.clone())
         }
         parser::Expression::BinOp(op, left, right) => {
-            let left_var = compile_expr(module, func, left, program.clone(), variables).0;
-            let right_var = compile_expr(module, func, right, program.clone(), variables).0;
+            let left_var = compile_expr(ctx, func, left, program.clone(), variables).0;
+            let right_var = compile_expr(ctx, func, right, program.clone(), variables).0;
 
             let instr = match op {
                 Op::Eq => qbe::Instr::Cmp(
