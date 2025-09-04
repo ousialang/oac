@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-qbe = { git = "https://github.com/neysofu/qbe-rs.git", branch = "main" }
+qbe = { path = "../qbe-rs" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 thiserror = "1"

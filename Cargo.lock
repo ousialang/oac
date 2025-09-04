@@ -319,8 +319,7 @@ dependencies = [
 
 [[package]]
 name = "qbe"
-version = "2.2.0"
-source = "git+https://github.com/neysofu/qbe-rs.git?branch=main#7cca79295a4127dd3b45cb1a12f6a6f58333502e"
+version = "2.5.0"
 
 [[package]]
 name = "quote"
