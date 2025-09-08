@@ -1,7 +1,5 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+expression: output
 ---
-COMPILATION ERROR
-
-expected statement instead of Some(Parenthesis { opening: '{', is_opening: true })
+10

@@ -257,6 +257,17 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
     );
 
     program.function_sigs.insert(
+        "i32_to_i64".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "a".to_string(),
+                ty: "I32".to_string(),
+            }],
+            return_type: "I64".to_string(),
+        },
+    );
+
+    program.function_sigs.insert(
         "print_str".to_string(),
         FunctionSignature {
             parameters: vec![FunctionParameter {

@@ -1,0 +1,10 @@
+struct NewString {
+	ptr: I64,
+	len: I64,
+}
+
+fun main() -> I32 {
+	s = NewString struct { ptr: i32_to_i64(10), len: i32_to_i64(1000), }
+	print(s.ptr)
+	return 0
+}

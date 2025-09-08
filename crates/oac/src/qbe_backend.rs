@@ -159,6 +159,24 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     }
 
     {
+        let mut f = Function::new(
+            Linkage::private(),
+            "i32_to_i64".to_string(),
+            vec![(qbe::Type::Word, qbe::Value::Temporary("a".to_string()))],
+            Some(Type::Long),
+        );
+        f.add_block("start".to_string());
+        let long = new_id(&["long"]);
+        f.assign_instr(
+            Value::Temporary(long.to_string()),
+            qbe::Type::Long,
+            Instr::Extub(Value::Temporary("a".to_string())),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(long))));
+        ctx.module.add_function(f);
+    }
+
+    {
         ctx.module.add_data(qbe::DataDef::new(
             Linkage::private(),
             "string_fmt".to_string(),
