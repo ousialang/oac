@@ -2,4 +2,6 @@
 source: crates/oac/src/qbe_backend.rs
 expression: output
 ---
+10
 1000
+1010

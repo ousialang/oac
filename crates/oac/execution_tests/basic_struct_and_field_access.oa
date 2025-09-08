@@ -5,6 +5,8 @@ struct Foo {
 
 fun main() -> I32 {
 	s = Foo struct { a: 10, b: 1000, }
+	print(s.a)
 	print(s.b)
-	return 0
+	print(s.a + s.b)
+	return s.a + s.b
 }
