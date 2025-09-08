@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+assertion_line: 679
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+Compilation of QBE IR to assembly failed: qbe:/var/folders/_p/sxbwvhbn2616zrnxntrthkyw0000gn/T/.tmpA7Q7Er/target/oac/ir.qbe:45: invalid type for second operand %.L_field_offset_a_019928bb83e07591bd2e0fb6249a8ceb in storew

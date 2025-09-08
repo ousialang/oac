@@ -320,8 +320,16 @@ fn get_expression_type(
     type_definitions: &HashMap<String, TypeDef>,
 ) -> anyhow::Result<TypeRef> {
     match expr {
-        Expression::FieldAccess(struct_expr, field_name) => {
-            let struct_type = get_expression_type(struct_expr, var_types, fns, type_definitions)?;
+        Expression::FieldAccess {
+            struct_variable,
+            field: field_name,
+        } => {
+            let struct_type = get_expression_type(
+                &Expression::Variable(struct_variable.clone()),
+                var_types,
+                fns,
+                type_definitions,
+            )?;
             let type_def = type_definitions
                 .get(&struct_type)
                 .ok_or_else(|| anyhow::anyhow!("unknown type {}", struct_type))?;

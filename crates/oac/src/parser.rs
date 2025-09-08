@@ -60,7 +60,10 @@ pub enum Expression {
     Variable(String),
     Call(String, Vec<Expression>),
     BinOp(Op, Box<Expression>, Box<Expression>),
-    FieldAccess(Box<Expression>, String),
+    FieldAccess {
+        struct_variable: String,
+        field: String,
+    },
     StructValue {
         struct_name: String,
         field_values: Vec<(String, Expression)>,
@@ -557,9 +560,17 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
     loop {
         match tokens.get(0) {
             Some(TokenData::Symbols(s)) if s == "." => {
+                trace!("Parsing field access {:?}", lhs);
                 tokens.remove(0); // Consume '.'
                 let field_name = expect_identifier(tokens.remove(0))?;
-                lhs = Expression::FieldAccess(Box::new(lhs), field_name);
+                let struct_variable = match lhs {
+                    Expression::Variable(s) => s,
+                    _ => panic!("Expected field access or variable"),
+                };
+                lhs = Expression::FieldAccess {
+                    struct_variable,
+                    field: field_name,
+                };
                 continue;
             }
             Some(token) if token.is_op() => {

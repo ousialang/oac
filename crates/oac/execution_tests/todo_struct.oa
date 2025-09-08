@@ -4,7 +4,7 @@ struct Foo {
 }
 
 fun main() -> I32 {
-	//s = Foo struct { a: 0, b: 0, }
-	print_str("Hello, world!")
+	s = Foo struct { a: 10, b: 1000, }
+	print(s.b)
 	return 0
 }

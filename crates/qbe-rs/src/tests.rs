@@ -7,8 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::*;
+use std::sync::Arc;
 
+use super::*;
 #[test]
 fn qbe_value() {
     let val = Value::Temporary("temp42".into());
@@ -153,7 +154,7 @@ fn typedef() {
     let formatted = format!("{typedef}");
     assert_eq!(formatted, "type :person = { l, w 2, b }");
 
-    let ty = Type::Aggregate(&typedef);
+    let ty = Type::Aggregate(Arc::new(typedef));
     let formatted = format!("{ty}");
     assert_eq!(formatted, ":person");
 }
@@ -176,7 +177,7 @@ fn type_size() {
         align: None,
         items: vec![(Type::Long, 1), (Type::Word, 2), (Type::Byte, 1)],
     };
-    let aggregate = Type::Aggregate(&typedef);
+    let aggregate = Type::Aggregate(Arc::new(typedef));
     assert_eq!(aggregate.size(), 24);
 }
 
@@ -187,7 +188,7 @@ fn type_size_nested_aggregate() {
         align: None,
         items: vec![(Type::Long, 2)],
     };
-    let inner_aggregate = Type::Aggregate(&inner);
+    let inner_aggregate = Type::Aggregate(Arc::new(inner.clone()));
 
     assert!(inner_aggregate.size() == 16);
 
@@ -198,10 +199,10 @@ fn type_size_nested_aggregate() {
             (Type::Long, 1),
             (Type::Word, 2),
             (Type::Byte, 1),
-            (Type::Aggregate(&inner), 1),
+            (Type::Aggregate(Arc::new(inner.clone())), 1),
         ],
     };
-    let aggregate = Type::Aggregate(&typedef);
+    let aggregate = Type::Aggregate(Arc::new(typedef));
 
     assert_eq!(aggregate.size(), 40);
 }
@@ -219,7 +220,7 @@ fn type_into_abi() {
         align: None,
         items: Vec::new(),
     };
-    unchanged(Type::Aggregate(&typedef));
+    unchanged(Type::Aggregate(Arc::new(typedef)));
 
     // Extended types are transformed into closest base types
     assert_eq!(Type::Byte.into_abi(), Type::Word);
@@ -251,7 +252,7 @@ fn type_into_base() {
         align: None,
         items: Vec::new(),
     };
-    assert_eq!(Type::Aggregate(&typedef).into_base(), Type::Long);
+    assert_eq!(Type::Aggregate(Arc::new(typedef)).into_base(), Type::Long);
 }
 
 #[test]
@@ -732,21 +733,21 @@ fn assign_instr_aggregate_type_coercion() {
         items: Vec::new(),
     };
 
-    let typedef = TypeDef {
+    let typedef = Arc::new(TypeDef {
         name: "person".into(),
         align: None,
         items: vec![(Type::Long, 1), (Type::Word, 2), (Type::Byte, 1)],
-    };
+    });
 
     block.assign_instr(
         Value::Temporary("human".into()),
-        Type::Aggregate(&typedef),
-        Instr::Alloc8(Type::Aggregate(&typedef).size()),
+        Type::Aggregate(typedef.clone()),
+        Instr::Alloc8(Type::Aggregate(typedef.clone()).size()),
     );
 
     block.assign_instr(
         Value::Temporary("result".into()),
-        Type::Aggregate(&typedef),
+        Type::Aggregate(typedef.clone()),
         Instr::Call("new_person".into(), vec![], None),
     );
 

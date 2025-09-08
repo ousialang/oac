@@ -1,3 +1,4 @@
+// Copyright 2025 Filippo Costa
 // Copyright 2022 Garrit Franke
 // Copyright 2021 Alexey Yerin
 //
@@ -7,95 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! # QBE Rust
-//!
-//! A Rust library for programmatically generating QBE Intermediate Language code.
-//!
-//! [QBE](https://c9x.me/compile/) is a compiler backend that transforms simple intermediate
-//! representation (IR) into executable machine code. This library provides Rust data structures
-//! and functions to generate valid QBE IL.
-//!
-//! ## Basic Example
-//!
-//! ```rust
-//! use qbe::{Module, Function, Linkage, Type, Value, Instr};
-//!
-//! // Create a new module
-//! let mut module = Module::new();
-//!
-//! // Add a simple function that returns the sum of two integers
-//! let mut func = Function::new(
-//!     Linkage::public(),
-//!     "add",
-//!     vec![
-//!         (Type::Word, Value::Temporary("a".to_string())),
-//!         (Type::Word, Value::Temporary("b".to_string())),
-//!     ],
-//!     Some(Type::Word),
-//! );
-//!
-//! // Add a block to the function
-//! let mut block = func.add_block("start");
-//!
-//! // Add two arguments and store result in "sum"
-//! block.assign_instr(
-//!     Value::Temporary("sum".to_string()),
-//!     Type::Word,
-//!     Instr::Add(
-//!         Value::Temporary("a".to_string()),
-//!         Value::Temporary("b".to_string()),
-//!     ),
-//! );
-//!
-//! // Return the sum
-//! block.add_instr(Instr::Ret(Some(Value::Temporary("sum".to_string()))));
-//!
-//! // Add the function to the module
-//! module.add_function(func);
-//!
-//! // Generate QBE IL code
-//! println!("{}", module);
-//! ```
-//!
-//! This generates the following QBE IL:
-//! ```ssa
-//! export function w $add(w %a, w %b) {
-//! @start
-//!     %sum =w add %a, %b
-//!     ret %sum
-//! }
-//! ```
-
 use std::fmt;
+use std::sync::Arc;
 
 #[cfg(test)]
 mod tests;
 
-/// QBE comparison operations used in conditional instructions.
-///
-/// The result of a comparison is 1 if the condition is true, and 0 if false.
-///
-/// # Examples
-///
-/// ```rust
-/// use qbe::{Cmp, Instr, Type, Value};
-///
-/// // Compare if %a is less than %b (signed comparison)
-/// let slt_instr = Instr::Cmp(
-///     Type::Word,
-///     Cmp::Slt,
-///     Value::Temporary("a".to_string()),
-///     Value::Temporary("b".to_string()),
-/// );
-///
-/// // Check if two values are equal
-/// let eq_instr = Instr::Cmp(
-///     Type::Word,
-///     Cmp::Eq,
-///     Value::Temporary("x".to_string()),
-///     Value::Const(0),
-/// );
-/// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Copy)]
 pub enum Cmp {
     /// Returns 1 if first value is less than second, respecting signedness
@@ -124,64 +42,8 @@ pub enum Cmp {
     Uge,
 }
 
-/// QBE instructions representing operations in the intermediate language.
-///
-/// # Examples
-///
-/// ## Arithmetic Operations
-/// ```rust
-/// use qbe::{Instr, Value};
-///
-/// // Addition: %result = %a + %b
-/// let add = Instr::Add(
-///     Value::Temporary("a".to_string()),
-///     Value::Temporary("b".to_string()),
-/// );
-///
-/// // Multiplication: %result = %x * 5
-/// let mul = Instr::Mul(
-///     Value::Temporary("x".to_string()),
-///     Value::Const(5),
-/// );
-/// ```
-///
-/// ## Memory Operations
-/// ```rust
-/// use qbe::{Instr, Type, Value};
-///
-/// // Allocate 8 bytes on the stack with 8-byte alignment
-/// let alloc = Instr::Alloc8(8);
-///
-/// // Store a word to memory: store %value, %ptr
-/// let store = Instr::Store(
-///     Type::Word,
-///     Value::Temporary("ptr".to_string()),
-///     Value::Temporary("value".to_string()),
-/// );
-///
-/// // Load a word from memory: %result = load %ptr
-/// let load = Instr::Load(
-///     Type::Word,
-///     Value::Temporary("ptr".to_string()),
-/// );
-/// ```
-///
-/// ## Control Flow
-/// ```rust
-/// use qbe::{Instr, Value};
-///
-/// // Conditional jump based on %condition
-/// let branch = Instr::Jnz(
-///     Value::Temporary("condition".to_string()),
-///     "true_branch".to_string(),
-///     "false_branch".to_string(),
-/// );
-///
-/// // Return a value from a function
-/// let ret = Instr::Ret(Some(Value::Temporary("result".to_string())));
-/// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum Instr<'a> {
+pub enum Instr {
     /// Adds values of two temporaries together
     Add(Value, Value),
     /// Subtracts the second value from the first one
@@ -193,7 +55,7 @@ pub enum Instr<'a> {
     /// Returns a remainder from division
     Rem(Value, Value),
     /// Performs a comparion between values
-    Cmp(Type<'a>, Cmp, Value, Value),
+    Cmp(Type, Cmp, Value, Value),
     /// Performs a bitwise AND on values
     And(Value, Value),
     /// Performs a bitwise OR on values
@@ -207,7 +69,7 @@ pub enum Instr<'a> {
     /// Unconditionally jumps to a label
     Jmp(String),
     /// Calls a function
-    Call(String, Vec<(Type<'a>, Value)>, Option<u64>),
+    Call(String, Vec<(Type, Value)>, Option<u64>),
     /// Allocates a 4-byte aligned area on the stack
     Alloc4(u32),
     /// Allocates a 8-byte aligned area on the stack
@@ -216,10 +78,10 @@ pub enum Instr<'a> {
     Alloc16(u128),
     /// Stores a value into memory pointed to by destination.
     /// `(type, destination, value)`
-    Store(Type<'a>, Value, Value),
+    Store(Type, Value, Value),
     /// Loads a value from memory pointed to by source
     /// `(type, source)`
-    Load(Type<'a>, Value),
+    Load(Type, Value),
     /// `(source, destination, n)`
     ///
     /// Copy `n` bytes from the source address to the destination address.
@@ -295,7 +157,7 @@ pub enum Instr<'a> {
     /// Initializes a variable argument list
     Vastart(Value),
     /// Fetches the next argument from a variable argument list
-    Vaarg(Type<'a>, Value),
+    Vaarg(Type, Value),
 
     // Phi instruction
     /// Selects value based on the control flow path into a block.
@@ -306,7 +168,7 @@ pub enum Instr<'a> {
     Hlt,
 }
 
-impl fmt::Display for Instr<'_> {
+impl fmt::Display for Instr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Add(lhs, rhs) => write!(f, "add {lhs}, {rhs}"),
@@ -422,47 +284,8 @@ impl fmt::Display for Instr<'_> {
     }
 }
 
-/// QBE types used to specify the size and representation of values.
-///
-/// QBE has a minimal type system with base types and extended types.
-/// Base types are used for temporaries, while extended types can be used
-/// in aggregate types and data definitions.
-///
-/// # Examples
-///
-/// ```rust
-/// use qbe::Type;
-///
-/// // Base types
-/// let word = Type::Word;     // 32-bit integer
-/// let long = Type::Long;     // 64-bit integer
-/// let single = Type::Single; // 32-bit float
-/// let double = Type::Double; // 64-bit float
-///
-/// // Extended types
-/// let byte = Type::Byte;     // 8-bit value
-/// let halfword = Type::Halfword; // 16-bit value
-///
-/// // Get type sizes in bytes
-/// assert_eq!(word.size(), 4);
-/// assert_eq!(byte.size(), 1);
-/// ```
-///
-/// ## Type Conversions
-///
-/// ```rust
-/// use qbe::Type;
-///
-/// // Convert extended type to corresponding base type
-/// let base = Type::Byte.into_base();
-/// assert_eq!(base, Type::Word);
-///
-/// // Convert to ABI-compatible type for function parameters
-/// let abi = Type::SignedByte.into_abi();
-/// assert_eq!(abi, Type::Word);
-/// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum Type<'a> {
+pub enum Type {
     // Base types
     Word,
     Long,
@@ -481,10 +304,10 @@ pub enum Type<'a> {
     UnsignedHalfword,
 
     /// Aggregate type with a specified name
-    Aggregate(&'a TypeDef<'a>),
+    Aggregate(Arc<TypeDef>),
 }
 
-impl Type<'_> {
+impl Type {
     /// Returns a C ABI type. Extended types are converted to closest base
     /// types
     pub fn into_abi(self) -> Self {
@@ -520,49 +343,20 @@ impl Type<'_> {
             Self::Halfword | Self::SignedHalfword | Self::UnsignedHalfword => 2,
             Self::Word | Self::Single => 4,
             Self::Long | Self::Double => 8,
-            Self::Aggregate(td) => {
-                let mut offset = 0;
-
-                // calculation taken from: https://en.wikipedia.org/wiki/Data_structure_alignment#Computing%20padding
-                for (item, repeat) in td.items.iter() {
-                    let align = item.align();
-                    let size = *repeat as u64 * item.size();
-                    let padding = (align - (offset % align)) % align;
-                    offset += padding + size;
-                }
-
-                let align = self.align();
-                let padding = (align - (offset % align)) % align;
-
-                // size is the final offset with the padding that is left
-                offset + padding
-            }
+            Self::Aggregate(td) => typedef_size(td),
         }
     }
 
     /// Returns byte alignment for values of the type
     pub fn align(&self) -> u64 {
         match self {
-            Self::Aggregate(td) => {
-                if let Some(align) = td.align {
-                    return align;
-                }
-
-                // the alignment of a type is the maximum alignment of its members
-                // when there's no members, the alignment is usuallly defined to be 1.
-                td.items
-                    .iter()
-                    .map(|item| item.0.align())
-                    .max()
-                    .unwrap_or(1)
-            }
-
+            Self::Aggregate(td) => typedef_align(td),
             _ => self.size(),
         }
     }
 }
 
-impl fmt::Display for Type<'_> {
+impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Byte => write!(f, "b"),
@@ -579,6 +373,38 @@ impl fmt::Display for Type<'_> {
             Self::Aggregate(td) => write!(f, ":{}", td.name),
         }
     }
+}
+
+fn typedef_align(td: &TypeDef) -> u64 {
+    if let Some(align) = td.align {
+        return align;
+    }
+
+    // the alignment of a type is the maximum alignment of its members
+    // when there's no members, the alignment is usuallly defined to be 1.
+    td.items
+        .iter()
+        .map(|item| item.0.align())
+        .max()
+        .unwrap_or(1)
+}
+
+fn typedef_size(td: &TypeDef) -> u64 {
+    let mut offset = 0;
+
+    // calculation taken from: https://en.wikipedia.org/wiki/Data_structure_alignment#Computing%20padding
+    for (item, repeat) in td.items.iter() {
+        let align = item.align();
+        let size = *repeat as u64 * item.size();
+        let padding = (align - (offset % align)) % align;
+        offset += padding + size;
+    }
+
+    let align = typedef_align(td);
+    let padding = (align - (offset % align)) % align;
+
+    // size is the final offset with the padding that is left
+    offset + padding
 }
 
 /// QBE value that is accepted by instructions
@@ -604,19 +430,19 @@ impl fmt::Display for Value {
 
 /// QBE data definition
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
-pub struct DataDef<'a> {
+pub struct DataDef {
     pub linkage: Linkage,
     pub name: String,
     pub align: Option<u64>,
-    pub items: Vec<(Type<'a>, DataItem)>,
+    pub items: Vec<(Type, DataItem)>,
 }
 
-impl<'a> DataDef<'a> {
+impl DataDef {
     pub fn new(
         linkage: Linkage,
         name: impl Into<String>,
         align: Option<u64>,
-        items: Vec<(Type<'a>, DataItem)>,
+        items: Vec<(Type, DataItem)>,
     ) -> Self {
         Self {
             linkage,
@@ -627,7 +453,7 @@ impl<'a> DataDef<'a> {
     }
 }
 
-impl fmt::Display for DataDef<'_> {
+impl fmt::Display for DataDef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}data ${} = ", self.linkage, self.name)?;
 
@@ -675,14 +501,14 @@ impl fmt::Display for DataItem {
 
 /// QBE aggregate type definition
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
-pub struct TypeDef<'a> {
+pub struct TypeDef {
     pub name: String,
     pub align: Option<u64>,
     // TODO: Opaque types?
-    pub items: Vec<(Type<'a>, usize)>,
+    pub items: Vec<(Type, usize)>,
 }
 
-impl fmt::Display for TypeDef<'_> {
+impl fmt::Display for TypeDef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "type :{} = ", self.name)?;
         if let Some(align) = self.align {
@@ -707,12 +533,12 @@ impl fmt::Display for TypeDef<'_> {
 
 /// An IR statement
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum Statement<'a> {
-    Assign(Value, Type<'a>, Instr<'a>),
-    Volatile(Instr<'a>),
+pub enum Statement {
+    Assign(Value, Type, Instr),
+    Volatile(Instr),
 }
 
-impl fmt::Display for Statement<'_> {
+impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Assign(temp, ty, instr) => {
@@ -724,69 +550,23 @@ impl fmt::Display for Statement<'_> {
     }
 }
 
-/// A block of QBE instructions with a label.
-///
-/// Blocks are the basic units of control flow in QBE. Each block has a label
-/// that can be the target of jumps, and contains a sequence of instructions.
-/// A block typically ends with a control flow instruction like jump or return.
-///
-/// # Examples
-///
-/// ```rust
-/// use qbe::{Block, BlockItem, Instr, Statement, Type, Value};
-///
-/// // Create a block for a loop body
-/// let mut block = Block {
-///     label: "loop".to_string(),
-///     items: Vec::new(),
-/// };
-///
-/// // Add a helpful comment
-/// block.add_comment("Loop body - increment counter and accumulate sum");
-///
-/// // Increment loop counter: %i = %i + 1
-/// block.assign_instr(
-///     Value::Temporary("i".to_string()),
-///     Type::Word,
-///     Instr::Add(
-///         Value::Temporary("i".to_string()),
-///         Value::Const(1),
-///     ),
-/// );
-///
-/// // Update sum: %sum = %sum + %value
-/// block.assign_instr(
-///     Value::Temporary("sum".to_string()),
-///     Type::Word,
-///     Instr::Add(
-///         Value::Temporary("sum".to_string()),
-///         Value::Temporary("value".to_string()),
-///     ),
-/// );
-///
-/// // Jump to condition check block
-/// block.add_instr(Instr::Jmp("cond".to_string()));
-///
-/// // Check if block ends with a jump (it does)
-/// assert!(block.jumps());
-/// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
-pub struct Block<'a> {
+pub struct Block {
     /// Label before the block
     pub label: String,
 
     /// A list of statements in the block
-    pub items: Vec<BlockItem<'a>>,
+    pub items: Vec<BlockItem>,
 }
 
 /// See [`Block::items`];
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum BlockItem<'a> {
-    Statement(Statement<'a>),
+pub enum BlockItem {
+    Statement(Statement),
     Comment(String),
 }
 
-impl fmt::Display for BlockItem<'_> {
+impl fmt::Display for BlockItem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Statement(stmt) => write!(f, "{stmt}"),
@@ -795,19 +575,19 @@ impl fmt::Display for BlockItem<'_> {
     }
 }
 
-impl<'a> Block<'a> {
+impl Block {
     pub fn add_comment(&mut self, contents: impl Into<String>) {
         self.items.push(BlockItem::Comment(contents.into()));
     }
 
     /// Adds a new instruction to the block
-    pub fn add_instr(&mut self, instr: Instr<'a>) {
+    pub fn add_instr(&mut self, instr: Instr) {
         self.items
             .push(BlockItem::Statement(Statement::Volatile(instr)));
     }
 
     /// Adds a new instruction assigned to a temporary
-    pub fn assign_instr(&mut self, temp: Value, ty: Type<'a>, instr: Instr<'a>) {
+    pub fn assign_instr(&mut self, temp: Value, ty: Type, instr: Instr) {
         let final_type = match instr {
             Instr::Call(_, _, _) => ty,
             _ => ty.into_base(),
@@ -830,7 +610,7 @@ impl<'a> Block<'a> {
     }
 }
 
-impl fmt::Display for Block<'_> {
+impl fmt::Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "@{}", self.label)?;
 
@@ -846,54 +626,8 @@ impl fmt::Display for Block<'_> {
     }
 }
 
-/// A QBE function definition.
-///
-/// A function consists of a name, linkage information, arguments, return type,
-/// and a collection of blocks containing the function's implementation.
-///
-/// # Examples
-///
-/// ```rust
-/// use qbe::{Function, Linkage, Type, Value, Instr, Cmp};
-///
-/// // Create a function that checks if a number is even
-/// let mut is_even = Function::new(
-///     Linkage::public(),
-///     "is_even",
-///     vec![(Type::Word, Value::Temporary("n".to_string()))],
-///     Some(Type::Word), // Returns 1 if even, 0 if odd
-/// );
-///
-/// // Add the start block
-/// let mut start = is_even.add_block("start");
-///
-/// // Calculate n % 2 (by using n & 1)
-/// start.assign_instr(
-///     Value::Temporary("remainder".to_string()),
-///     Type::Word,
-///     Instr::And(
-///         Value::Temporary("n".to_string()),
-///         Value::Const(1),
-///     ),
-/// );
-///
-/// // Check if remainder is 0 (even number)
-/// start.assign_instr(
-///     Value::Temporary("is_zero".to_string()),
-///     Type::Word,
-///     Instr::Cmp(
-///         Type::Word,
-///         Cmp::Eq,
-///         Value::Temporary("remainder".to_string()),
-///         Value::Const(0),
-///     ),
-/// );
-///
-/// // Return the result
-/// start.add_instr(Instr::Ret(Some(Value::Temporary("is_zero".to_string()))));
-/// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
-pub struct Function<'a> {
+pub struct Function {
     /// Function's linkage
     pub linkage: Linkage,
 
@@ -901,22 +635,22 @@ pub struct Function<'a> {
     pub name: String,
 
     /// Function arguments
-    pub arguments: Vec<(Type<'a>, Value)>,
+    pub arguments: Vec<(Type, Value)>,
 
     /// Return type
-    pub return_ty: Option<Type<'a>>,
+    pub return_ty: Option<Type>,
 
     /// Labelled blocks
-    pub blocks: Vec<Block<'a>>,
+    pub blocks: Vec<Block>,
 }
 
-impl<'a> Function<'a> {
+impl Function {
     /// Instantiates an empty function and returns it
     pub fn new(
         linkage: Linkage,
         name: impl Into<String>,
-        arguments: Vec<(Type<'a>, Value)>,
-        return_ty: Option<Type<'a>>,
+        arguments: Vec<(Type, Value)>,
+        return_ty: Option<Type>,
     ) -> Self {
         Function {
             linkage,
@@ -928,7 +662,7 @@ impl<'a> Function<'a> {
     }
 
     /// Adds a new empty block with a specified label and returns a reference to it
-    pub fn add_block(&mut self, label: impl Into<String>) -> &mut Block<'a> {
+    pub fn add_block(&mut self, label: impl Into<String>) -> &mut Block {
         self.blocks.push(Block {
             label: label.into(),
             items: Vec::new(),
@@ -948,7 +682,7 @@ impl<'a> Function<'a> {
     }
 
     /// Adds a new instruction to the last block
-    pub fn add_instr(&mut self, instr: Instr<'a>) {
+    pub fn add_instr(&mut self, instr: Instr) {
         self.blocks
             .last_mut()
             .expect("Last block must be present")
@@ -956,7 +690,7 @@ impl<'a> Function<'a> {
     }
 
     /// Adds a new instruction assigned to a temporary
-    pub fn assign_instr(&mut self, temp: Value, ty: Type<'a>, instr: Instr<'a>) {
+    pub fn assign_instr(&mut self, temp: Value, ty: Type, instr: Instr) {
         self.blocks
             .last_mut()
             .expect("Last block must be present")
@@ -964,7 +698,7 @@ impl<'a> Function<'a> {
     }
 }
 
-impl fmt::Display for Function<'_> {
+impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}function", self.linkage)?;
         if let Some(ty) = &self.return_ty {
@@ -1152,15 +886,15 @@ impl fmt::Display for Linkage {
 /// module.add_function(main);
 /// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
-pub struct Module<'a> {
-    functions: Vec<Function<'a>>,
-    types: Vec<TypeDef<'a>>,
-    data: Vec<DataDef<'a>>,
+pub struct Module {
+    pub functions: Vec<Function>,
+    pub types: Vec<TypeDef>,
+    pub data: Vec<DataDef>,
 }
 
-impl<'a> Module<'a> {
+impl Module {
     /// Creates a new module
-    pub fn new() -> Module<'a> {
+    pub fn new() -> Module {
         Module {
             functions: Vec::new(),
             types: Vec::new(),
@@ -1170,26 +904,26 @@ impl<'a> Module<'a> {
 
     /// Adds a function to the module, returning a reference to it for later
     /// modification
-    pub fn add_function(&mut self, func: Function<'a>) -> &mut Function<'a> {
+    pub fn add_function(&mut self, func: Function) -> &mut Function {
         self.functions.push(func);
         self.functions.last_mut().unwrap()
     }
 
     /// Adds a type definition to the module, returning a reference to it for
     /// later modification
-    pub fn add_type(&mut self, def: TypeDef<'a>) -> &mut TypeDef<'a> {
+    pub fn add_type(&mut self, def: TypeDef) -> &mut TypeDef {
         self.types.push(def);
         self.types.last_mut().unwrap()
     }
 
     /// Adds a data definition to the module
-    pub fn add_data(&mut self, data: DataDef<'a>) -> &mut DataDef<'a> {
+    pub fn add_data(&mut self, data: DataDef) -> &mut DataDef {
         self.data.push(data);
         self.data.last_mut().unwrap()
     }
 }
 
-impl fmt::Display for Module<'_> {
+impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for ty in self.types.iter() {
             writeln!(f, "{ty}")?;
