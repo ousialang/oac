@@ -1,0 +1,12 @@
+fun foo() -> I32 {
+	return 0
+}
+
+fun foo() -> I32 {
+	return 1
+}
+
+fun main() -> I32 {
+	print_str("Hello, world!")
+	return 0
+}

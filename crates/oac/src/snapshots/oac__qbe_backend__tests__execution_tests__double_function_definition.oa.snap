@@ -1,0 +1,7 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+---
+COMPILATION ERROR
+
+failed to insert function signature for foo

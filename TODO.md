@@ -1,0 +1,1 @@
+- Make last comma in `struct` definition optional.

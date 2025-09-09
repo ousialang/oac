@@ -8,6 +8,7 @@ use tracing::trace;
 use crate::{
     builtins::{libc_type_signatures, BuiltInType},
     parser::{self, Ast, Expression, Literal, StructDef},
+    tokenizer,
 };
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -140,7 +141,17 @@ pub struct FunctionDefinition {
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
+pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
+    {
+        let stdlib_source = include_str!("std.oa");
+        let stdlib_tokens = tokenizer::tokenize(stdlib_source.to_string())?;
+        let stdlib_ast = parser::parse(stdlib_tokens)?;
+
+        ast.top_level_functions
+            .extend(stdlib_ast.top_level_functions);
+        ast.type_definitions.extend(stdlib_ast.type_definitions);
+    }
+
     let mut program = ResolvedProgram {
         ast: ast.clone(),
         function_definitions: HashMap::new(),
@@ -150,13 +161,22 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
 
     program
         .type_definitions
-        .insert("I32".to_string(), TypeDef::BuiltIn(BuiltInType::Int));
+        .insert("I32".to_string(), TypeDef::BuiltIn(BuiltInType::Int))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert I32 type definition"))
+        })?;
     program
         .type_definitions
-        .insert("I64".to_string(), TypeDef::BuiltIn(BuiltInType::I64));
+        .insert("I64".to_string(), TypeDef::BuiltIn(BuiltInType::I64))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert I64 type definition"))
+        })?;
     program
         .type_definitions
-        .insert("String".to_string(), TypeDef::BuiltIn(BuiltInType::String));
+        .insert("String".to_string(), TypeDef::BuiltIn(BuiltInType::String))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert String type definition"))
+        })?;
 
     // Built-in functions
 
@@ -177,73 +197,93 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         );
     }
 
-    program.function_sigs.insert(
-        "sub".to_string(),
-        FunctionSignature {
-            parameters: vec![
-                FunctionParameter {
-                    name: "a".to_string(),
-                    ty: "I32".to_string(),
-                },
-                FunctionParameter {
-                    name: "b".to_string(),
-                    ty: "I32".to_string(),
-                },
-            ],
-            return_type: "I32".to_string(),
-        },
-    );
+    program
+        .function_sigs
+        .insert(
+            "sub".to_string(),
+            FunctionSignature {
+                parameters: vec![
+                    FunctionParameter {
+                        name: "a".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                    FunctionParameter {
+                        name: "b".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                ],
+                return_type: "I32".to_string(),
+            },
+        )
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert sub function signature"))
+        })?;
 
-    program.function_sigs.insert(
-        "eq".to_string(),
-        FunctionSignature {
-            parameters: vec![
-                FunctionParameter {
-                    name: "a".to_string(),
-                    ty: "I32".to_string(),
-                },
-                FunctionParameter {
-                    name: "b".to_string(),
-                    ty: "I32".to_string(),
-                },
-            ],
-            return_type: "I32".to_string(),
-        },
-    );
+    program
+        .function_sigs
+        .insert(
+            "eq".to_string(),
+            FunctionSignature {
+                parameters: vec![
+                    FunctionParameter {
+                        name: "a".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                    FunctionParameter {
+                        name: "b".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                ],
+                return_type: "I32".to_string(),
+            },
+        )
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert eq function signature"))
+        })?;
 
-    program.function_sigs.insert(
-        "sum".to_string(),
-        FunctionSignature {
-            parameters: vec![
-                FunctionParameter {
-                    name: "a".to_string(),
-                    ty: "I32".to_string(),
-                },
-                FunctionParameter {
-                    name: "b".to_string(),
-                    ty: "I32".to_string(),
-                },
-            ],
-            return_type: "I32".to_string(),
-        },
-    );
+    program
+        .function_sigs
+        .insert(
+            "sum".to_string(),
+            FunctionSignature {
+                parameters: vec![
+                    FunctionParameter {
+                        name: "a".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                    FunctionParameter {
+                        name: "b".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                ],
+                return_type: "I32".to_string(),
+            },
+        )
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert sum function signature"))
+        })?;
 
-    program.function_sigs.insert(
-        "lt".to_string(),
-        FunctionSignature {
-            parameters: vec![
-                FunctionParameter {
-                    name: "a".to_string(),
-                    ty: "I32".to_string(),
-                },
-                FunctionParameter {
-                    name: "b".to_string(),
-                    ty: "I32".to_string(),
-                },
-            ],
-            return_type: "I32".to_string(),
-        },
-    );
+    program
+        .function_sigs
+        .insert(
+            "lt".to_string(),
+            FunctionSignature {
+                parameters: vec![
+                    FunctionParameter {
+                        name: "a".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                    FunctionParameter {
+                        name: "b".to_string(),
+                        ty: "I32".to_string(),
+                    },
+                ],
+                return_type: "I32".to_string(),
+            },
+        )
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert lt function signature"))
+        })?;
 
     program.function_sigs.insert(
         "print".to_string(),
@@ -267,21 +307,34 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
         },
     );
 
-    program.function_sigs.insert(
-        "print_str".to_string(),
-        FunctionSignature {
-            parameters: vec![FunctionParameter {
-                name: "a".to_string(),
-                ty: "String".to_string(),
-            }],
-            return_type: "I32".to_string(),
-        },
-    );
+    program
+        .function_sigs
+        .insert(
+            "print_str".to_string(),
+            FunctionSignature {
+                parameters: vec![FunctionParameter {
+                    name: "a".to_string(),
+                    ty: "String".to_string(),
+                }],
+                return_type: "I32".to_string(),
+            },
+        )
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!(
+                "failed to insert print_str function signature"
+            ))
+        })?;
 
     for type_def in ast.type_definitions {
         program
             .type_definitions
-            .insert(type_def.name.clone(), TypeDef::Struct(type_def));
+            .insert(type_def.name.clone(), TypeDef::Struct(type_def.clone()))
+            .map_or(Ok(()), |_| {
+                Err(anyhow::anyhow!(
+                    "failed to insert type definition for {}",
+                    type_def.name
+                ))
+            })?;
     }
 
     for function in ast.top_level_functions {
@@ -309,10 +362,22 @@ pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
 
         program
             .function_sigs
-            .insert(function.name.clone(), func_def.sig.clone());
+            .insert(function.name.clone(), func_def.sig.clone())
+            .map_or(Ok(()), |_| {
+                Err(anyhow::anyhow!(
+                    "failed to insert function signature for {}",
+                    function.name
+                ))
+            })?;
         program
             .function_definitions
-            .insert(function.name.clone(), func_def.clone());
+            .insert(function.name.clone(), func_def.clone())
+            .map_or(Ok(()), |_| {
+                Err(anyhow::anyhow!(
+                    "failed to insert function definition for {}",
+                    function.name
+                ))
+            })?;
 
         program.type_check(&mut func_def)?;
     }
@@ -422,16 +487,18 @@ fn get_expression_type(
             let left_type = get_expression_type(left, var_types, fns, type_definitions)?;
             let right_type = get_expression_type(right, var_types, fns, type_definitions)?;
 
-            if left_type != "I32" || right_type != "I32" {
-                return Err(anyhow::anyhow!(
+            if left_type == "I32" && right_type == "I32" {
+                Ok("I32".to_string())
+            } else if left_type == "I64" && right_type == "I64" {
+                Ok("I64".to_string())
+            } else {
+                Err(anyhow::anyhow!(
                     "expected both operands of {:?} to be of type int, but got {:?} and {:?}",
                     op,
                     left_type,
                     right_type
-                ));
+                ))
             }
-
-            Ok("I32".to_string())
         }
     }
 }
