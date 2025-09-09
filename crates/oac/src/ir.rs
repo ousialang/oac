@@ -161,7 +161,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
 
     program
         .type_definitions
-        .insert("I32".to_string(), TypeDef::BuiltIn(BuiltInType::Int))
+        .insert("I32".to_string(), TypeDef::BuiltIn(BuiltInType::I32))
         .map_or(Ok(()), |_| {
             Err(anyhow::anyhow!("failed to insert I32 type definition"))
         })?;

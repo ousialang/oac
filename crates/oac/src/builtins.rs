@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum BuiltInType {
-    Int,
+    I32,
     I64,
     String,
 }
@@ -14,7 +14,7 @@ impl FromStr for BuiltInType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "I32" => Ok(BuiltInType::Int),
+            "I32" => Ok(BuiltInType::I32),
             "I64" => Ok(BuiltInType::I64),
             "String" => Ok(BuiltInType::String),
             _ => Err(anyhow::anyhow!("unknown type {}", s)),

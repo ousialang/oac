@@ -218,7 +218,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
 
 fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type {
     match ty {
-        ir::TypeDef::BuiltIn(BuiltInType::Int) => qbe::Type::Word,
+        ir::TypeDef::BuiltIn(BuiltInType::I32) => qbe::Type::Word,
         ir::TypeDef::BuiltIn(BuiltInType::I64)
         | ir::TypeDef::BuiltIn(BuiltInType::String)
         | ir::TypeDef::Struct(_) => qbe::Type::Long, // pointer to struct
@@ -402,7 +402,7 @@ fn new_id(labels: &[&str]) -> String {
 fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
     match ctx.resolved.type_definitions.get(ty) {
         Some(ty) => match ty {
-            ir::TypeDef::BuiltIn(BuiltInType::Int) => 4,
+            ir::TypeDef::BuiltIn(BuiltInType::I32) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::I64)
             | ir::TypeDef::BuiltIn(BuiltInType::String)
             | ir::TypeDef::Struct(_) => 8,
