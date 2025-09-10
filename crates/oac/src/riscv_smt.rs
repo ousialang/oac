@@ -1,4 +1,4 @@
-//! RISC-V ELF to SMT converter
+//! RISC-V ELF to SMT-LIB v2.7 (https://smt-lib.org/papers/smt-lib-reference-v2.7-r2025-07-07.pdf) converter
 //!
 //! This module provides functionality to convert a RISC-V ELF file into an SMT expression
 //! that can be used to verify if the program returns 0 within 1000 cycles.
