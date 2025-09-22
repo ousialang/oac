@@ -10,7 +10,7 @@ fun fibonacci(n: I32) -> I32 {
 
 fun main() -> I32 {
 	i = 0
-	while lt(i 10) {
+	while lt(i 15) {
 		print(fibonacci(i))
 		i = sum(i 1)
 	}

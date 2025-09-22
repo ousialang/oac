@@ -92,9 +92,13 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
 
     let assembly_path = target_dir.join("assembly.s");
-    let qbe_output = std::process::Command::new("qbe")
-        .arg("-t")
-        .arg("arm64_apple")
+    let mut qbe_cmd = std::process::Command::new("qbe");
+
+    if let Some(arch) = build.arch.as_ref() {
+        qbe_cmd.arg("-t").arg(arch);
+    }
+
+    let qbe_output = qbe_cmd
         .arg("-o")
         .arg(&assembly_path)
         .arg(&qbe_ir_path)
@@ -102,7 +106,7 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
 
     if !qbe_output.status.success() {
         return Err(anyhow::anyhow!(
-            "Compilation of QBE IR to assembly failed: {}",
+            "Compilation of QBE IR to assembly failed: {} (valid archs: amd64_sysv, amd64_apple, arm64, arm64_apple, rv64)",
             String::from_utf8_lossy(&qbe_output.stderr)
         ));
     }
@@ -110,11 +114,24 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
 
     let executable_path = target_dir.join("app");
-    let cc_output = std::process::Command::new("cc")
-        .arg(&assembly_path)
-        .arg("-o")
-        .arg(&executable_path)
-        .output()?;
+
+    let mut cc_cmd = std::process::Command::new("zig");
+    cc_cmd.arg("cc").arg("-g").arg("-o").arg(&executable_path);
+    if let Some(arch) = build.arch.as_ref() {
+        let cc_arch = match arch.as_str() {
+            "rv64" => "riscv64-linux-gnu",
+            _ => panic!("invalid arch"),
+        };
+
+        cc_cmd
+            .arg("-target")
+            .arg(cc_arch)
+            .arg("-march=generic_rv64");
+    }
+
+    cc_cmd.arg(&assembly_path);
+
+    let cc_output = cc_cmd.output()?;
     println!("{}", String::from_utf8_lossy(&cc_output.stderr));
 
     info!(executable_path = %executable_path.display(), "Assembly compiled to executable");

@@ -1,3 +1,6 @@
 [submodule "crates/unicorn"]
 	path = crates/unicorn
 	url = https://github.com/cksystemsgroup/unicorn
+[submodule "tools/selfie"]
+	path = tools/selfie
+	url = https://github.com/cksystemsteaching/selfie
