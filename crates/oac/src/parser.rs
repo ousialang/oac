@@ -15,9 +15,27 @@ pub struct StructField {
     pub ty: String,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct EnumVariantDef {
+    pub name: String,
+    pub payload_ty: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariantDef>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub enum TypeDefDecl {
+    Struct(StructDef),
+    Enum(EnumDef),
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Ast {
-    pub type_definitions: Vec<StructDef>,
+    pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
 }
 
@@ -34,9 +52,14 @@ pub enum Statement {
     StructDef {
         def: StructDef,
     },
+    Match {
+        subject: Expression,
+        arms: Vec<MatchArm>,
+    },
     Conditional {
         condition: Expression,
         body: Vec<Statement>,
+        else_body: Option<Vec<Statement>>,
     },
     Assign {
         variable: String,
@@ -55,11 +78,31 @@ pub enum Statement {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub enum MatchPattern {
+    Variant {
+        type_name: String,
+        variant_name: String,
+        binder: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub enum Expression {
     Literal(Literal),
     Variable(String),
     Call(String, Vec<Expression>),
+    PostfixCall {
+        callee: Box<Expression>,
+        args: Vec<Expression>,
+    },
     BinOp(Op, Box<Expression>, Box<Expression>),
+    UnaryOp(UnaryOp, Box<Expression>),
     FieldAccess {
         struct_variable: String,
         field: String,
@@ -74,10 +117,13 @@ pub enum Expression {
 pub enum Literal {
     Int(u32),
     String(String),
+    Bool(bool),
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, Copy)]
 pub enum Op {
+    And,
+    Or,
     Add,
     Sub,
     Mul,
@@ -90,10 +136,17 @@ pub enum Op {
     Ge,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, Copy)]
+pub enum UnaryOp {
+    Not,
+}
+
 impl Op {
     fn from_token(token: &TokenData) -> Option<Op> {
         match token {
             TokenData::Symbols(s) => match s.as_str() {
+                "&&" => Some(Op::And),
+                "||" => Some(Op::Or),
                 "+" => Some(Op::Add),
                 "-" => Some(Op::Sub),
                 "*" => Some(Op::Mul),
@@ -112,9 +165,11 @@ impl Op {
 
     fn precedence(&self) -> u8 {
         match self {
-            Op::Eq | Op::Neq | Op::Lt | Op::Gt | Op::Le | Op::Ge => 0,
-            Op::Add | Op::Sub => 1,
-            Op::Mul | Op::Div => 2,
+            Op::Or => 0,
+            Op::And => 1,
+            Op::Eq | Op::Neq | Op::Lt | Op::Gt | Op::Le | Op::Ge => 2,
+            Op::Add | Op::Sub => 3,
+            Op::Mul | Op::Div => 4,
         }
     }
 }
@@ -123,7 +178,19 @@ impl TokenData {
     fn is_op(&self) -> bool {
         matches!(
             self,
-            TokenData::Symbols(s) if s == "+" || s == "-" || s == "*" || s == "/" || s == "==" || s == "!=" || s == "<" || s == ">" || s == "<=" || s == ">="
+            TokenData::Symbols(s)
+                if s == "+"
+                    || s == "-"
+                    || s == "*"
+                    || s == "/"
+                    || s == "=="
+                    || s == "!="
+                    || s == "<"
+                    || s == ">"
+                    || s == "<="
+                    || s == ">="
+                    || s == "&&"
+                    || s == "||"
         )
     }
 }
@@ -145,71 +212,24 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                 tokens.remove(0);
                 let expr = parse_expression(tokens, 0)?;
                 return Ok(Statement::Return { expr });
+            } else if name == "match" {
+                tokens.remove(0);
+                return parse_match_statement(tokens);
             } else if name == "if" {
                 tokens.remove(0);
                 let condition = parse_expression(tokens, 0)?;
-                anyhow::ensure!(
-                    tokens.remove(0)
-                        == TokenData::Parenthesis {
-                            opening: '{',
-                            is_opening: true
-                        },
-                    "expected opening brace"
-                );
-                let mut body = vec![];
-                loop {
-                    match tokens.first().unwrap() {
-                        TokenData::Parenthesis {
-                            opening: '}',
-                            is_opening: false,
-                        } => {
-                            tokens.remove(0);
-                            break;
-                        }
-                        TokenData::Newline => {
-                            tokens.remove(0);
-                        }
-                        _ => {
-                            let statement = parse_statement(tokens)?;
-                            body.push(statement);
-                        }
-                    }
-                }
-                return Ok(Statement::Conditional { condition, body });
+                let body = parse_braced_block(tokens)?;
+                let else_body = parse_optional_else(tokens)?;
+                return Ok(Statement::Conditional {
+                    condition,
+                    body,
+                    else_body,
+                });
             } else if name == "while" {
                 tokens.remove(0);
                 let condition = parse_expression(tokens, 0)?;
-                anyhow::ensure!(
-                    tokens.remove(0)
-                        == TokenData::Parenthesis {
-                            opening: '{',
-                            is_opening: true
-                        },
-                    "expected opening brace"
-                );
-                let mut body = vec![];
-                loop {
-                    match tokens.first().unwrap() {
-                        TokenData::Parenthesis {
-                            opening: '}',
-                            is_opening: false,
-                        } => {
-                            tokens.remove(0);
-                            break;
-                        }
-                        TokenData::Newline => {
-                            tokens.remove(0);
-                        }
-                        _ => {
-                            let statement = parse_statement(tokens)?;
-                            body.push(statement);
-                        }
-                    }
-                }
-                return Ok(Statement::While {
-                    condition,
-                    body: body,
-                });
+                let body = parse_braced_block(tokens)?;
+                return Ok(Statement::While { condition, body });
             } else if tokens.get(1) == Some(&TokenData::Symbols("=".to_string())) {
                 tokens.remove(0);
                 tokens.remove(0);
@@ -225,6 +245,201 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
             }
         }
         token => return Err(anyhow::anyhow!("expected statement instead of {:?}", token)),
+    }
+}
+
+fn parse_braced_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Statement>> {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace"
+    );
+
+    let mut body = vec![];
+    loop {
+        match tokens.first().unwrap() {
+            TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            } => {
+                tokens.remove(0);
+                break;
+            }
+            TokenData::Newline => {
+                tokens.remove(0);
+            }
+            _ => {
+                let statement = parse_statement(tokens)?;
+                body.push(statement);
+            }
+        }
+    }
+    Ok(body)
+}
+
+fn parse_call_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Expression>> {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true
+            },
+        "expected opening parenthesis for call"
+    );
+
+    let mut args = vec![];
+    loop {
+        match tokens.get(0) {
+            Some(TokenData::Parenthesis {
+                opening: ')',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file")),
+            _ => {
+                let expr = parse_expression(tokens, 0)?;
+                args.push(expr);
+                if let Some(TokenData::Symbols(s)) = tokens.get(0) {
+                    if s == "," {
+                        tokens.remove(0);
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(args)
+}
+
+fn parse_match_pattern(tokens: &mut Vec<TokenData>) -> anyhow::Result<MatchPattern> {
+    let type_name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        tok => {
+            return Err(anyhow::anyhow!(
+                "expected enum type in match pattern, got {:?}",
+                tok
+            ));
+        }
+    };
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Symbols(".".to_string()),
+        "expected '.' in match pattern"
+    );
+    let variant_name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        tok => {
+            return Err(anyhow::anyhow!(
+                "expected variant name in match pattern, got {:?}",
+                tok
+            ));
+        }
+    };
+
+    let binder = if tokens.get(0)
+        == Some(&TokenData::Parenthesis {
+            opening: '(',
+            is_opening: true,
+        }) {
+        tokens.remove(0);
+        let binder = match tokens.remove(0) {
+            TokenData::Word(name) => name,
+            tok => {
+                return Err(anyhow::anyhow!(
+                    "expected binder name in payload pattern, got {:?}",
+                    tok
+                ));
+            }
+        };
+        anyhow::ensure!(
+            tokens.remove(0)
+                == TokenData::Parenthesis {
+                    opening: ')',
+                    is_opening: false
+                },
+            "expected ')' in payload pattern"
+        );
+        Some(binder)
+    } else {
+        None
+    };
+
+    Ok(MatchPattern::Variant {
+        type_name,
+        variant_name,
+        binder,
+    })
+}
+
+fn parse_match_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
+    let subject = parse_expression(tokens, 0)?;
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace after match subject"
+    );
+
+    let mut arms = vec![];
+    loop {
+        while tokens.first() == Some(&TokenData::Newline) {
+            tokens.remove(0);
+        }
+
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(_) => {
+                let pattern = parse_match_pattern(tokens)?;
+                anyhow::ensure!(
+                    tokens.remove(0) == TokenData::Symbols("=>".to_string()),
+                    "expected '=>' after match pattern"
+                );
+                let body = parse_braced_block(tokens)?;
+                arms.push(MatchArm { pattern, body });
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in match")),
+        }
+    }
+
+    Ok(Statement::Match { subject, arms })
+}
+
+fn parse_optional_else(tokens: &mut Vec<TokenData>) -> anyhow::Result<Option<Vec<Statement>>> {
+    while tokens.first() == Some(&TokenData::Newline) {
+        tokens.remove(0);
+    }
+
+    if tokens.first() != Some(&TokenData::Word("else".to_string())) {
+        return Ok(None);
+    }
+    tokens.remove(0);
+
+    if tokens.first() == Some(&TokenData::Word("if".to_string())) {
+        tokens.remove(0);
+        let condition = parse_expression(tokens, 0)?;
+        let body = parse_braced_block(tokens)?;
+        let nested_else = parse_optional_else(tokens)?;
+        Ok(Some(vec![Statement::Conditional {
+            condition,
+            body,
+            else_body: nested_else,
+        }]))
+    } else {
+        let body = parse_braced_block(tokens)?;
+        Ok(Some(body))
     }
 }
 
@@ -335,6 +550,84 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Struc
     })
 }
 
+fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("enum".to_string()),
+        "expected 'enum' keyword"
+    );
+
+    let name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        _ => return Err(anyhow::anyhow!("expected enum name")),
+    };
+
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace"
+    );
+
+    let mut variants = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Symbols(s)) if s == "," => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Word(_)) => {
+                let variant_name = match tokens.remove(0) {
+                    TokenData::Word(name) => name,
+                    _ => unreachable!(),
+                };
+
+                let payload_ty = if tokens.get(0)
+                    == Some(&TokenData::Parenthesis {
+                        opening: '(',
+                        is_opening: true,
+                    }) {
+                    tokens.remove(0);
+                    let ty = match tokens.remove(0) {
+                        TokenData::Word(ty) => ty,
+                        _ => return Err(anyhow::anyhow!("expected payload type in variant")),
+                    };
+                    anyhow::ensure!(
+                        tokens.remove(0)
+                            == TokenData::Parenthesis {
+                                opening: ')',
+                                is_opening: false
+                            },
+                        "expected closing ')' in variant payload"
+                    );
+                    Some(ty)
+                } else {
+                    None
+                };
+
+                variants.push(EnumVariantDef {
+                    name: variant_name,
+                    payload_ty,
+                });
+            }
+            Some(tok) => return Err(anyhow::anyhow!("unexpected token in enum body: {:?}", tok)),
+            None => return Err(anyhow::anyhow!("unexpected end of file in enum")),
+        }
+    }
+
+    Ok(EnumDef { name, variants })
+}
+
 fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Function> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("fun".to_string()),
@@ -430,7 +723,11 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         match token {
             TokenData::Word(name) if name == "struct" => {
                 let type_definition = parse_struct_declaration(&mut tokens.tokens)?;
-                ast.type_definitions.push(type_definition);
+                ast.type_definitions.push(TypeDefDecl::Struct(type_definition));
+            }
+            TokenData::Word(name) if name == "enum" => {
+                let type_definition = parse_enum_declaration(&mut tokens.tokens)?;
+                ast.type_definitions.push(TypeDefDecl::Enum(type_definition));
             }
             TokenData::Word(name) if name == "fun" => {
                 let function = parse_function_declaration(&mut tokens.tokens)?;
@@ -494,42 +791,21 @@ fn parse_struct_value(
 fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
     let next = tokens.remove(0);
     match next {
+        TokenData::Symbols(s) if s == "!" => {
+            let rhs = parse_expression(tokens, u8::MAX)?;
+            Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(rhs)))
+        }
         TokenData::Number(n) => Ok(Expression::Literal(Literal::Int(n))),
         TokenData::String(s) => Ok(Expression::Literal(Literal::String(s))),
         TokenData::Word(s) => {
+            if s == "true" {
+                return Ok(Expression::Literal(Literal::Bool(true)));
+            }
+            if s == "false" {
+                return Ok(Expression::Literal(Literal::Bool(false)));
+            }
             if tokens.get(0) == Some(&TokenData::Word("struct".to_string())) {
                 parse_struct_value(tokens, s)
-            } else if tokens.get(0)
-                == Some(&TokenData::Parenthesis {
-                    opening: '(',
-                    is_opening: true,
-                })
-            {
-                tokens.remove(0);
-                let mut args = vec![];
-                loop {
-                    match tokens.get(0) {
-                        Some(TokenData::Parenthesis {
-                            opening: ')',
-                            is_opening: false,
-                        }) => {
-                            tokens.remove(0);
-                            break;
-                        }
-                        None => return Err(anyhow::anyhow!("unexpected end of file")),
-                        _ => {
-                            let expr = parse_expression(tokens, 0)?;
-                            args.push(expr);
-                            if let Some(TokenData::Symbols(s)) = tokens.get(0) {
-                                if s == "," {
-                                    tokens.remove(0);
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Expression::Call(s, args))
             } else {
                 Ok(Expression::Variable(s))
             }
@@ -570,6 +846,20 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
                 lhs = Expression::FieldAccess {
                     struct_variable,
                     field: field_name,
+                };
+                continue;
+            }
+            Some(TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true,
+            }) => {
+                let args = parse_call_args(tokens)?;
+                lhs = match lhs {
+                    Expression::Variable(name) => Expression::Call(name, args),
+                    expr => Expression::PostfixCall {
+                        callee: Box::new(expr),
+                        args,
+                    },
                 };
                 continue;
             }

@@ -1,0 +1,8 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+expected 1 payload argument for constructor OptionI32.Some, got 2

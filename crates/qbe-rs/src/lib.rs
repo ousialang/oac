@@ -492,11 +492,26 @@ impl fmt::Display for DataItem {
                 Some(off) => write!(f, "${name} +{off}"),
                 None => write!(f, "${name}"),
             },
-            Self::Str(string) => write!(f, "\"{string}\""),
+            Self::Str(string) => write!(f, "\"{}\"", escape_qbe_string(string)),
             Self::Const(val) => write!(f, "{val}"),
             Self::Zero(size) => write!(f, "z {size}"),
         }
     }
+}
+
+fn escape_qbe_string(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// QBE aggregate type definition

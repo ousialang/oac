@@ -313,6 +313,7 @@ dependencies = [
  "goblin",
  "insta",
  "qbe",
+ "qbe-smt",
  "serde",
  "serde_json",
  "tempfile",
@@ -358,6 +359,13 @@ dependencies = [
 [[package]]
 name = "qbe"
 version = "2.5.0"
+
+[[package]]
+name = "qbe-smt"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "quote"

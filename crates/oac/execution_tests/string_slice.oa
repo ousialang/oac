@@ -1,0 +1,12 @@
+fun main() -> I32 {
+	s = "abcdef"
+	t = slice(s 1 3)
+
+	print(string_len(t))
+	print(char_at(t 0))
+	print(char_at(t 1))
+	print(char_at(t 2))
+	print(char_at(t 3))
+
+	return 0
+}

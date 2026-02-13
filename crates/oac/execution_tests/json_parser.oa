@@ -1,0 +1,43 @@
+fun print_kind(src: String) -> I32 {
+	match json_kind(src) {
+		JsonKind.True => {
+			print(1)
+		}
+		JsonKind.False => {
+			print(2)
+		}
+		JsonKind.Null => {
+			print(3)
+		}
+		JsonKind.Object => {
+			print(4)
+		}
+		JsonKind.Array => {
+			print(5)
+		}
+		JsonKind.Number => {
+			print(6)
+		}
+		JsonKind.String => {
+			print(7)
+		}
+		JsonKind.Invalid => {
+			print(0)
+		}
+	}
+
+	return 0
+}
+
+fun main() -> I32 {
+	print_kind("true")
+	print_kind(" false")
+	print_kind("\nnull")
+	print_kind("{\"k\":1}")
+	print_kind(" [1,2]")
+	print_kind(" 123")
+	print_kind(" -42")
+	print_kind(" \"hello\"")
+	print_kind("garbage")
+	return 0
+}

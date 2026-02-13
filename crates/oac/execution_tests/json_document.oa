@@ -1,0 +1,36 @@
+fun print_doc_result(src: String) -> I32 {
+	match parse_json_document_result(src) {
+		ParseResult.Ok(_end) => {
+			print(1)
+		}
+		ParseResult.Err(err) => {
+			match err {
+				ParseErr.EmptyInput => {
+					print(10)
+				}
+				ParseErr.InvalidValue => {
+					print(11)
+				}
+				ParseErr.TrailingData => {
+					print(12)
+				}
+			}
+		}
+	}
+
+	return 0
+}
+
+fun main() -> I32 {
+	print_doc_result("true")
+	print_doc_result(" true ")
+	print_doc_result("[1,2,{\"a\":\"b\"}]")
+	print_doc_result("{\"a\":1}x")
+	print_doc_result("garbage")
+	print_doc_result("[1,]")
+	print_doc_result("\"a\\nb\"")
+	print_doc_result("\"a\nb\"")
+	print_doc_result("  ")
+	print_doc_result("null")
+	return 0
+}

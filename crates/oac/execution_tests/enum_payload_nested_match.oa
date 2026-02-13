@@ -1,0 +1,46 @@
+enum Color {
+	Red,
+	Green,
+}
+
+enum Wrap {
+	C(Color),
+	N(I32),
+}
+
+enum Token {
+	Int(I32),
+	Text(String),
+	Done,
+}
+
+fun main() -> I32 {
+	w = Wrap.C(Color.Green)
+	match w {
+		Wrap.C(c) => {
+			if c == Color.Green {
+				print(9)
+			} else {
+				print(0)
+			}
+		}
+		Wrap.N(n) => {
+			print(n)
+		}
+	}
+
+	t = Token.Text("hello")
+	match t {
+		Token.Int(v) => {
+			print(v)
+		}
+		Token.Text(s) => {
+			print(string_len(s))
+		}
+		Token.Done => {
+			print(0)
+		}
+	}
+
+	return 0
+}

@@ -3,13 +3,9 @@ source: crates/oac/src/qbe_backend.rs
 expression: output
 snapshot_kind: text
 ---
-0
-1
-1
-2
-3
-5
-8
-13
-21
+123
+10
+9
+92
 34
+120

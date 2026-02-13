@@ -1,0 +1,10 @@
+enum OptionI32 {
+	None,
+	Some(I32),
+}
+
+fun main() -> I32 {
+	v = OptionI32.Some
+	print(1)
+	return 0
+}

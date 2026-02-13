@@ -1,0 +1,8 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+non-exhaustive match on OptionI32: missing variants ["None"]

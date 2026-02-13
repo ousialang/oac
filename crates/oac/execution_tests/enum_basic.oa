@@ -1,0 +1,23 @@
+enum Color {
+	Red,
+	Green,
+}
+
+fun main() -> I32 {
+	c = Color.Red
+	d = Color.Green
+
+	if c == Color.Red {
+		print(1)
+	} else {
+		print(0)
+	}
+
+	if c != d {
+		print(2)
+	} else {
+		print(0)
+	}
+
+	return 0
+}

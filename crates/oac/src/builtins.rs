@@ -7,6 +7,7 @@ pub enum BuiltInType {
     I32,
     I64,
     String,
+    Bool,
 }
 
 impl FromStr for BuiltInType {
@@ -17,6 +18,7 @@ impl FromStr for BuiltInType {
             "I32" => Ok(BuiltInType::I32),
             "I64" => Ok(BuiltInType::I64),
             "String" => Ok(BuiltInType::String),
+            "Bool" => Ok(BuiltInType::Bool),
             _ => Err(anyhow::anyhow!("unknown type {}", s)),
         }
     }

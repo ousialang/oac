@@ -1,0 +1,10 @@
+enum Color {
+	Red,
+	Green,
+}
+
+fun main() -> I32 {
+	c = Color.Blue
+	print(1)
+	return 0
+}

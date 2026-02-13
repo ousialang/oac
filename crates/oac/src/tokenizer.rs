@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Sequences of these characters compose symbols.
-const ALLOWED_SYMBOLS: &str = "*@%=,+/:-><+-.";
+const ALLOWED_SYMBOLS: &str = "*@%=,+/:-><+-.!&|";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenList {
@@ -26,7 +26,7 @@ pub enum TokenData {
     Comment(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Position {
     pub absolute_i: u32,
     pub line: u32,
@@ -89,11 +89,37 @@ pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
         } else if c == '"' {
             let mut string = String::new();
             while chars.peek().is_some() && *chars.peek().unwrap() != '"' {
-                let c = chars.next().unwrap();
-                string.push(c);
+                let next = chars.next().unwrap();
+                if next == '\\' {
+                    let escaped = chars.next().ok_or(SyntaxError {
+                        message: "unterminated escape sequence in string literal".to_string(),
+                        position: position.clone(),
+                    })?;
+                    let decoded = match escaped {
+                        '\\' => '\\',
+                        '"' => '"',
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        other => {
+                            return Err(SyntaxError {
+                                message: format!("unsupported escape sequence '\\{}'", other),
+                                position: position.clone(),
+                            })
+                        }
+                    };
+                    string.push(decoded);
+                } else {
+                    string.push(next);
+                }
             }
             if chars.peek().is_some() {
                 chars.next();
+            } else {
+                return Err(SyntaxError {
+                    message: "unterminated string literal".to_string(),
+                    position: position.clone(),
+                });
             }
             tokens.tokens.push(TokenData::String(string));
         } else if ALLOWED_SYMBOLS.contains(c) {

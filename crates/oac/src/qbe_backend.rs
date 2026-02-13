@@ -6,7 +6,7 @@ use tracing::trace;
 use crate::{
     builtins::BuiltInType,
     ir::{self, ResolvedProgram},
-    parser::{self, Op, StructDef},
+    parser::{self, Op, StructDef, UnaryOp},
 };
 
 type QbeAssignName = String;
@@ -130,7 +130,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
             "integer_fmt".to_string(),
             None,
             vec![
-                (qbe::Type::Byte, DataItem::Str("%u\\n".to_string())),
+                (qbe::Type::Byte, DataItem::Str("%u\n".to_string())),
                 (qbe::Type::Byte, DataItem::Const(0)),
             ],
         ));
@@ -177,12 +177,205 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     }
 
     {
+        let mut f = Function::new(
+            Linkage::public(),
+            "char_at".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary("s".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("index".to_string())),
+            ],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+
+        let index_i64 = new_id(&["index", "i64"]);
+        f.assign_instr(
+            Value::Temporary(index_i64.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "i32_to_i64".to_string(),
+                vec![(qbe::Type::Word, qbe::Value::Temporary("index".to_string()))],
+                None,
+            ),
+        );
+
+        let address = new_id(&["char", "address"]);
+        f.assign_instr(
+            Value::Temporary(address.clone()),
+            qbe::Type::Long,
+            Instr::Add(
+                Value::Temporary("s".to_string()),
+                Value::Temporary(index_i64),
+            ),
+        );
+
+        let ch = new_id(&["char"]);
+        f.assign_instr(
+            Value::Temporary(ch.clone()),
+            qbe::Type::Word,
+            Instr::Load(Type::UnsignedByte, Value::Temporary(address)),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(ch))));
+
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::private(),
+            "i64_to_i32".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("a".to_string()))],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+        let word = new_id(&["word"]);
+        f.assign_instr(
+            Value::Temporary(word.clone()),
+            qbe::Type::Word,
+            Instr::Copy(Value::Temporary("a".to_string())),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(word))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "string_len".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+        let len_i64 = new_id(&["len", "i64"]);
+        f.assign_instr(
+            Value::Temporary(len_i64.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "strlen".to_string(),
+                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+                None,
+            ),
+        );
+        let len_i32 = new_id(&["len", "i32"]);
+        f.assign_instr(
+            Value::Temporary(len_i32.clone()),
+            qbe::Type::Word,
+            Instr::Call(
+                "i64_to_i32".to_string(),
+                vec![(qbe::Type::Long, qbe::Value::Temporary(len_i64))],
+                None,
+            ),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(len_i32))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "slice".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary("s".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("start".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("len".to_string())),
+            ],
+            Some(Type::Long),
+        );
+        f.add_block("start".to_string());
+
+        let len_plus_one = new_id(&["len", "plus", "one"]);
+        f.assign_instr(
+            Value::Temporary(len_plus_one.clone()),
+            qbe::Type::Word,
+            Instr::Add(Value::Temporary("len".to_string()), Value::Const(1)),
+        );
+
+        let alloc_size_i64 = new_id(&["alloc", "size", "i64"]);
+        f.assign_instr(
+            Value::Temporary(alloc_size_i64.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "i32_to_i64".to_string(),
+                vec![(qbe::Type::Word, qbe::Value::Temporary(len_plus_one))],
+                None,
+            ),
+        );
+
+        let dst = new_id(&["slice", "dst"]);
+        f.assign_instr(
+            Value::Temporary(dst.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "malloc".to_string(),
+                vec![(qbe::Type::Long, qbe::Value::Temporary(alloc_size_i64))],
+                None,
+            ),
+        );
+
+        let start_i64 = new_id(&["start", "i64"]);
+        f.assign_instr(
+            Value::Temporary(start_i64.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "i32_to_i64".to_string(),
+                vec![(qbe::Type::Word, qbe::Value::Temporary("start".to_string()))],
+                None,
+            ),
+        );
+        let src = new_id(&["slice", "src"]);
+        f.assign_instr(
+            Value::Temporary(src.clone()),
+            qbe::Type::Long,
+            Instr::Add(
+                Value::Temporary("s".to_string()),
+                Value::Temporary(start_i64),
+            ),
+        );
+
+        let copy_n_i64 = new_id(&["copy", "n", "i64"]);
+        f.assign_instr(
+            Value::Temporary(copy_n_i64.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "i32_to_i64".to_string(),
+                vec![(qbe::Type::Word, qbe::Value::Temporary("len".to_string()))],
+                None,
+            ),
+        );
+
+        f.add_instr(Instr::Call(
+            "memcpy".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary(dst.clone())),
+                (qbe::Type::Long, qbe::Value::Temporary(src)),
+                (qbe::Type::Long, qbe::Value::Temporary(copy_n_i64.clone())),
+            ],
+            None,
+        ));
+
+        let nul_addr = new_id(&["nul", "addr"]);
+        f.assign_instr(
+            Value::Temporary(nul_addr.clone()),
+            qbe::Type::Long,
+            Instr::Add(Value::Temporary(dst.clone()), Value::Temporary(copy_n_i64)),
+        );
+        f.add_instr(Instr::Store(
+            Type::Byte,
+            Value::Temporary(nul_addr),
+            Value::Const(0),
+        ));
+
+        f.add_instr(Instr::Ret(Some(Value::Temporary(dst))));
+        ctx.module.add_function(f);
+    }
+
+    {
         ctx.module.add_data(qbe::DataDef::new(
             Linkage::private(),
             "string_fmt".to_string(),
             None,
             vec![
-                (qbe::Type::Byte, DataItem::Str("%s\\n".to_string())),
+                (qbe::Type::Byte, DataItem::Str("%s\n".to_string())),
                 (qbe::Type::Byte, DataItem::Const(0)),
             ],
         ));
@@ -209,6 +402,10 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     }
 
     ctx.qbe_types_by_name
+        .insert("Int".to_string(), qbe::Type::Word);
+    ctx.qbe_types_by_name
+        .insert("Bool".to_string(), qbe::Type::Word);
+    ctx.qbe_types_by_name
         .insert("I32".to_string(), qbe::Type::Word);
     ctx.qbe_types_by_name
         .insert("I64".to_string(), qbe::Type::Long);
@@ -218,10 +415,18 @@ fn add_builtins(ctx: &mut CodegenCtx) {
 
 fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type {
     match ty {
+        ir::TypeDef::BuiltIn(BuiltInType::Bool) => qbe::Type::Word,
         ir::TypeDef::BuiltIn(BuiltInType::I32) => qbe::Type::Word,
         ir::TypeDef::BuiltIn(BuiltInType::I64)
         | ir::TypeDef::BuiltIn(BuiltInType::String)
         | ir::TypeDef::Struct(_) => qbe::Type::Long, // pointer to struct
+        ir::TypeDef::Enum(enum_def) => {
+            if enum_def.is_tagged_union {
+                qbe::Type::Long
+            } else {
+                qbe::Type::Word
+            }
+        }
     }
 }
 
@@ -230,6 +435,16 @@ fn compile_type(ctx: &mut CodegenCtx, type_def: &ir::TypeDef) {
 
     match type_def {
         ir::TypeDef::BuiltIn(_) => {} // We generated those already
+        ir::TypeDef::Enum(enum_def) => {
+            ctx.qbe_types_by_name.insert(
+                enum_def.name.clone(),
+                if enum_def.is_tagged_union {
+                    qbe::Type::Long
+                } else {
+                    qbe::Type::Word
+                },
+            );
+        }
         ir::TypeDef::Struct(StructDef {
             struct_fields,
             name,
@@ -261,6 +476,15 @@ fn compile_statement(
     statement: &parser::Statement,
     variables: &mut Variables,
 ) {
+    fn is_word_sized_value_type(ctx: &CodegenCtx, type_name: &str) -> bool {
+        match ctx.resolved.type_definitions.get(type_name) {
+            Some(ir::TypeDef::BuiltIn(BuiltInType::Bool))
+            | Some(ir::TypeDef::BuiltIn(BuiltInType::I32)) => true,
+            Some(ir::TypeDef::Enum(enum_def)) => !enum_def.is_tagged_union,
+            _ => false,
+        }
+    }
+
     match statement {
         parser::Statement::StructDef { def } => {
             let struct_type = ctx.resolved.type_definitions.get(&def.name).unwrap();
@@ -268,24 +492,167 @@ fn compile_statement(
                 compile_type(ctx, &struct_type.clone());
             }
         }
-        parser::Statement::Conditional { condition, body } => {
-            let start_label = new_id(&["cond", "start"]);
+        parser::Statement::Match { subject, arms } => {
+            let (subject_var, subject_ty) = compile_expr(ctx, qbe_func, subject, variables);
+            let enum_def = match ctx.resolved.type_definitions.get(&subject_ty) {
+                Some(ir::TypeDef::Enum(enum_def)) => enum_def.clone(),
+                _ => panic!("match subject must be enum"),
+            };
+
+            let tag_var = if enum_def.is_tagged_union {
+                let id = new_id(&["match", "tag"]);
+                qbe_func.assign_instr(
+                    qbe::Value::Temporary(id.clone()),
+                    qbe::Type::Word,
+                    qbe::Instr::Load(qbe::Type::Word, qbe::Value::Temporary(subject_var.clone())),
+                );
+                id
+            } else {
+                subject_var.clone()
+            };
+
+            let end_label = new_id(&["match", "end"]);
+            let mut any_arm_falls_through = false;
+            for (i, arm) in arms.iter().enumerate() {
+                let arm_label = new_id(&["match", "arm"]);
+                let next_label = if i + 1 < arms.len() {
+                    Some(new_id(&["match", "next"]))
+                } else {
+                    None
+                };
+
+                let (pattern_ty, pattern_variant, pattern_binder) = match &arm.pattern {
+                    parser::MatchPattern::Variant {
+                        type_name,
+                        variant_name,
+                        binder,
+                    } => (type_name, variant_name, binder),
+                };
+                assert_eq!(pattern_ty, &subject_ty);
+                let variant = enum_def
+                    .variants
+                    .iter()
+                    .find(|v| v.name == *pattern_variant)
+                    .unwrap();
+
+                let cmp_var = new_id(&["match", "cmp"]);
+                qbe_func.assign_instr(
+                    qbe::Value::Temporary(cmp_var.clone()),
+                    qbe::Type::Word,
+                    qbe::Instr::Cmp(
+                        qbe::Type::Word,
+                        qbe::Cmp::Eq,
+                        qbe::Value::Temporary(tag_var.clone()),
+                        qbe::Value::Const(variant.tag as u64),
+                    ),
+                );
+                qbe_func.add_instr(qbe::Instr::Jnz(
+                    qbe::Value::Temporary(cmp_var),
+                    arm_label.clone(),
+                    next_label.clone().unwrap_or_else(|| arm_label.clone()),
+                ));
+
+                qbe_func.add_block(arm_label);
+                let mut arm_variables = variables.clone();
+                if let (Some(binder), Some(payload_ty)) =
+                    (pattern_binder.clone(), variant.payload_ty.clone())
+                {
+                    let payload_addr = new_id(&["match", "payload", "addr"]);
+                    qbe_func.assign_instr(
+                        qbe::Value::Temporary(payload_addr.clone()),
+                        qbe::Type::Long,
+                        qbe::Instr::Add(
+                            qbe::Value::Temporary(subject_var.clone()),
+                            qbe::Value::Const(8),
+                        ),
+                    );
+                    let payload_raw = new_id(&["match", "payload", "raw"]);
+                    qbe_func.assign_instr(
+                        qbe::Value::Temporary(payload_raw.clone()),
+                        qbe::Type::Long,
+                        qbe::Instr::Load(
+                            qbe::Type::Long,
+                            qbe::Value::Temporary(payload_addr.clone()),
+                        ),
+                    );
+
+                    let payload_var = if is_word_sized_value_type(ctx, &payload_ty) {
+                        let payload_word = new_id(&["match", "payload", "word"]);
+                        qbe_func.assign_instr(
+                            qbe::Value::Temporary(payload_word.clone()),
+                            qbe::Type::Word,
+                            qbe::Instr::Copy(qbe::Value::Temporary(payload_raw)),
+                        );
+                        payload_word
+                    } else {
+                        payload_raw
+                    };
+                    arm_variables.insert(binder, (payload_var, payload_ty));
+                }
+
+                for statement in &arm.body {
+                    compile_statement(ctx, qbe_func, statement, &mut arm_variables);
+                }
+                if !qbe_func.blocks.last().unwrap().jumps() {
+                    any_arm_falls_through = true;
+                    qbe_func.add_instr(qbe::Instr::Jmp(end_label.clone()));
+                }
+
+                if let Some(next_label) = next_label {
+                    qbe_func.add_block(next_label);
+                }
+            }
+
+            if any_arm_falls_through {
+                qbe_func.add_block(end_label);
+            }
+        }
+        parser::Statement::Conditional {
+            condition,
+            body,
+            else_body,
+        } => {
+            let then_label = new_id(&["cond", "then"]);
+            let else_label = new_id(&["cond", "else"]);
             let end_block_label = new_id(&["cond", "end"]);
 
             let condition_var = compile_expr(ctx, qbe_func, &condition, variables).0;
 
             qbe_func.add_instr(qbe::Instr::Jnz(
                 qbe::Value::Temporary(condition_var),
-                start_label.clone(),
-                end_block_label.clone(),
+                then_label.clone(),
+                if else_body.is_some() {
+                    else_label.clone()
+                } else {
+                    end_block_label.clone()
+                },
             ));
 
-            qbe_func.add_block(&start_label);
+            qbe_func.add_block(&then_label);
             for statement in body {
                 compile_statement(ctx, qbe_func, statement, variables);
             }
+            let then_falls_through = !qbe_func.blocks.last().unwrap().jumps();
+            if then_falls_through {
+                qbe_func.add_instr(qbe::Instr::Jmp(end_block_label.clone()));
+            }
 
-            qbe_func.add_block(&end_block_label);
+            let mut else_falls_through = false;
+            if let Some(else_body) = else_body {
+                qbe_func.add_block(&else_label);
+                for statement in else_body {
+                    compile_statement(ctx, qbe_func, statement, variables);
+                }
+                else_falls_through = !qbe_func.blocks.last().unwrap().jumps();
+                if else_falls_through {
+                    qbe_func.add_instr(qbe::Instr::Jmp(end_block_label.clone()));
+                }
+            }
+
+            let needs_end_block = else_body.is_none() || then_falls_through || else_falls_through;
+            if needs_end_block {
+                qbe_func.add_block(&end_block_label);
+            }
         }
         parser::Statement::While { condition, body } => {
             let condition_label = new_id(&["while", "cond"]);
@@ -322,13 +689,19 @@ fn compile_statement(
 
             let value_var = compile_expr(ctx, qbe_func, &value, variables);
             if let Some(existing_var) = variables.get(variable.as_str()) {
+                let existing_type = ctx
+                    .resolved
+                    .type_definitions
+                    .get(&existing_var.1)
+                    .expect("existing variable type should exist");
                 qbe_func.assign_instr(
                     qbe::Value::Temporary(existing_var.0.clone()),
-                    qbe::Type::Word, // FIXME: read from the hashmap instead of hardcoding word.
+                    type_to_qbe(existing_type),
                     qbe::Instr::Copy(qbe::Value::Temporary(value_var.0.clone())),
                 );
+            } else {
+                variables.insert(variable.clone(), value_var);
             }
-            variables.insert(variable.clone(), value_var);
         }
     }
 }
@@ -402,7 +775,15 @@ fn new_id(labels: &[&str]) -> String {
 fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
     match ctx.resolved.type_definitions.get(ty) {
         Some(ty) => match ty {
+            ir::TypeDef::BuiltIn(BuiltInType::Bool) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::I32) => 4,
+            ir::TypeDef::Enum(enum_def) => {
+                if enum_def.is_tagged_union {
+                    8
+                } else {
+                    4
+                }
+            }
             ir::TypeDef::BuiltIn(BuiltInType::I64)
             | ir::TypeDef::BuiltIn(BuiltInType::String)
             | ir::TypeDef::Struct(_) => 8,
@@ -438,53 +819,188 @@ fn compile_expr(
 ) -> (QbeAssignName, ir::TypeRef) {
     trace!(?expr, "Compiling expression");
 
+    fn is_word_sized_value_type(ctx: &CodegenCtx, type_name: &str) -> bool {
+        match ctx.resolved.type_definitions.get(type_name) {
+            Some(ir::TypeDef::BuiltIn(BuiltInType::Bool))
+            | Some(ir::TypeDef::BuiltIn(BuiltInType::I32)) => true,
+            Some(ir::TypeDef::Enum(enum_def)) => !enum_def.is_tagged_union,
+            _ => false,
+        }
+    }
+
     match expr {
         parser::Expression::FieldAccess {
             struct_variable,
             field: field_name,
         } => {
-            let (struct_pointer_var, struct_name) =
-                variables.get(struct_variable.as_str()).unwrap();
-            let resolved = ctx.resolved.clone();
-            let typedef = resolved.type_definitions.get(struct_name).unwrap();
-            let ir::TypeDef::Struct(structdef) = typedef else {
-                panic!("Not really a struct: {struct_name}");
-            };
-            let field_offset = calculate_struct_field_offset(ctx, structdef, field_name);
-            let field_type = if let ir::TypeDef::Struct(s) = typedef {
-                s.struct_fields
-                    .iter()
-                    .find(|f| f.name == *field_name)
-                    .unwrap()
-                    .ty
-                    .clone()
-            } else {
-                panic!("Expected struct type")
-            };
+            if let Some((struct_pointer_var, struct_name)) = variables.get(struct_variable.as_str())
+            {
+                let resolved = ctx.resolved.clone();
+                let typedef = resolved.type_definitions.get(struct_name).unwrap();
+                let ir::TypeDef::Struct(structdef) = typedef else {
+                    panic!("Not really a struct: {struct_name}");
+                };
+                let field_offset = calculate_struct_field_offset(ctx, structdef, field_name);
+                let field_type = if let ir::TypeDef::Struct(s) = typedef {
+                    s.struct_fields
+                        .iter()
+                        .find(|f| f.name == *field_name)
+                        .unwrap()
+                        .ty
+                        .clone()
+                } else {
+                    panic!("Expected struct type")
+                };
 
-            let id = new_id(&["field", "access"]);
+                let id = new_id(&["field", "access"]);
 
-            let struct_field_address_id = new_id(&["field", "address", &field_name]);
-            func.assign_instr(
-                Value::Temporary(struct_field_address_id.clone()),
-                qbe::Type::Long,
-                Instr::Add(
-                    Value::Temporary(struct_pointer_var.clone()),
-                    Value::Const(field_offset),
-                ),
-            );
+                let struct_field_address_id = new_id(&["field", "address", &field_name]);
+                func.assign_instr(
+                    Value::Temporary(struct_field_address_id.clone()),
+                    qbe::Type::Long,
+                    Instr::Add(
+                        Value::Temporary(struct_pointer_var.clone()),
+                        Value::Const(field_offset),
+                    ),
+                );
 
-            func.assign_instr(
-                Value::Temporary(id.clone()),
-                type_to_qbe(ctx.resolved.type_definitions.get(&field_type).unwrap()),
-                Instr::Load(
+                func.assign_instr(
+                    Value::Temporary(id.clone()),
                     type_to_qbe(ctx.resolved.type_definitions.get(&field_type).unwrap()),
-                    Value::Temporary(struct_field_address_id),
-                ),
-            );
+                    Instr::Load(
+                        type_to_qbe(ctx.resolved.type_definitions.get(&field_type).unwrap()),
+                        Value::Temporary(struct_field_address_id),
+                    ),
+                );
 
-            (id, field_type)
+                (id, field_type)
+            } else {
+                let enum_def = match ctx.resolved.type_definitions.get(struct_variable) {
+                    Some(ir::TypeDef::Enum(enum_def)) => enum_def,
+                    _ => panic!("Unknown variable/type {}", struct_variable),
+                };
+                let variant = enum_def
+                    .variants
+                    .iter()
+                    .find(|v| v.name == *field_name)
+                    .unwrap();
+                assert!(
+                    variant.payload_ty.is_none(),
+                    "payload enum variant requires constructor call"
+                );
+                if enum_def.is_tagged_union {
+                    let enum_ptr = new_id(&["enum", "alloc"]);
+                    func.assign_instr(
+                        qbe::Value::Temporary(enum_ptr.clone()),
+                        qbe::Type::Long,
+                        qbe::Instr::Call(
+                            "malloc".to_string(),
+                            vec![(qbe::Type::Long, qbe::Value::Const(16))],
+                            None,
+                        ),
+                    );
+                    func.add_instr(qbe::Instr::Store(
+                        qbe::Type::Word,
+                        qbe::Value::Temporary(enum_ptr.clone()),
+                        qbe::Value::Const(variant.tag as u64),
+                    ));
+                    let payload_addr = new_id(&["enum", "payload", "addr"]);
+                    func.assign_instr(
+                        qbe::Value::Temporary(payload_addr.clone()),
+                        qbe::Type::Long,
+                        qbe::Instr::Add(
+                            qbe::Value::Temporary(enum_ptr.clone()),
+                            qbe::Value::Const(8),
+                        ),
+                    );
+                    func.add_instr(qbe::Instr::Store(
+                        qbe::Type::Long,
+                        qbe::Value::Temporary(payload_addr),
+                        qbe::Value::Const(0),
+                    ));
+                    (enum_ptr, enum_def.name.clone())
+                } else {
+                    let id = new_id(&["enum", "variant", struct_variable, field_name]);
+                    func.assign_instr(
+                        qbe::Value::Temporary(id.clone()),
+                        qbe::Type::Word,
+                        qbe::Instr::Copy(qbe::Value::Const(variant.tag as u64)),
+                    );
+                    (id, enum_def.name.clone())
+                }
+            }
         }
+        parser::Expression::PostfixCall { callee, args } => match callee.as_ref() {
+            parser::Expression::FieldAccess {
+                struct_variable,
+                field,
+            } => {
+                let (enum_name, variant_tag) =
+                    match ctx.resolved.type_definitions.get(struct_variable) {
+                        Some(ir::TypeDef::Enum(enum_def)) => {
+                            let variant =
+                                enum_def.variants.iter().find(|v| v.name == *field).unwrap();
+                            variant
+                                .payload_ty
+                                .as_ref()
+                                .expect("tag-only enum variant is not callable");
+                            (enum_def.name.clone(), variant.tag)
+                        }
+                        _ => panic!("unsupported postfix call target"),
+                    };
+                assert_eq!(
+                    args.len(),
+                    1,
+                    "enum payload constructors currently support a single argument"
+                );
+                let (arg_var, arg_ty) = compile_expr(ctx, func, &args[0], variables);
+                let enum_ptr = new_id(&["enum", "alloc"]);
+                func.assign_instr(
+                    qbe::Value::Temporary(enum_ptr.clone()),
+                    qbe::Type::Long,
+                    qbe::Instr::Call(
+                        "malloc".to_string(),
+                        vec![(qbe::Type::Long, qbe::Value::Const(16))],
+                        None,
+                    ),
+                );
+
+                func.add_instr(qbe::Instr::Store(
+                    qbe::Type::Word,
+                    qbe::Value::Temporary(enum_ptr.clone()),
+                    qbe::Value::Const(variant_tag as u64),
+                ));
+
+                let payload_addr = new_id(&["enum", "payload", "addr"]);
+                func.assign_instr(
+                    qbe::Value::Temporary(payload_addr.clone()),
+                    qbe::Type::Long,
+                    qbe::Instr::Add(
+                        qbe::Value::Temporary(enum_ptr.clone()),
+                        qbe::Value::Const(8),
+                    ),
+                );
+                let payload_value = if is_word_sized_value_type(ctx, &arg_ty) {
+                    let ext = new_id(&["enum", "payload", "ext"]);
+                    func.assign_instr(
+                        qbe::Value::Temporary(ext.clone()),
+                        qbe::Type::Long,
+                        qbe::Instr::Extsw(qbe::Value::Temporary(arg_var)),
+                    );
+                    qbe::Value::Temporary(ext)
+                } else {
+                    qbe::Value::Temporary(arg_var)
+                };
+                func.add_instr(qbe::Instr::Store(
+                    qbe::Type::Long,
+                    qbe::Value::Temporary(payload_addr),
+                    payload_value,
+                ));
+
+                (enum_ptr, enum_name)
+            }
+            _ => panic!("unsupported postfix call target"),
+        },
         parser::Expression::StructValue {
             struct_name,
             field_values,
@@ -561,8 +1077,38 @@ fn compile_expr(
 
             (id, "String".to_string())
         }
+        parser::Expression::Literal(parser::Literal::Bool(value)) => {
+            let id = new_id(&["literal", "bool"]);
+            func.assign_instr(
+                Value::Temporary(id.clone()),
+                Type::Word,
+                qbe::Instr::Copy(qbe::Value::Const(if *value { 1 } else { 0 })),
+            );
+            (id, "Bool".to_string())
+        }
         parser::Expression::Variable(name) => {
             return variables.get(name).unwrap().clone();
+        }
+        parser::Expression::UnaryOp(op, expr) => {
+            let id = new_id(&["unary_op"]);
+            let (expr_var, _expr_ty) = compile_expr(ctx, func, expr, variables);
+
+            match op {
+                UnaryOp::Not => {
+                    func.assign_instr(
+                        qbe::Value::Temporary(id.clone()),
+                        qbe::Type::Word,
+                        qbe::Instr::Cmp(
+                            qbe::Type::Word,
+                            qbe::Cmp::Eq,
+                            qbe::Value::Temporary(expr_var),
+                            qbe::Value::Const(0),
+                        ),
+                    );
+                }
+            }
+
+            (id, "Bool".to_string())
         }
         parser::Expression::Call(name, args) => {
             let id = new_id(&["call", name]);
@@ -600,42 +1146,47 @@ fn compile_expr(
         }
         parser::Expression::BinOp(op, left, right) => {
             let id = new_id(&["bin_op"]);
-            let left_var = compile_expr(ctx, func, left, variables).0;
-            let right_var = compile_expr(ctx, func, right, variables).0;
+            let (left_var, left_ty) = compile_expr(ctx, func, left, variables);
+            let (right_var, right_ty) = compile_expr(ctx, func, right, variables);
+            let cmp_ty = if left_ty == "I64" || right_ty == "I64" {
+                qbe::Type::Long
+            } else {
+                qbe::Type::Word
+            };
 
             let instr = match op {
                 Op::Eq => qbe::Instr::Cmp(
-                    qbe::Type::Word,
+                    cmp_ty.clone(),
                     qbe::Cmp::Eq,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
                 Op::Neq => qbe::Instr::Cmp(
-                    qbe::Type::Word,
+                    cmp_ty.clone(),
                     qbe::Cmp::Ne,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
                 Op::Lt => qbe::Instr::Cmp(
-                    qbe::Type::Word,
+                    cmp_ty.clone(),
                     qbe::Cmp::Slt,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
                 Op::Gt => qbe::Instr::Cmp(
-                    qbe::Type::Word,
+                    cmp_ty.clone(),
                     qbe::Cmp::Sgt,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
                 Op::Le => qbe::Instr::Cmp(
-                    qbe::Type::Word,
+                    cmp_ty.clone(),
                     qbe::Cmp::Sle,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
                 Op::Ge => qbe::Instr::Cmp(
-                    qbe::Type::Word,
+                    cmp_ty,
                     qbe::Cmp::Sge,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
@@ -656,11 +1207,25 @@ fn compile_expr(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
+                Op::And => qbe::Instr::And(
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                Op::Or => qbe::Instr::Or(
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
             };
 
             func.assign_instr(qbe::Value::Temporary(id.clone()), qbe::Type::Word, instr);
 
-            (id, "I32".to_string())
+            let out_ty = match op {
+                Op::And | Op::Or => "Bool".to_string(),
+                Op::Eq | Op::Neq | Op::Lt | Op::Gt | Op::Le | Op::Ge => "Bool".to_string(),
+                Op::Add | Op::Sub | Op::Mul | Op::Div => left_ty,
+            };
+
+            (id, out_ty)
         }
     }
 }

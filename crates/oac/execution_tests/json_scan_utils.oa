@@ -1,0 +1,73 @@
+fun print_parse_result(r: ParseResult) -> I32 {
+	match r {
+		ParseResult.Ok(end) => {
+			print(end)
+		}
+		ParseResult.Err(err) => {
+			match err {
+				ParseErr.EmptyInput => {
+					print(1000)
+				}
+				ParseErr.InvalidValue => {
+					print(1001)
+				}
+				ParseErr.TrailingData => {
+					print(1002)
+				}
+			}
+		}
+	}
+
+	return 0
+}
+
+fun main() -> I32 {
+	print(parse_keyword_at("true" "true" 0))
+	print(parse_keyword_at("truex" "true" 0))
+	print(parse_keyword_at("tru" "true" 0))
+
+	print(consume_digits("123abc" 0))
+	print(consume_digits("x123" 0))
+
+	print(consume_json_string("\"hi\"" 0))
+	print(consume_json_string("\"a\\\"b\"" 0))
+	print(consume_json_string("\"a\\nb\"" 0))
+	print(consume_json_string("\"a\nb\"" 0))
+	print(consume_json_string("\"\\x\"" 0))
+	print(consume_json_string("\"abc" 0))
+	print(consume_json_string("abc" 0))
+
+	print(consume_json_number("0" 0))
+	print(consume_json_number("-12" 0))
+	print(consume_json_number("3.14x" 0))
+	print(consume_json_number("1e10" 0))
+	print(consume_json_number("-2.5e-3," 0))
+	print(consume_json_number("01" 0))
+	print(consume_json_number("-.1" 0))
+	print(consume_json_number("1e" 0))
+
+	print_parse_result(parse_value_end_result(" true " 0))
+	print_parse_result(parse_value_end_result("\"ok\"" 0))
+	print_parse_result(parse_value_end_result(" -12e+3]" 0))
+	print_parse_result(parse_value_end_result("xx\"a\\nb\"" 2))
+	print_parse_result(parse_value_end_result(" [1]" 0))
+	print_parse_result(parse_value_end_result(" \"\\x\"" 0))
+	print_parse_result(parse_value_end_result(" \"a\nb\"" 0))
+	print_parse_result(parse_value_end_result("[]" 0))
+	print_parse_result(parse_value_end_result("[1,2]" 0))
+	print_parse_result(parse_value_end_result("[1, [2,3], {\"k\":false}]" 0))
+	print_parse_result(parse_value_end_result("[1,]" 0))
+	print_parse_result(parse_value_end_result("[1 2]" 0))
+	print_parse_result(parse_value_end_result("{}" 0))
+	print_parse_result(parse_value_end_result("{\"a\":1}" 0))
+	print_parse_result(parse_value_end_result("{\"a\":1,\"b\":[2]}" 0))
+	print_parse_result(parse_value_end_result("{a:1}" 0))
+	print_parse_result(parse_value_end_result("{\"a\" 1}" 0))
+	print_parse_result(parse_value_end_result("{\"a\":1,}" 0))
+
+	print_parse_result(parse_json_document_result("true"))
+	print_parse_result(parse_json_document_result("true x"))
+	print_parse_result(parse_json_document_result(" "))
+
+	return 0
+}

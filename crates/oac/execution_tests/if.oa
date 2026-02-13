@@ -3,7 +3,7 @@ fun main() -> I32 {
 	print(0)
 	print(1)
 
-	if lt(sum(0 1) 100) {
+	if 0 + 1 < 100 {
 		print(100)
 	}
 

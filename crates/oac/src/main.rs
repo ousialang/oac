@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use tracing::info;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer};
@@ -87,9 +87,11 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
 
     let qbe_ir = qbe_backend::compile(ir);
+    let qbe_ir_text = qbe_ir.to_string();
     let qbe_ir_path = target_dir.join("ir.qbe");
-    std::fs::write(&qbe_ir_path, qbe_ir.to_string())?;
+    std::fs::write(&qbe_ir_path, &qbe_ir_text)?;
     info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
+    try_emit_qbe_smt_sidecar(&qbe_ir_text, &target_dir);
 
     let assembly_path = target_dir.join("assembly.s");
     let mut qbe_cmd = std::process::Command::new("qbe");
@@ -137,6 +139,88 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     info!(executable_path = %executable_path.display(), "Assembly compiled to executable");
 
     Ok(())
+}
+
+fn try_emit_qbe_smt_sidecar(qbe_ir_text: &str, target_dir: &Path) {
+    let smt_path = target_dir.join("ir.smt2");
+    let options = qbe_smt::EncodeOptions {
+        max_steps: 256,
+        emit_model: false,
+    };
+    let qbe_slice = extract_qbe_function_for_smt(qbe_ir_text).unwrap_or_else(|| {
+        warn!("No QBE function body found for SMT generation; continuing build");
+        String::new()
+    });
+    if qbe_slice.is_empty() {
+        return;
+    }
+
+    let smt = match qbe_smt::qbe_to_smt(&qbe_slice, &options) {
+        Ok(smt) => smt,
+        Err(err) => {
+            warn!(error = %err, "Failed to generate QBE SMT sidecar; continuing build");
+            return;
+        }
+    };
+
+    if let Err(err) = std::fs::write(&smt_path, smt) {
+        warn!(
+            smt_path = %smt_path.display(),
+            error = %err,
+            "Failed to write QBE SMT sidecar; continuing build"
+        );
+        return;
+    }
+
+    info!(smt_path = %smt_path.display(), "QBE SMT sidecar generated");
+}
+
+fn extract_qbe_function_for_smt(qbe_ir_text: &str) -> Option<String> {
+    // Prefer $main so the sidecar aligns with the executable entrypoint.
+    extract_named_qbe_function(qbe_ir_text, "main")
+        .or_else(|| extract_first_qbe_function(qbe_ir_text))
+}
+
+fn extract_named_qbe_function(qbe_ir_text: &str, function_name: &str) -> Option<String> {
+    extract_qbe_function(qbe_ir_text, |line| {
+        line.contains("function") && line.contains(&format!("${function_name}("))
+    })
+}
+
+fn extract_first_qbe_function(qbe_ir_text: &str) -> Option<String> {
+    extract_qbe_function(qbe_ir_text, |line| line.contains("function") && line.contains('$'))
+}
+
+fn extract_qbe_function<F>(qbe_ir_text: &str, predicate: F) -> Option<String>
+where
+    F: Fn(&str) -> bool,
+{
+    let lines: Vec<&str> = qbe_ir_text.lines().collect();
+    let start = lines.iter().position(|line| predicate(line.trim()))?;
+
+    let mut depth: i32 = 0;
+    let mut started_body = false;
+    let mut out = String::new();
+
+    for line in lines.iter().skip(start) {
+        out.push_str(line);
+        out.push('\n');
+
+        for ch in line.chars() {
+            if ch == '{' {
+                depth += 1;
+                started_body = true;
+            } else if ch == '}' {
+                depth -= 1;
+            }
+        }
+
+        if started_body && depth == 0 {
+            break;
+        }
+    }
+
+    if started_body { Some(out) } else { None }
 }
 
 fn initialize_logging() {

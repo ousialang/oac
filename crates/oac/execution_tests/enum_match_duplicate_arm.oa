@@ -1,0 +1,20 @@
+enum OptionI32 {
+	None,
+	Some(I32),
+}
+
+fun main() -> I32 {
+	v = OptionI32.Some(7)
+	match v {
+		OptionI32.None => {
+			print(0)
+		}
+		OptionI32.Some(x) => {
+			print(x)
+		}
+		OptionI32.Some(y) => {
+			print(y)
+		}
+	}
+	return 0
+}

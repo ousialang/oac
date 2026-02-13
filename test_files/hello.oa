@@ -1,7 +1,4 @@
-// This is a comment and it's ignored by the parser.
-fun foobar() {
-	foo = 2
-	return foo
-	bar = 3
-	return bar
+// Smoke-test program for `oac build`.
+fun main() -> I32 {
+	return 0
 }

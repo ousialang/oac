@@ -1,0 +1,30 @@
+enum Status {
+	Ok,
+	Err,
+}
+
+fun flip(s: Status) -> Status {
+	if s == Status.Ok {
+		return Status.Err
+	}
+	return Status.Ok
+}
+
+fun main() -> I32 {
+	a = flip(Status.Ok)
+	b = flip(Status.Err)
+
+	if a == Status.Err {
+		print(1)
+	} else {
+		print(0)
+	}
+
+	if b == Status.Ok {
+		print(2)
+	} else {
+		print(0)
+	}
+
+	return 0
+}
