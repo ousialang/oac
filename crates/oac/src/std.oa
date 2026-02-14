@@ -3,6 +3,230 @@ struct NewString {
 	len: I64,
 }
 
+template LinkedList(T) {
+	struct Node {
+		value: T,
+		next: LinkedList,
+	}
+
+	enum LinkedList {
+		Empty,
+		Cons(Node),
+	}
+
+	fun empty() -> LinkedList {
+		return LinkedList.Empty
+	}
+
+	fun push_front(value: T, list: LinkedList) -> LinkedList {
+		node = Node struct {
+			value: value,
+			next: list,
+		}
+		return LinkedList.Cons(node)
+	}
+
+	fun is_empty(list: LinkedList) -> Bool {
+		return match list {
+			LinkedList.Empty => true
+			LinkedList.Cons(_node) => false
+		}
+	}
+
+	fun head_or(list: LinkedList, fallback: T) -> T {
+		return match list {
+			LinkedList.Empty => fallback
+			LinkedList.Cons(node) => node.value
+		}
+	}
+
+	fun tail_or(list: LinkedList, fallback: LinkedList) -> LinkedList {
+		return match list {
+			LinkedList.Empty => fallback
+			LinkedList.Cons(node) => node.next
+		}
+	}
+
+	fun length(list: LinkedList) -> I32 {
+		return match list {
+			LinkedList.Empty => 0
+			LinkedList.Cons(node) => 1 + length(node.next)
+		}
+	}
+}
+
+template HashTable(T) {
+	struct Entry {
+		key: I32,
+		value: T,
+	}
+
+	enum Slot {
+		Empty,
+		Node(Entry),
+	}
+
+	enum Lookup {
+		Missing,
+		Found(T),
+	}
+
+	struct HashTable {
+		s0: Slot,
+		s1: Slot,
+		s2: Slot,
+		s3: Slot,
+		s4: Slot,
+		s5: Slot,
+		s6: Slot,
+		s7: Slot,
+	}
+
+	fun empty() -> HashTable {
+		return HashTable struct { s0: Slot.Empty, s1: Slot.Empty, s2: Slot.Empty, s3: Slot.Empty, s4: Slot.Empty, s5: Slot.Empty, s6: Slot.Empty, s7: Slot.Empty, }
+	}
+
+	fun hash_key(key: I32) -> I32 {
+		k = key
+		if k < 0 {
+			k = 0 - k
+		}
+
+		div = k / 8
+		return k - (div * 8)
+	}
+
+	fun slot_at(table: HashTable, index: I32) -> Slot {
+		if index == 0 {
+			return table.s0
+		}
+		if index == 1 {
+			return table.s1
+		}
+		if index == 2 {
+			return table.s2
+		}
+		if index == 3 {
+			return table.s3
+		}
+		if index == 4 {
+			return table.s4
+		}
+		if index == 5 {
+			return table.s5
+		}
+		if index == 6 {
+			return table.s6
+		}
+
+		return table.s7
+	}
+
+	fun with_slot(table: HashTable, index: I32, slot: Slot) -> HashTable {
+		if index == 0 {
+			return HashTable struct { s0: slot, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 1 {
+			return HashTable struct { s0: table.s0, s1: slot, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 2 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: slot, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 3 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: slot, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 4 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: slot, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 5 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: slot, s6: table.s6, s7: table.s7, }
+		}
+		if index == 6 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: slot, s7: table.s7, }
+		}
+
+		return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: slot, }
+	}
+
+	fun add_wrap(index: I32, delta: I32) -> I32 {
+		n = index + delta
+		if n >= 8 {
+			return n - 8
+		}
+		return n
+	}
+
+	fun put_probe(table: HashTable, start: I32, delta: I32, key: I32, value: T) -> HashTable {
+		if delta >= 8 {
+			return table
+		}
+
+		index = add_wrap(start, delta)
+		slot = slot_at(table, index)
+		match slot {
+			Slot.Empty => {
+				entry = Entry struct { key: key, value: value, }
+				return with_slot(table, index, Slot.Node(entry))
+			}
+			Slot.Node(entry) => {
+				if entry.key == key {
+					replaced = Entry struct { key: key, value: value, }
+					return with_slot(table, index, Slot.Node(replaced))
+				}
+				return put_probe(table, start, delta + 1, key, value)
+			}
+		}
+	}
+
+	fun get_probe(table: HashTable, start: I32, delta: I32, key: I32) -> Lookup {
+		if delta >= 8 {
+			return Lookup.Missing
+		}
+
+		index = add_wrap(start, delta)
+		slot = slot_at(table, index)
+		match slot {
+			Slot.Empty => {
+				return Lookup.Missing
+			}
+			Slot.Node(entry) => {
+				if entry.key == key {
+					return Lookup.Found(entry.value)
+				}
+				return get_probe(table, start, delta + 1, key)
+			}
+		}
+	}
+
+	fun slot_size(slot: Slot) -> I32 {
+		return match slot {
+			Slot.Empty => 0
+			Slot.Node(_entry) => 1
+		}
+	}
+
+	fun put(table: HashTable, key: I32, value: T) -> HashTable {
+		start = hash_key(key)
+		return put_probe(table, start, 0, key, value)
+	}
+
+	fun get(table: HashTable, key: I32) -> Lookup {
+		start = hash_key(key)
+		return get_probe(table, start, 0, key)
+	}
+
+	fun contains_key(table: HashTable, key: I32) -> Bool {
+		return match get(table, key) {
+			Lookup.Missing => false
+			Lookup.Found(_value) => true
+		}
+	}
+
+	fun size(table: HashTable) -> I32 {
+		return slot_size(table.s0) + slot_size(table.s1) + slot_size(table.s2) + slot_size(table.s3) + slot_size(table.s4) + slot_size(table.s5) + slot_size(table.s6) + slot_size(table.s7)
+	}
+}
+
 enum ParseErr {
 	EmptyInput,
 	InvalidValue,
@@ -34,7 +258,7 @@ fun string_eq(a: String, b: String) -> Bool {
 
 	i = 0
 	while i < len_a {
-		if char_at(a i) != char_at(b i) {
+		if char_at(a, i) != char_at(b, i) {
 			return false
 		}
 		i = i + 1
@@ -55,7 +279,7 @@ fun skip_ws(s: String, start: I32) -> I32 {
 	i = start
 	n = string_len(s)
 
-	while i < n && char_is_ws(char_at(s i)) {
+	while i < n && char_is_ws(char_at(s, i)) {
 		i = i + 1
 	}
 
@@ -72,7 +296,7 @@ fun starts_with_at(s: String, prefix: String, start: I32) -> Bool {
 
 	i = 0
 	while i < m {
-		if char_at(s start + i) != char_at(prefix i) {
+		if char_at(s, start + i) != char_at(prefix, i) {
 			return false
 		}
 		i = i + 1
@@ -86,7 +310,7 @@ fun parse_fail() -> I32 {
 }
 
 fun parse_keyword_at(s: String, keyword: String, start: I32) -> I32 {
-	if starts_with_at(s keyword start) {
+	if starts_with_at(s, keyword, start) {
 		return start + string_len(keyword)
 	}
 
@@ -97,7 +321,7 @@ fun consume_digits(s: String, start: I32) -> I32 {
 	i = start
 	n = string_len(s)
 
-	while i < n && char_is_digit(char_at(s i)) {
+	while i < n && char_is_digit(char_at(s, i)) {
 		i = i + 1
 	}
 
@@ -113,13 +337,13 @@ fun consume_json_string(s: String, start: I32) -> I32 {
 	if start >= n {
 		return parse_fail()
 	}
-	if char_at(s start) != 34 {
+	if char_at(s, start) != 34 {
 		return parse_fail()
 	}
 
 	i = start + 1
 	while i < n {
-		ch = char_at(s i)
+		ch = char_at(s, i)
 		if ch == 34 {
 			return i + 1
 		}
@@ -128,7 +352,7 @@ fun consume_json_string(s: String, start: I32) -> I32 {
 			if i + 1 >= n {
 				return parse_fail()
 			}
-			esc = char_at(s i + 1)
+			esc = char_at(s, i + 1)
 			if !is_json_escape(esc) {
 				return parse_fail()
 			}
@@ -152,25 +376,25 @@ fun consume_json_number(s: String, start: I32) -> I32 {
 		return parse_fail()
 	}
 
-	if char_at(s i) == 45 {
+	if char_at(s, i) == 45 {
 		i = i + 1
 		if i >= n {
 			return parse_fail()
 		}
 	}
 
-	if char_at(s i) == 48 {
+	if char_at(s, i) == 48 {
 		i = i + 1
 	} else {
-		if !char_is_digit(char_at(s i)) {
+		if !char_is_digit(char_at(s, i)) {
 			return parse_fail()
 		}
-		i = consume_digits(s i)
+		i = consume_digits(s, i)
 	}
 
-	if i < n && char_at(s i) == 46 {
+	if i < n && char_at(s, i) == 46 {
 		frac_start = i + 1
-		frac_end = consume_digits(s frac_start)
+		frac_end = consume_digits(s, frac_start)
 		if frac_end == frac_start {
 			return parse_fail()
 		}
@@ -178,19 +402,19 @@ fun consume_json_number(s: String, start: I32) -> I32 {
 	}
 
 	if i < n {
-		exp_ch = char_at(s i)
+		exp_ch = char_at(s, i)
 		if exp_ch == 101 || exp_ch == 69 {
 			i = i + 1
 
 			if i < n {
-				sign_ch = char_at(s i)
+				sign_ch = char_at(s, i)
 				if sign_ch == 43 || sign_ch == 45 {
 					i = i + 1
 				}
 			}
 
 			exp_start = i
-			exp_end = consume_digits(s i)
+			exp_end = consume_digits(s, i)
 			if exp_end == exp_start {
 				return parse_fail()
 			}
@@ -202,32 +426,32 @@ fun consume_json_number(s: String, start: I32) -> I32 {
 }
 
 fun consume_json_array(s: String, start: I32) -> I32 {
-	i = skip_ws(s start)
+	i = skip_ws(s, start)
 	n = string_len(s)
 
-	if i >= n || char_at(s i) != 91 {
+	if i >= n || char_at(s, i) != 91 {
 		return parse_fail()
 	}
 
-	i = skip_ws(s i + 1)
-	if i < n && char_at(s i) == 93 {
+	i = skip_ws(s, i + 1)
+	if i < n && char_at(s, i) == 93 {
 		return i + 1
 	}
 
 	while true {
-		value_end = parse_value_end(s i)
+		value_end = parse_value_end(s, i)
 		if value_end == parse_fail() {
 			return parse_fail()
 		}
 
-		i = skip_ws(s value_end)
+		i = skip_ws(s, value_end)
 		if i >= n {
 			return parse_fail()
 		}
 
-		ch = char_at(s i)
+		ch = char_at(s, i)
 		if ch == 44 {
-			i = skip_ws(s i + 1)
+			i = skip_ws(s, i + 1)
 		} else if ch == 93 {
 			return i + 1
 		} else {
@@ -239,43 +463,43 @@ fun consume_json_array(s: String, start: I32) -> I32 {
 }
 
 fun consume_json_object(s: String, start: I32) -> I32 {
-	i = skip_ws(s start)
+	i = skip_ws(s, start)
 	n = string_len(s)
 
-	if i >= n || char_at(s i) != 123 {
+	if i >= n || char_at(s, i) != 123 {
 		return parse_fail()
 	}
 
-	i = skip_ws(s i + 1)
-	if i < n && char_at(s i) == 125 {
+	i = skip_ws(s, i + 1)
+	if i < n && char_at(s, i) == 125 {
 		return i + 1
 	}
 
 	while true {
-		key_end = consume_json_string(s i)
+		key_end = consume_json_string(s, i)
 		if key_end == parse_fail() {
 			return parse_fail()
 		}
 
-		i = skip_ws(s key_end)
-		if i >= n || char_at(s i) != 58 {
+		i = skip_ws(s, key_end)
+		if i >= n || char_at(s, i) != 58 {
 			return parse_fail()
 		}
 
-		i = skip_ws(s i + 1)
-		value_end = parse_value_end(s i)
+		i = skip_ws(s, i + 1)
+		value_end = parse_value_end(s, i)
 		if value_end == parse_fail() {
 			return parse_fail()
 		}
 
-		i = skip_ws(s value_end)
+		i = skip_ws(s, value_end)
 		if i >= n {
 			return parse_fail()
 		}
 
-		ch = char_at(s i)
+		ch = char_at(s, i)
 		if ch == 44 {
-			i = skip_ws(s i + 1)
+			i = skip_ws(s, i + 1)
 		} else if ch == 125 {
 			return i + 1
 		} else {
@@ -287,37 +511,37 @@ fun consume_json_object(s: String, start: I32) -> I32 {
 }
 
 fun parse_value_end(s: String, start: I32) -> I32 {
-	i = skip_ws(s start)
+	i = skip_ws(s, start)
 	n = string_len(s)
 
 	if i >= n {
 		return parse_fail()
 	}
 
-	keyword_end = parse_keyword_at(s "true" i)
+	keyword_end = parse_keyword_at(s, "true", i)
 	if keyword_end != parse_fail() {
 		return keyword_end
 	}
-	keyword_end = parse_keyword_at(s "false" i)
+	keyword_end = parse_keyword_at(s, "false", i)
 	if keyword_end != parse_fail() {
 		return keyword_end
 	}
-	keyword_end = parse_keyword_at(s "null" i)
+	keyword_end = parse_keyword_at(s, "null", i)
 	if keyword_end != parse_fail() {
 		return keyword_end
 	}
 
-	if char_at(s i) == 34 {
-		return consume_json_string(s i)
+	if char_at(s, i) == 34 {
+		return consume_json_string(s, i)
 	}
-	if char_at(s i) == 91 {
-		return consume_json_array(s i)
+	if char_at(s, i) == 91 {
+		return consume_json_array(s, i)
 	}
-	if char_at(s i) == 123 {
-		return consume_json_object(s i)
+	if char_at(s, i) == 123 {
+		return consume_json_object(s, i)
 	}
 
-	number_end = consume_json_number(s i)
+	number_end = consume_json_number(s, i)
 	if number_end != parse_fail() {
 		return number_end
 	}
@@ -326,7 +550,7 @@ fun parse_value_end(s: String, start: I32) -> I32 {
 }
 
 fun parse_value_end_result(s: String, start: I32) -> ParseResult {
-	end = parse_value_end(s start)
+	end = parse_value_end(s, start)
 	if end == parse_fail() {
 		return ParseResult.Err(ParseErr.InvalidValue)
 	}
@@ -334,21 +558,21 @@ fun parse_value_end_result(s: String, start: I32) -> ParseResult {
 }
 
 fun json_kind(s: String) -> JsonKind {
-	i = skip_ws(s 0)
-	result = parse_value_end_result(s i)
+	i = skip_ws(s, 0)
+	result = parse_value_end_result(s, i)
 	match result {
 		ParseResult.Ok(_end) => {
-			if parse_keyword_at(s "true" i) != parse_fail() {
+			if parse_keyword_at(s, "true", i) != parse_fail() {
 				return JsonKind.True
 			}
-			if parse_keyword_at(s "false" i) != parse_fail() {
+			if parse_keyword_at(s, "false", i) != parse_fail() {
 				return JsonKind.False
 			}
-			if parse_keyword_at(s "null" i) != parse_fail() {
+			if parse_keyword_at(s, "null", i) != parse_fail() {
 				return JsonKind.Null
 			}
 
-			ch = char_at(s i)
+			ch = char_at(s, i)
 			if ch == 123 {
 				return JsonKind.Object
 			}
@@ -368,18 +592,18 @@ fun json_kind(s: String) -> JsonKind {
 }
 
 fun parse_json_document_result(s: String) -> ParseResult {
-	start = skip_ws(s 0)
+	start = skip_ws(s, 0)
 	if start >= string_len(s) {
 		return ParseResult.Err(ParseErr.EmptyInput)
 	}
 
-	result = parse_value_end_result(s start)
+	result = parse_value_end_result(s, start)
 	match result {
 		ParseResult.Err(err) => {
 			return ParseResult.Err(err)
 		}
 		ParseResult.Ok(end0) => {
-			end = skip_ws(s end0)
+			end = skip_ws(s, end0)
 			if end != string_len(s) {
 				return ParseResult.Err(ParseErr.TrailingData)
 			}

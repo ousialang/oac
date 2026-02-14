@@ -1,0 +1,39 @@
+template Option(T) {
+	enum Option {
+		None,
+		Some(T),
+	}
+
+	fun is_some(v: Option) -> Bool {
+		return match v {
+			Option.None => false
+			Option.Some(_x) => true
+		}
+	}
+
+	fun unwrap_or(v: Option, fallback: T) -> T {
+		return match v {
+			Option.None => fallback
+			Option.Some(x) => x
+		}
+	}
+}
+
+instantiate OptionI32 = Option(I32)
+
+fun main() -> I32 {
+	a = OptionI32.Some(7)
+	b = OptionI32.None
+
+	if OptionI32__is_some(a) {
+		print(OptionI32__unwrap_or(a, 0))
+	}
+
+	if OptionI32__is_some(b) {
+		print(1)
+	} else {
+		print(OptionI32__unwrap_or(b, 9))
+	}
+
+	return 0
+}

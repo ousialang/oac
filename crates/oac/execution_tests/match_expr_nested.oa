@@ -1,0 +1,26 @@
+enum LocalErr {
+	Empty,
+	Invalid,
+}
+
+enum LocalResult {
+	Ok(I32),
+	Err(LocalErr),
+}
+
+fun score(r: LocalResult) -> I32 {
+	return match r {
+		LocalResult.Ok(v) => v + 1
+		LocalResult.Err(err) => match err {
+			LocalErr.Empty => 10
+			LocalErr.Invalid => 11
+		}
+	}
+}
+
+fun main() -> I32 {
+	print(score(LocalResult.Ok(5)))
+	print(score(LocalResult.Err(LocalErr.Empty)))
+	print(score(LocalResult.Err(LocalErr.Invalid)))
+	return 0
+}

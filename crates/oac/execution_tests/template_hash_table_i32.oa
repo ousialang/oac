@@ -1,0 +1,37 @@
+instantiate IntTable = HashTable(I32)
+
+fun print_lookup(v: IntTable__Lookup) -> I32 {
+	match v {
+		IntTable__Lookup.Missing => {
+			print(99)
+			return 0
+		}
+		IntTable__Lookup.Found(x) => {
+			print(x)
+			return 0
+		}
+	}
+}
+
+fun main() -> I32 {
+	table = IntTable__empty()
+	print(IntTable__size(table))
+
+	table = IntTable__put(table, 1, 10)
+	table = IntTable__put(table, 9, 90)
+	table = IntTable__put(table, 2, 20)
+	print(IntTable__size(table))
+
+	print_lookup(IntTable__get(table, 1))
+	print_lookup(IntTable__get(table, 9))
+	print_lookup(IntTable__get(table, 42))
+
+	table = IntTable__put(table, 1, 11)
+	print(IntTable__size(table))
+	print_lookup(IntTable__get(table, 1))
+
+	print(IntTable__contains_key(table, 2))
+	print(IntTable__contains_key(table, 42))
+
+	return 0
+}

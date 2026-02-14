@@ -2,12 +2,12 @@ fun main() -> I32 {
 	// "{\n\t\\\"x\\\":1}" decoded should start with '{', newline, tab, '\\', '"', 'x'
 	s = "{\n\t\\\"x\\\":1}"
 
-	print(char_at(s 0))
-	print(char_at(s 1))
-	print(char_at(s 2))
-	print(char_at(s 3))
-	print(char_at(s 4))
-	print(char_at(s 5))
+	print(char_at(s, 0))
+	print(char_at(s, 1))
+	print(char_at(s, 2))
+	print(char_at(s, 3))
+	print(char_at(s, 4))
+	print(char_at(s, 5))
 
 	return 0
 }

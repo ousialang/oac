@@ -279,7 +279,12 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         ast.top_level_functions
             .extend(stdlib_ast.top_level_functions);
         ast.type_definitions.extend(stdlib_ast.type_definitions);
+        ast.template_definitions
+            .extend(stdlib_ast.template_definitions);
+        ast.template_instantiations
+            .extend(stdlib_ast.template_instantiations);
     }
+    expand_templates(&mut ast)?;
 
     let mut program = ResolvedProgram {
         ast: ast.clone(),
@@ -650,7 +655,399 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 }
 
-fn get_expression_type(
+fn type_def_name(type_def: &parser::TypeDefDecl) -> &str {
+    match type_def {
+        parser::TypeDefDecl::Struct(s) => &s.name,
+        parser::TypeDefDecl::Enum(e) => &e.name,
+    }
+}
+
+fn rewrite_type_ref(
+    ty: &str,
+    type_param: &str,
+    concrete_type: &str,
+    local_type_name_map: &HashMap<String, String>,
+) -> String {
+    if ty == type_param {
+        concrete_type.to_string()
+    } else if let Some(mapped) = local_type_name_map.get(ty) {
+        mapped.clone()
+    } else {
+        ty.to_string()
+    }
+}
+
+fn rewrite_expression(
+    expr: &Expression,
+    local_type_name_map: &HashMap<String, String>,
+    local_function_name_map: &HashMap<String, String>,
+) -> Expression {
+    match expr {
+        Expression::Match { subject, arms } => Expression::Match {
+            subject: Box::new(rewrite_expression(
+                subject,
+                local_type_name_map,
+                local_function_name_map,
+            )),
+            arms: arms
+                .iter()
+                .map(|arm| parser::MatchExprArm {
+                    pattern: match &arm.pattern {
+                        parser::MatchPattern::Variant {
+                            type_name,
+                            variant_name,
+                            binder,
+                        } => parser::MatchPattern::Variant {
+                            type_name: local_type_name_map
+                                .get(type_name)
+                                .cloned()
+                                .unwrap_or_else(|| type_name.clone()),
+                            variant_name: variant_name.clone(),
+                            binder: binder.clone(),
+                        },
+                    },
+                    value: rewrite_expression(
+                        &arm.value,
+                        local_type_name_map,
+                        local_function_name_map,
+                    ),
+                })
+                .collect(),
+        },
+        Expression::Literal(lit) => Expression::Literal(lit.clone()),
+        Expression::Variable(name) => Expression::Variable(name.clone()),
+        Expression::Call(name, args) => {
+            let mapped_name = local_function_name_map
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.clone());
+            Expression::Call(
+                mapped_name,
+                args.iter()
+                    .map(|arg| {
+                        rewrite_expression(arg, local_type_name_map, local_function_name_map)
+                    })
+                    .collect(),
+            )
+        }
+        Expression::PostfixCall { callee, args } => Expression::PostfixCall {
+            callee: Box::new(rewrite_expression(
+                callee,
+                local_type_name_map,
+                local_function_name_map,
+            )),
+            args: args
+                .iter()
+                .map(|arg| rewrite_expression(arg, local_type_name_map, local_function_name_map))
+                .collect(),
+        },
+        Expression::BinOp(op, left, right) => Expression::BinOp(
+            *op,
+            Box::new(rewrite_expression(
+                left,
+                local_type_name_map,
+                local_function_name_map,
+            )),
+            Box::new(rewrite_expression(
+                right,
+                local_type_name_map,
+                local_function_name_map,
+            )),
+        ),
+        Expression::UnaryOp(op, expr) => Expression::UnaryOp(
+            *op,
+            Box::new(rewrite_expression(
+                expr,
+                local_type_name_map,
+                local_function_name_map,
+            )),
+        ),
+        Expression::FieldAccess {
+            struct_variable,
+            field,
+        } => Expression::FieldAccess {
+            struct_variable: local_type_name_map
+                .get(struct_variable)
+                .cloned()
+                .unwrap_or_else(|| struct_variable.clone()),
+            field: field.clone(),
+        },
+        Expression::StructValue {
+            struct_name,
+            field_values,
+        } => Expression::StructValue {
+            struct_name: local_type_name_map
+                .get(struct_name)
+                .cloned()
+                .unwrap_or_else(|| struct_name.clone()),
+            field_values: field_values
+                .iter()
+                .map(|(name, expr)| {
+                    (
+                        name.clone(),
+                        rewrite_expression(expr, local_type_name_map, local_function_name_map),
+                    )
+                })
+                .collect(),
+        },
+    }
+}
+
+fn rewrite_statement(
+    statement: &parser::Statement,
+    local_type_name_map: &HashMap<String, String>,
+    local_function_name_map: &HashMap<String, String>,
+) -> parser::Statement {
+    match statement {
+        parser::Statement::StructDef { def } => parser::Statement::StructDef { def: def.clone() },
+        parser::Statement::Match { subject, arms } => parser::Statement::Match {
+            subject: rewrite_expression(subject, local_type_name_map, local_function_name_map),
+            arms: arms
+                .iter()
+                .map(|arm| parser::MatchArm {
+                    pattern: match &arm.pattern {
+                        parser::MatchPattern::Variant {
+                            type_name,
+                            variant_name,
+                            binder,
+                        } => parser::MatchPattern::Variant {
+                            type_name: local_type_name_map
+                                .get(type_name)
+                                .cloned()
+                                .unwrap_or_else(|| type_name.clone()),
+                            variant_name: variant_name.clone(),
+                            binder: binder.clone(),
+                        },
+                    },
+                    body: arm
+                        .body
+                        .iter()
+                        .map(|statement| {
+                            rewrite_statement(
+                                statement,
+                                local_type_name_map,
+                                local_function_name_map,
+                            )
+                        })
+                        .collect(),
+                })
+                .collect(),
+        },
+        parser::Statement::Conditional {
+            condition,
+            body,
+            else_body,
+        } => parser::Statement::Conditional {
+            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+            body: body
+                .iter()
+                .map(|statement| {
+                    rewrite_statement(statement, local_type_name_map, local_function_name_map)
+                })
+                .collect(),
+            else_body: else_body.as_ref().map(|body| {
+                body.iter()
+                    .map(|statement| {
+                        rewrite_statement(statement, local_type_name_map, local_function_name_map)
+                    })
+                    .collect()
+            }),
+        },
+        parser::Statement::Assign { variable, value } => parser::Statement::Assign {
+            variable: variable.clone(),
+            value: rewrite_expression(value, local_type_name_map, local_function_name_map),
+        },
+        parser::Statement::Return { expr } => parser::Statement::Return {
+            expr: rewrite_expression(expr, local_type_name_map, local_function_name_map),
+        },
+        parser::Statement::Expression { expr } => parser::Statement::Expression {
+            expr: rewrite_expression(expr, local_type_name_map, local_function_name_map),
+        },
+        parser::Statement::While { condition, body } => parser::Statement::While {
+            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+            body: body
+                .iter()
+                .map(|statement| {
+                    rewrite_statement(statement, local_type_name_map, local_function_name_map)
+                })
+                .collect(),
+        },
+    }
+}
+
+fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
+    let mut templates_by_name: HashMap<String, parser::TemplateDef> = HashMap::new();
+    for template in &ast.template_definitions {
+        if templates_by_name
+            .insert(template.name.clone(), template.clone())
+            .is_some()
+        {
+            return Err(anyhow::anyhow!(
+                "duplicate template definition {}",
+                template.name
+            ));
+        }
+    }
+
+    let mut used_type_names = HashSet::new();
+    for type_def in &ast.type_definitions {
+        used_type_names.insert(type_def_name(type_def).to_string());
+    }
+    let mut used_function_names = HashSet::new();
+    for function in &ast.top_level_functions {
+        used_function_names.insert(function.name.clone());
+    }
+
+    let mut generated_type_defs = vec![];
+    let mut generated_functions = vec![];
+
+    for instantiation in &ast.template_instantiations {
+        let template = templates_by_name
+            .get(&instantiation.template_name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown template {} in instantiation {}",
+                    instantiation.template_name,
+                    instantiation.alias
+                )
+            })?;
+
+        let mut local_type_name_map: HashMap<String, String> = HashMap::new();
+        for type_def in &template.type_definitions {
+            let local_name = type_def_name(type_def).to_string();
+            let mapped_name = if local_name == template.name {
+                instantiation.alias.clone()
+            } else {
+                format!("{}__{}", instantiation.alias, local_name)
+            };
+            local_type_name_map.insert(local_name, mapped_name);
+        }
+
+        if !local_type_name_map.contains_key(&template.name) {
+            return Err(anyhow::anyhow!(
+                "template {} must define a primary type named {}",
+                template.name,
+                template.name
+            ));
+        }
+
+        let mut local_function_name_map: HashMap<String, String> = HashMap::new();
+        for function in &template.top_level_functions {
+            local_function_name_map.insert(
+                function.name.clone(),
+                format!("{}__{}", instantiation.alias, function.name),
+            );
+        }
+
+        for mapped_name in local_type_name_map.values() {
+            if !used_type_names.insert(mapped_name.clone()) {
+                return Err(anyhow::anyhow!(
+                    "duplicate generated type name {} from template instantiation {}",
+                    mapped_name,
+                    instantiation.alias
+                ));
+            }
+        }
+        for mapped_name in local_function_name_map.values() {
+            if !used_function_names.insert(mapped_name.clone()) {
+                return Err(anyhow::anyhow!(
+                    "duplicate generated function name {} from template instantiation {}",
+                    mapped_name,
+                    instantiation.alias
+                ));
+            }
+        }
+
+        for type_def in &template.type_definitions {
+            let rewritten = match type_def {
+                parser::TypeDefDecl::Struct(struct_def) => {
+                    parser::TypeDefDecl::Struct(parser::StructDef {
+                        name: local_type_name_map
+                            .get(&struct_def.name)
+                            .cloned()
+                            .unwrap_or_else(|| struct_def.name.clone()),
+                        struct_fields: struct_def
+                            .struct_fields
+                            .iter()
+                            .map(|field| parser::StructField {
+                                name: field.name.clone(),
+                                ty: rewrite_type_ref(
+                                    &field.ty,
+                                    &template.type_param,
+                                    &instantiation.concrete_type,
+                                    &local_type_name_map,
+                                ),
+                            })
+                            .collect(),
+                    })
+                }
+                parser::TypeDefDecl::Enum(enum_def) => parser::TypeDefDecl::Enum(parser::EnumDef {
+                    name: local_type_name_map
+                        .get(&enum_def.name)
+                        .cloned()
+                        .unwrap_or_else(|| enum_def.name.clone()),
+                    variants: enum_def
+                        .variants
+                        .iter()
+                        .map(|variant| parser::EnumVariantDef {
+                            name: variant.name.clone(),
+                            payload_ty: variant.payload_ty.as_ref().map(|payload_ty| {
+                                rewrite_type_ref(
+                                    payload_ty,
+                                    &template.type_param,
+                                    &instantiation.concrete_type,
+                                    &local_type_name_map,
+                                )
+                            }),
+                        })
+                        .collect(),
+                }),
+            };
+            generated_type_defs.push(rewritten);
+        }
+
+        for function in &template.top_level_functions {
+            generated_functions.push(parser::Function {
+                name: local_function_name_map
+                    .get(&function.name)
+                    .cloned()
+                    .unwrap_or_else(|| function.name.clone()),
+                parameters: function
+                    .parameters
+                    .iter()
+                    .map(|param| parser::Parameter {
+                        name: param.name.clone(),
+                        ty: rewrite_type_ref(
+                            &param.ty,
+                            &template.type_param,
+                            &instantiation.concrete_type,
+                            &local_type_name_map,
+                        ),
+                    })
+                    .collect(),
+                body: function
+                    .body
+                    .iter()
+                    .map(|statement| {
+                        rewrite_statement(statement, &local_type_name_map, &local_function_name_map)
+                    })
+                    .collect(),
+                return_type: rewrite_type_ref(
+                    &function.return_type,
+                    &template.type_param,
+                    &instantiation.concrete_type,
+                    &local_type_name_map,
+                ),
+            });
+        }
+    }
+
+    ast.type_definitions.extend(generated_type_defs);
+    ast.top_level_functions.extend(generated_functions);
+    Ok(())
+}
+
+pub(crate) fn get_expression_type(
     expr: &Expression,
     var_types: &HashMap<String, TypeRef>,
     fns: &HashMap<String, FunctionSignature>,
@@ -665,6 +1062,106 @@ fn get_expression_type(
     }
 
     match expr {
+        Expression::Match { subject, arms } => {
+            let subject_type = get_expression_type(subject, var_types, fns, type_definitions)?;
+            let enum_def = match type_definitions.get(&subject_type) {
+                Some(TypeDef::Enum(enum_def)) => enum_def,
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "match subject must be an enum, got {:?}",
+                        subject_type
+                    ));
+                }
+            };
+
+            let mut seen_variants = HashSet::new();
+            let mut arm_value_type: Option<TypeRef> = None;
+            for arm in arms {
+                let (type_name, variant_name, binder) = match &arm.pattern {
+                    parser::MatchPattern::Variant {
+                        type_name,
+                        variant_name,
+                        binder,
+                    } => (type_name, variant_name, binder),
+                };
+
+                if type_name != &subject_type {
+                    return Err(anyhow::anyhow!(
+                        "match arm type {:?} does not match subject type {:?}",
+                        type_name,
+                        subject_type
+                    ));
+                }
+                if !seen_variants.insert(variant_name.clone()) {
+                    return Err(anyhow::anyhow!(
+                        "duplicate match arm for variant {}",
+                        variant_name
+                    ));
+                }
+
+                let variant = enum_def
+                    .variants
+                    .iter()
+                    .find(|v| v.name == *variant_name)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unknown variant {} for enum {}",
+                            variant_name,
+                            enum_def.name
+                        )
+                    })?;
+
+                let mut scoped_var_types = var_types.clone();
+                match (&variant.payload_ty, binder) {
+                    (Some(payload_ty), Some(binder_name)) => {
+                        scoped_var_types.insert(binder_name.clone(), payload_ty.clone());
+                    }
+                    (Some(_), None) => {
+                        return Err(anyhow::anyhow!(
+                            "match arm for payload variant {} must bind a payload",
+                            variant_name
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(anyhow::anyhow!(
+                            "match arm for non-payload variant {} cannot bind a payload",
+                            variant_name
+                        ));
+                    }
+                    (None, None) => {}
+                }
+
+                let ty = get_expression_type(&arm.value, &scoped_var_types, fns, type_definitions)?;
+                if let Some(expected_ty) = arm_value_type.as_ref() {
+                    if expected_ty != &ty {
+                        return Err(anyhow::anyhow!(
+                            "match expression arm type mismatch: expected {:?}, got {:?}",
+                            expected_ty,
+                            ty
+                        ));
+                    }
+                } else {
+                    arm_value_type = Some(ty);
+                }
+            }
+
+            let missing = enum_def
+                .variants
+                .iter()
+                .filter(|v| !seen_variants.contains(&v.name))
+                .map(|v| v.name.clone())
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "non-exhaustive match on {}: missing variants {:?}",
+                    enum_def.name,
+                    missing
+                ));
+            }
+
+            arm_value_type
+                .ok_or_else(|| anyhow::anyhow!("match expression must have at least one arm"))
+        }
         Expression::FieldAccess {
             struct_variable,
             field: field_name,
@@ -769,7 +1266,10 @@ fn get_expression_type(
                 }
                 Ok(enum_def.name.clone())
             }
-            _ => Err(anyhow::anyhow!("unsupported call target {:?}", callee.as_ref())),
+            _ => Err(anyhow::anyhow!(
+                "unsupported call target {:?}",
+                callee.as_ref()
+            )),
         },
         Expression::StructValue {
             struct_name,

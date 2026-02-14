@@ -1,0 +1,12 @@
+enum Color {
+	Red,
+	Green,
+}
+
+fun main() -> I32 {
+	x = match Color.Red {
+		Color.Red => 1
+	}
+	print(x)
+	return 0
+}

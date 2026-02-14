@@ -1,0 +1,17 @@
+enum Color {
+	Red,
+	Green,
+}
+
+fun score(c: Color) -> I32 {
+	return match c {
+		Color.Red => 3
+		Color.Green => 4
+	}
+}
+
+fun main() -> I32 {
+	print(score(Color.Red))
+	print(score(Color.Green))
+	return 0
+}

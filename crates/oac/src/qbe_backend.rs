@@ -470,21 +470,195 @@ fn compile_type(ctx: &mut CodegenCtx, type_def: &ir::TypeDef) {
     }
 }
 
+fn is_word_sized_value_type(ctx: &CodegenCtx, type_name: &str) -> bool {
+    match ctx.resolved.type_definitions.get(type_name) {
+        Some(ir::TypeDef::BuiltIn(BuiltInType::Bool))
+        | Some(ir::TypeDef::BuiltIn(BuiltInType::I32)) => true,
+        Some(ir::TypeDef::Enum(enum_def)) => !enum_def.is_tagged_union,
+        _ => false,
+    }
+}
+
+fn compile_match_subject(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    subject: &parser::Expression,
+    variables: &mut Variables,
+    label_root: &str,
+) -> (QbeAssignName, ir::TypeRef, ir::EnumTypeDef, QbeAssignName) {
+    let (subject_var, subject_ty) = compile_expr(ctx, qbe_func, subject, variables);
+    let enum_def = match ctx.resolved.type_definitions.get(&subject_ty) {
+        Some(ir::TypeDef::Enum(enum_def)) => enum_def.clone(),
+        _ => panic!("match subject must be enum"),
+    };
+
+    let tag_var = if enum_def.is_tagged_union {
+        let id = new_id(&[label_root, "tag"]);
+        qbe_func.assign_instr(
+            qbe::Value::Temporary(id.clone()),
+            qbe::Type::Word,
+            qbe::Instr::Load(qbe::Type::Word, qbe::Value::Temporary(subject_var.clone())),
+        );
+        id
+    } else {
+        subject_var.clone()
+    };
+
+    (subject_var, subject_ty, enum_def, tag_var)
+}
+
+fn resolve_match_pattern<'a>(
+    enum_def: &'a ir::EnumTypeDef,
+    subject_ty: &str,
+    pattern: &parser::MatchPattern,
+) -> (&'a ir::EnumVariant, Option<String>) {
+    match pattern {
+        parser::MatchPattern::Variant {
+            type_name,
+            variant_name,
+            binder,
+        } => {
+            assert_eq!(type_name, subject_ty);
+            let variant = enum_def
+                .variants
+                .iter()
+                .find(|v| v.name == *variant_name)
+                .unwrap();
+            (variant, binder.clone())
+        }
+    }
+}
+
+fn bind_match_payload(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    arm_variables: &mut Variables,
+    subject_var: &str,
+    variant: &ir::EnumVariant,
+    binder: Option<String>,
+    label_root: &str,
+) {
+    if let (Some(binder), Some(payload_ty)) = (binder, variant.payload_ty.clone()) {
+        let payload_addr = new_id(&[label_root, "payload", "addr"]);
+        qbe_func.assign_instr(
+            qbe::Value::Temporary(payload_addr.clone()),
+            qbe::Type::Long,
+            qbe::Instr::Add(
+                qbe::Value::Temporary(subject_var.to_string()),
+                qbe::Value::Const(8),
+            ),
+        );
+        let payload_raw = new_id(&[label_root, "payload", "raw"]);
+        qbe_func.assign_instr(
+            qbe::Value::Temporary(payload_raw.clone()),
+            qbe::Type::Long,
+            qbe::Instr::Load(qbe::Type::Long, qbe::Value::Temporary(payload_addr)),
+        );
+
+        let payload_var = if is_word_sized_value_type(ctx, &payload_ty) {
+            let payload_word = new_id(&[label_root, "payload", "word"]);
+            qbe_func.assign_instr(
+                qbe::Value::Temporary(payload_word.clone()),
+                qbe::Type::Word,
+                qbe::Instr::Copy(qbe::Value::Temporary(payload_raw)),
+            );
+            payload_word
+        } else {
+            payload_raw
+        };
+        arm_variables.insert(binder, (payload_var, payload_ty));
+    }
+}
+
+enum MatchArmOutcome {
+    FallsThrough,
+    Terminated,
+}
+
+fn lower_match_dispatch<Arm, PatternOf, CompileArm>(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    variables: &Variables,
+    subject_var: &str,
+    subject_ty: &str,
+    enum_def: &ir::EnumTypeDef,
+    tag_var: &str,
+    arms: &[Arm],
+    pattern_of: PatternOf,
+    label_root: &str,
+    force_end_block: bool,
+    mut compile_arm: CompileArm,
+) -> String
+where
+    PatternOf: Fn(&Arm) -> &parser::MatchPattern,
+    CompileArm:
+        FnMut(&mut CodegenCtx, &mut qbe::Function, &mut Variables, &Arm) -> MatchArmOutcome,
+{
+    let end_label = new_id(&[label_root, "end"]);
+    let mut any_arm_falls_through = false;
+
+    for (i, arm) in arms.iter().enumerate() {
+        let arm_label = new_id(&[label_root, "arm"]);
+        let next_label = if i + 1 < arms.len() {
+            Some(new_id(&[label_root, "next"]))
+        } else {
+            None
+        };
+
+        let (variant, binder) = resolve_match_pattern(enum_def, subject_ty, pattern_of(arm));
+
+        let cmp_var = new_id(&[label_root, "cmp"]);
+        qbe_func.assign_instr(
+            qbe::Value::Temporary(cmp_var.clone()),
+            qbe::Type::Word,
+            qbe::Instr::Cmp(
+                qbe::Type::Word,
+                qbe::Cmp::Eq,
+                qbe::Value::Temporary(tag_var.to_string()),
+                qbe::Value::Const(variant.tag as u64),
+            ),
+        );
+        qbe_func.add_instr(qbe::Instr::Jnz(
+            qbe::Value::Temporary(cmp_var),
+            arm_label.clone(),
+            next_label.clone().unwrap_or_else(|| arm_label.clone()),
+        ));
+
+        qbe_func.add_block(arm_label);
+        let mut arm_variables = variables.clone();
+        bind_match_payload(
+            ctx,
+            qbe_func,
+            &mut arm_variables,
+            subject_var,
+            variant,
+            binder,
+            label_root,
+        );
+
+        let outcome = compile_arm(ctx, qbe_func, &mut arm_variables, arm);
+        if matches!(outcome, MatchArmOutcome::FallsThrough) {
+            any_arm_falls_through = true;
+            qbe_func.add_instr(qbe::Instr::Jmp(end_label.clone()));
+        }
+
+        if let Some(next_label) = next_label {
+            qbe_func.add_block(next_label);
+        }
+    }
+
+    if force_end_block || any_arm_falls_through {
+        qbe_func.add_block(end_label.clone());
+    }
+    end_label
+}
+
 fn compile_statement(
     ctx: &mut CodegenCtx,
     qbe_func: &mut qbe::Function,
     statement: &parser::Statement,
     variables: &mut Variables,
 ) {
-    fn is_word_sized_value_type(ctx: &CodegenCtx, type_name: &str) -> bool {
-        match ctx.resolved.type_definitions.get(type_name) {
-            Some(ir::TypeDef::BuiltIn(BuiltInType::Bool))
-            | Some(ir::TypeDef::BuiltIn(BuiltInType::I32)) => true,
-            Some(ir::TypeDef::Enum(enum_def)) => !enum_def.is_tagged_union,
-            _ => false,
-        }
-    }
-
     match statement {
         parser::Statement::StructDef { def } => {
             let struct_type = ctx.resolved.type_definitions.get(&def.name).unwrap();
@@ -493,119 +667,31 @@ fn compile_statement(
             }
         }
         parser::Statement::Match { subject, arms } => {
-            let (subject_var, subject_ty) = compile_expr(ctx, qbe_func, subject, variables);
-            let enum_def = match ctx.resolved.type_definitions.get(&subject_ty) {
-                Some(ir::TypeDef::Enum(enum_def)) => enum_def.clone(),
-                _ => panic!("match subject must be enum"),
-            };
-
-            let tag_var = if enum_def.is_tagged_union {
-                let id = new_id(&["match", "tag"]);
-                qbe_func.assign_instr(
-                    qbe::Value::Temporary(id.clone()),
-                    qbe::Type::Word,
-                    qbe::Instr::Load(qbe::Type::Word, qbe::Value::Temporary(subject_var.clone())),
-                );
-                id
-            } else {
-                subject_var.clone()
-            };
-
-            let end_label = new_id(&["match", "end"]);
-            let mut any_arm_falls_through = false;
-            for (i, arm) in arms.iter().enumerate() {
-                let arm_label = new_id(&["match", "arm"]);
-                let next_label = if i + 1 < arms.len() {
-                    Some(new_id(&["match", "next"]))
-                } else {
-                    None
-                };
-
-                let (pattern_ty, pattern_variant, pattern_binder) = match &arm.pattern {
-                    parser::MatchPattern::Variant {
-                        type_name,
-                        variant_name,
-                        binder,
-                    } => (type_name, variant_name, binder),
-                };
-                assert_eq!(pattern_ty, &subject_ty);
-                let variant = enum_def
-                    .variants
-                    .iter()
-                    .find(|v| v.name == *pattern_variant)
-                    .unwrap();
-
-                let cmp_var = new_id(&["match", "cmp"]);
-                qbe_func.assign_instr(
-                    qbe::Value::Temporary(cmp_var.clone()),
-                    qbe::Type::Word,
-                    qbe::Instr::Cmp(
-                        qbe::Type::Word,
-                        qbe::Cmp::Eq,
-                        qbe::Value::Temporary(tag_var.clone()),
-                        qbe::Value::Const(variant.tag as u64),
-                    ),
-                );
-                qbe_func.add_instr(qbe::Instr::Jnz(
-                    qbe::Value::Temporary(cmp_var),
-                    arm_label.clone(),
-                    next_label.clone().unwrap_or_else(|| arm_label.clone()),
-                ));
-
-                qbe_func.add_block(arm_label);
-                let mut arm_variables = variables.clone();
-                if let (Some(binder), Some(payload_ty)) =
-                    (pattern_binder.clone(), variant.payload_ty.clone())
-                {
-                    let payload_addr = new_id(&["match", "payload", "addr"]);
-                    qbe_func.assign_instr(
-                        qbe::Value::Temporary(payload_addr.clone()),
-                        qbe::Type::Long,
-                        qbe::Instr::Add(
-                            qbe::Value::Temporary(subject_var.clone()),
-                            qbe::Value::Const(8),
-                        ),
-                    );
-                    let payload_raw = new_id(&["match", "payload", "raw"]);
-                    qbe_func.assign_instr(
-                        qbe::Value::Temporary(payload_raw.clone()),
-                        qbe::Type::Long,
-                        qbe::Instr::Load(
-                            qbe::Type::Long,
-                            qbe::Value::Temporary(payload_addr.clone()),
-                        ),
-                    );
-
-                    let payload_var = if is_word_sized_value_type(ctx, &payload_ty) {
-                        let payload_word = new_id(&["match", "payload", "word"]);
-                        qbe_func.assign_instr(
-                            qbe::Value::Temporary(payload_word.clone()),
-                            qbe::Type::Word,
-                            qbe::Instr::Copy(qbe::Value::Temporary(payload_raw)),
-                        );
-                        payload_word
+            let (subject_var, subject_ty, enum_def, tag_var) =
+                compile_match_subject(ctx, qbe_func, subject, variables, "match");
+            lower_match_dispatch(
+                ctx,
+                qbe_func,
+                variables,
+                &subject_var,
+                &subject_ty,
+                &enum_def,
+                &tag_var,
+                arms,
+                |arm| &arm.pattern,
+                "match",
+                false,
+                |ctx, qbe_func, arm_variables, arm| {
+                    for statement in &arm.body {
+                        compile_statement(ctx, qbe_func, statement, arm_variables);
+                    }
+                    if qbe_func.blocks.last().unwrap().jumps() {
+                        MatchArmOutcome::Terminated
                     } else {
-                        payload_raw
-                    };
-                    arm_variables.insert(binder, (payload_var, payload_ty));
-                }
-
-                for statement in &arm.body {
-                    compile_statement(ctx, qbe_func, statement, &mut arm_variables);
-                }
-                if !qbe_func.blocks.last().unwrap().jumps() {
-                    any_arm_falls_through = true;
-                    qbe_func.add_instr(qbe::Instr::Jmp(end_label.clone()));
-                }
-
-                if let Some(next_label) = next_label {
-                    qbe_func.add_block(next_label);
-                }
-            }
-
-            if any_arm_falls_through {
-                qbe_func.add_block(end_label);
-            }
+                        MatchArmOutcome::FallsThrough
+                    }
+                },
+            );
         }
         parser::Statement::Conditional {
             condition,
@@ -819,16 +905,73 @@ fn compile_expr(
 ) -> (QbeAssignName, ir::TypeRef) {
     trace!(?expr, "Compiling expression");
 
-    fn is_word_sized_value_type(ctx: &CodegenCtx, type_name: &str) -> bool {
-        match ctx.resolved.type_definitions.get(type_name) {
-            Some(ir::TypeDef::BuiltIn(BuiltInType::Bool))
-            | Some(ir::TypeDef::BuiltIn(BuiltInType::I32)) => true,
-            Some(ir::TypeDef::Enum(enum_def)) => !enum_def.is_tagged_union,
-            _ => false,
-        }
-    }
-
     match expr {
+        parser::Expression::Match { subject, arms } => {
+            let var_types = variables
+                .iter()
+                .map(|(name, (_, ty))| (name.clone(), ty.clone()))
+                .collect::<HashMap<_, _>>();
+            let match_ty = ir::get_expression_type(
+                expr,
+                &var_types,
+                &ctx.resolved.function_sigs,
+                &ctx.resolved.type_definitions,
+            )
+            .unwrap_or_else(|err| {
+                panic!("failed to type-check match expression in codegen: {err}")
+            });
+            let match_qbe_ty = type_to_qbe(
+                ctx.resolved
+                    .type_definitions
+                    .get(&match_ty)
+                    .expect("match expression type should exist"),
+            );
+
+            let result_slot = new_id(&["match", "expr", "slot"]);
+            func.assign_instr(
+                qbe::Value::Temporary(result_slot.clone()),
+                qbe::Type::Long,
+                qbe::Instr::Alloc8(8),
+            );
+
+            let (subject_var, subject_ty, enum_def, tag_var) =
+                compile_match_subject(ctx, func, subject, variables, "match_expr");
+            lower_match_dispatch(
+                ctx,
+                func,
+                variables,
+                &subject_var,
+                &subject_ty,
+                &enum_def,
+                &tag_var,
+                arms,
+                |arm| &arm.pattern,
+                "match_expr",
+                true,
+                |ctx, func, arm_variables, arm| {
+                    let (arm_value, arm_value_ty) =
+                        compile_expr(ctx, func, &arm.value, arm_variables);
+                    assert_eq!(
+                        arm_value_ty, match_ty,
+                        "match expression arm type mismatch in codegen"
+                    );
+                    func.add_instr(qbe::Instr::Store(
+                        match_qbe_ty.clone(),
+                        qbe::Value::Temporary(result_slot.clone()),
+                        qbe::Value::Temporary(arm_value),
+                    ));
+                    MatchArmOutcome::FallsThrough
+                },
+            );
+
+            let result = new_id(&["match", "expr", "result"]);
+            func.assign_instr(
+                qbe::Value::Temporary(result.clone()),
+                match_qbe_ty.clone(),
+                qbe::Instr::Load(match_qbe_ty, qbe::Value::Temporary(result_slot)),
+            );
+            (result, match_ty)
+        }
         parser::Expression::FieldAccess {
             struct_variable,
             field: field_name,

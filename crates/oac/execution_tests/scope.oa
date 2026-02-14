@@ -3,14 +3,14 @@ fun identity(a: I32) -> I32 {
 }
 
 fun sum_wrapper(a: I32, b: I32) -> I32 {
-	a = sum(a identity(b))
+	a = sum(a, identity(b))
 	return a
 }
 
 fun main() -> I32 {
 	a = 1
 	b = 3
-	c = sum_wrapper(a b)
+	c = sum_wrapper(a, b)
 
 	print(a)
 	print(b)
