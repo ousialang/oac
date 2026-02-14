@@ -1,4 +1,4 @@
-instantiate IntList = LinkedList(I32)
+instantiate IntList = LinkedList[I32]
 
 fun main() -> I32 {
 	xs = IntList__empty()

@@ -1,4 +1,4 @@
-instantiate IntTable = HashTable(I32)
+instantiate IntTable = HashTable[I32]
 
 fun print_lookup(v: IntTable__Lookup) -> I32 {
 	match v {

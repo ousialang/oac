@@ -1014,10 +1014,10 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
-                opening: '(',
+                opening: '[',
                 is_opening: true
             },
-        "expected '(' after template name"
+        "expected '[' after template name"
     );
     let type_param = match tokens.remove(0) {
         TokenData::Word(name) => name,
@@ -1026,10 +1026,10 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
-                opening: ')',
+                opening: ']',
                 is_opening: false
             },
-        "expected ')' after template type parameter"
+        "expected ']' after template type parameter"
     );
 
     anyhow::ensure!(
@@ -1111,10 +1111,10 @@ fn parse_template_instantiation(
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
-                opening: '(',
+                opening: '[',
                 is_opening: true
             },
-        "expected '(' after template name"
+        "expected '[' after template name"
     );
     let concrete_type = match tokens.remove(0) {
         TokenData::Word(name) => name,
@@ -1123,10 +1123,10 @@ fn parse_template_instantiation(
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
-                opening: ')',
+                opening: ']',
                 is_opening: false
             },
-        "expected ')' after concrete type"
+        "expected ']' after concrete type"
     );
 
     Ok(TemplateInstantiation {
@@ -1134,4 +1134,56 @@ fn parse_template_instantiation(
         template_name,
         concrete_type,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tokenizer::tokenize;
+
+    use super::parse;
+
+    #[test]
+    fn parses_template_with_square_brackets() {
+        let source = r#"
+template Option[T] {
+	enum Option {
+		None,
+		Some(T),
+	}
+}
+
+instantiate OptionI32 = Option[I32]
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize template source");
+        let ast = parse(tokens).expect("parse template source");
+
+        assert_eq!(ast.template_definitions.len(), 1);
+        assert_eq!(ast.template_instantiations.len(), 1);
+        assert_eq!(ast.template_definitions[0].name, "Option");
+        assert_eq!(ast.template_definitions[0].type_param, "T");
+        assert_eq!(ast.template_instantiations[0].alias, "OptionI32");
+        assert_eq!(ast.template_instantiations[0].template_name, "Option");
+        assert_eq!(ast.template_instantiations[0].concrete_type, "I32");
+    }
+
+    #[test]
+    fn rejects_template_parentheses_syntax() {
+        let source = r#"
+template Legacy(T) {
+	enum Legacy {
+		Value(T),
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize template source");
+        let err = parse(tokens).expect_err("legacy template syntax should fail");
+        assert!(
+            err.to_string().contains("expected '[' after template name"),
+            "unexpected parse error: {err}"
+        );
+    }
 }

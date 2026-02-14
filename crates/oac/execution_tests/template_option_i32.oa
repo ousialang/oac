@@ -1,4 +1,4 @@
-template Option(T) {
+template Option[T] {
 	enum Option {
 		None,
 		Some(T),
@@ -19,7 +19,7 @@ template Option(T) {
 	}
 }
 
-instantiate OptionI32 = Option(I32)
+instantiate OptionI32 = Option[I32]
 
 fun main() -> I32 {
 	a = OptionI32.Some(7)

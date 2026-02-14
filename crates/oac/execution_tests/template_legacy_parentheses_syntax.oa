@@ -1,0 +1,11 @@
+template Legacy(T) {
+	enum Legacy {
+		Value(T),
+	}
+}
+
+instantiate LegacyI32 = Legacy(I32)
+
+fun main() -> I32 {
+	return 0
+}

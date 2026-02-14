@@ -27,3 +27,7 @@ Do this autonomously. Do not defer it to “later docs cleanup”.
 ## Scope Note
 
 This repository currently contains both the Ousia compiler workspace (`crates/*`) and vendored/reference material under `tools/selfie/`. Prefer touching compiler code only unless explicitly requested.
+
+## Current Syntax Notes
+
+- Templates use square brackets for type parameters and instantiation arguments: `template Option[T] { ... }`, `instantiate OptionI32 = Option[I32]`.

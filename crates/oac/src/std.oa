@@ -3,7 +3,7 @@ struct NewString {
 	len: I64,
 }
 
-template LinkedList(T) {
+template LinkedList[T] {
 	struct Node {
 		value: T,
 		next: LinkedList,
@@ -55,7 +55,7 @@ template LinkedList(T) {
 	}
 }
 
-template HashTable(T) {
+template HashTable[T] {
 	struct Entry {
 		key: I32,
 		value: T,

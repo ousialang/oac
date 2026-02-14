@@ -36,7 +36,7 @@ Artifacts emitted during build:
 
 Core AST includes:
 - Type defs: `Struct`, `Enum`
-- Templates and template instantiations
+- Templates and template instantiations (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`)
 - Statements: assign, return, expression, while, if/else, match
 - Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr
 

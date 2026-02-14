@@ -23,7 +23,7 @@ Observed in parser/IR implementation:
 - Field access.
 - Enum definitions with optional payloads.
 - Pattern matching on enums (`match`) as statement and expression.
-- Template definitions and template instantiation aliases.
+- Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
 
 ## Semantic Rules You Must Preserve
 

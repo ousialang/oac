@@ -1,10 +1,10 @@
-template Bad(T) {
+template Bad[T] {
 	fun id(x: T) -> T {
 		return x
 	}
 }
 
-instantiate BadI32 = Bad(I32)
+instantiate BadI32 = Bad[I32]
 
 fun main() -> I32 {
 	return 0
