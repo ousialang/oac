@@ -8,7 +8,7 @@ enum LocalResult {
 	Err(LocalErr),
 }
 
-fun score(r: LocalResult) -> I32 {
+fun score(r: LocalResult) -> Int {
 	return match r {
 		LocalResult.Ok(v) => v + 1
 		LocalResult.Err(err) => match err {
