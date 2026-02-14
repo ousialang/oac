@@ -1,7 +1,15 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-assertion_line: 1433
+assertion_line: 1448
 expression: output
 snapshot_kind: text
 ---
-
+0
+3
+10
+90
+99
+3
+11
+1
+0

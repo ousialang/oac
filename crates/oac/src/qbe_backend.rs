@@ -897,6 +897,14 @@ fn calculate_struct_field_offset(
     );
 }
 
+fn struct_size_bytes(ctx: &CodegenCtx, struct_def: &StructDef) -> u64 {
+    struct_def
+        .struct_fields
+        .iter()
+        .map(|field| type_offset(ctx, &field.ty))
+        .sum()
+}
+
 fn compile_expr(
     ctx: &mut CodegenCtx,
     func: &mut qbe::Function,
@@ -1158,7 +1166,14 @@ fn compile_expr(
             func.assign_instr(
                 Value::Temporary(id.clone()),
                 qbe::Type::Long,
-                Instr::Alloc8(8),
+                Instr::Call(
+                    "malloc".to_string(),
+                    vec![(
+                        qbe::Type::Long,
+                        qbe::Value::Const(struct_size_bytes(ctx, structdef)),
+                    )],
+                    None,
+                ),
             );
 
             for (field_name, field_value) in field_values {
