@@ -1390,9 +1390,63 @@ fn compile_expr(
 #[cfg(test)]
 mod tests {
     use crate::{compile, ir, parser::parse, tokenizer::tokenize, Build};
-    use std::{fs, path::Path};
+    use std::{
+        fs,
+        path::Path,
+        process::{Command, Stdio},
+        thread::sleep,
+        time::{Duration, Instant},
+    };
 
     use super::compile as compile_qbe;
+    const EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+    fn run_executable_with_timeout(workdir: &Path) -> Result<String, String> {
+        let mut child = Command::new("./target/oac/app")
+            .current_dir(workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("failed to spawn executable: {err}"))?;
+
+        let started = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    let output = child
+                        .wait_with_output()
+                        .map_err(|err| format!("failed to collect executable output: {err}"))?;
+                    if !output.status.success() {
+                        return Err(format!(
+                            "executable exited with status {}\\nstdout:\\n{}\\nstderr:\\n{}",
+                            output.status,
+                            String::from_utf8_lossy(&output.stdout),
+                            String::from_utf8_lossy(&output.stderr)
+                        ));
+                    }
+
+                    return String::from_utf8(output.stdout)
+                        .map_err(|err| format!("executable stdout was not valid UTF-8: {err}"));
+                }
+                Ok(None) => {
+                    if started.elapsed() > EXECUTION_TIMEOUT {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(format!(
+                            "execution timed out after {} seconds",
+                            EXECUTION_TIMEOUT.as_secs()
+                        ));
+                    }
+                    sleep(Duration::from_millis(25));
+                }
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("failed while waiting for executable: {err}"));
+                }
+            }
+        }
+    }
 
     fn compile_and_compare(fixture_name: &str) {
         let path_str = format!("crates/oac/execution_tests/{}.oa", fixture_name);
@@ -1437,14 +1491,15 @@ mod tests {
                 }
             };
 
-            // run the executable and store the output in a string
-            let output = std::process::Command::new("./target/oac/app")
-                .current_dir(tmp.path())
-                .output()
-                .unwrap();
-            let output = String::from_utf8(output.stdout).unwrap();
-
-            insta::assert_snapshot!(path.display().to_string(), output);
+            match run_executable_with_timeout(tmp.path()) {
+                Ok(output) => insta::assert_snapshot!(path.display().to_string(), output),
+                Err(err) => {
+                    insta::assert_snapshot!(
+                        path.display().to_string(),
+                        format!("RUNTIME ERROR\n\n{err}")
+                    );
+                }
+            }
         }
     }
 }

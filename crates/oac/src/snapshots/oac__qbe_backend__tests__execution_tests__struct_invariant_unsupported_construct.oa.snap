@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+struct invariant verification failed (SAT counterexamples found):
+main#0#0 (caller=main, callee=make_counter, struct=Counter, qbe_artifact=site_main_0_0.qbe, smt_artifact=site_main_0_0.smt2)

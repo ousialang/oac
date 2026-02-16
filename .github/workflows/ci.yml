@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: rui314/setup-mold@v1
+      - name: Install z3
+        run: sudo apt-get update && sudo apt-get install -y z3
       - name: Install Rust
         run: rustup show && rustup install nightly && rustup component add rustfmt --toolchain nightly-x86_64-unknown-linux-gnu # Nightly is needed for our configuration of cargo fmt
       - run: cargo check --all-targets --all-features

@@ -1,0 +1,8 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+invariant __struct__Counter__invariant must return Bool, got I32

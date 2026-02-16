@@ -1,0 +1,17 @@
+struct Counter {
+	value: I32,
+}
+
+fun __struct__Counter__invariant(v: Counter) -> Bool {
+	return v.value >= 0
+}
+
+fun make_counter() -> Counter {
+	return Counter struct { value: sub(0, 1), }
+}
+
+fun main() -> I32 {
+	c = make_counter()
+	print(c.value)
+	return 0
+}

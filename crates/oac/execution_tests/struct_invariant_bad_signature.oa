@@ -1,0 +1,16 @@
+struct Counter {
+	value: I32,
+}
+
+fun __struct__Counter__invariant(v: Counter) -> I32 {
+	return 1
+}
+
+fun make_counter(v: I32) -> Counter {
+	return Counter struct { value: v, }
+}
+
+fun main() -> I32 {
+	c = make_counter(1)
+	return 0
+}

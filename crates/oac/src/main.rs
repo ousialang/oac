@@ -1,9 +1,11 @@
 mod builtins;
 mod flat_imports;
 mod ir;
+mod lsp;
 mod parser;
 mod qbe_backend;
 mod riscv_smt; // Add the new module
+mod struct_invariants;
 mod tokenizer;
 
 use std::env;
@@ -12,7 +14,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use tracing::info;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer};
@@ -26,6 +28,9 @@ fn main() -> anyhow::Result<()> {
         OacSubcommand::Build(build) => {
             let current_dir = std::env::current_dir()?;
             compile(&current_dir, build)?;
+        }
+        OacSubcommand::Lsp(_) => {
+            lsp::run()?;
         }
         OacSubcommand::RiscvSmt(riscv_smt_opts) => {
             let current_dir = std::env::current_dir()?;
@@ -88,13 +93,12 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     let ir_path = target_dir.join("ir.json");
     std::fs::write(&ir_path, serde_json::to_string_pretty(&ir)?)?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
+    struct_invariants::verify_struct_invariants(&ir, &target_dir)?;
 
     let qbe_ir = qbe_backend::compile(ir);
-    let qbe_ir_text = qbe_ir.to_string();
     let qbe_ir_path = target_dir.join("ir.qbe");
-    std::fs::write(&qbe_ir_path, &qbe_ir_text)?;
+    std::fs::write(&qbe_ir_path, qbe_ir.to_string())?;
     info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
-    try_emit_qbe_smt_sidecar(&qbe_ir_text, &target_dir);
 
     let assembly_path = target_dir.join("assembly.s");
     let mut qbe_cmd = std::process::Command::new("qbe");
@@ -143,100 +147,15 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
 
     Ok(())
 }
-
-fn try_emit_qbe_smt_sidecar(qbe_ir_text: &str, target_dir: &Path) {
-    let smt_path = target_dir.join("ir.smt2");
-    let options = qbe_smt::EncodeOptions {
-        max_steps: 256,
-        emit_model: false,
-    };
-    let qbe_slice = extract_qbe_function_for_smt(qbe_ir_text).unwrap_or_else(|| {
-        warn!("No QBE function body found for SMT generation; continuing build");
-        String::new()
-    });
-    if qbe_slice.is_empty() {
-        return;
-    }
-
-    let smt = match qbe_smt::qbe_to_smt(&qbe_slice, &options) {
-        Ok(smt) => smt,
-        Err(err) => {
-            warn!(error = %err, "Failed to generate QBE SMT sidecar; continuing build");
-            return;
-        }
-    };
-
-    if let Err(err) = std::fs::write(&smt_path, smt) {
-        warn!(
-            smt_path = %smt_path.display(),
-            error = %err,
-            "Failed to write QBE SMT sidecar; continuing build"
-        );
-        return;
-    }
-
-    info!(smt_path = %smt_path.display(), "QBE SMT sidecar generated");
-}
-
-fn extract_qbe_function_for_smt(qbe_ir_text: &str) -> Option<String> {
-    // Prefer $main so the sidecar aligns with the executable entrypoint.
-    extract_named_qbe_function(qbe_ir_text, "main")
-        .or_else(|| extract_first_qbe_function(qbe_ir_text))
-}
-
-fn extract_named_qbe_function(qbe_ir_text: &str, function_name: &str) -> Option<String> {
-    extract_qbe_function(qbe_ir_text, |line| {
-        line.contains("function") && line.contains(&format!("${function_name}("))
-    })
-}
-
-fn extract_first_qbe_function(qbe_ir_text: &str) -> Option<String> {
-    extract_qbe_function(qbe_ir_text, |line| {
-        line.contains("function") && line.contains('$')
-    })
-}
-
-fn extract_qbe_function<F>(qbe_ir_text: &str, predicate: F) -> Option<String>
-where
-    F: Fn(&str) -> bool,
-{
-    let lines: Vec<&str> = qbe_ir_text.lines().collect();
-    let start = lines.iter().position(|line| predicate(line.trim()))?;
-
-    let mut depth: i32 = 0;
-    let mut started_body = false;
-    let mut out = String::new();
-
-    for line in lines.iter().skip(start) {
-        out.push_str(line);
-        out.push('\n');
-
-        for ch in line.chars() {
-            if ch == '{' {
-                depth += 1;
-                started_body = true;
-            } else if ch == '}' {
-                depth -= 1;
-            }
-        }
-
-        if started_body && depth == 0 {
-            break;
-        }
-    }
-
-    if started_body {
-        Some(out)
-    } else {
-        None
-    }
-}
-
 fn initialize_logging() {
     let env_filter = env::var("RUST_LOG").unwrap_or_default();
 
     tracing_subscriber::registry()
-        .with(fmt::layer().with_filter(EnvFilter::from_str(&env_filter).unwrap()))
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(EnvFilter::from_str(&env_filter).unwrap()),
+        )
         .init();
 }
 
@@ -249,6 +168,7 @@ struct Oac {
 #[derive(clap::Subcommand)]
 enum OacSubcommand {
     Build(Build),
+    Lsp(LspOpts),
     RiscvSmt(RiscvSmtOpts),
 }
 
@@ -257,6 +177,10 @@ struct Build {
     source: String,
     arch: Option<String>,
 }
+
+#[derive(clap::Parser, Debug)]
+#[clap(name = "lsp", about = "Run the Ousia Language Server over stdio.")]
+struct LspOpts {}
 
 #[derive(clap::Parser, Debug)]
 #[clap(

@@ -8,18 +8,20 @@ The active compiler workspace is:
 - `Cargo.toml` (workspace root)
 - `crates/oac` (CLI + tokenizer/parser/type checker/IR/QBE backend/RISC-V SMT)
 - `crates/qbe-rs` (QBE Rust bindings/wrapper)
-- `crates/qbe-smt` (QBE-to-SMT conversion support)
+- `crates/qbe-smt` (QBE-to-SMT CHC/fixedpoint encoding support for invariant proving)
 
 ## High-Value Paths
 
 - `crates/oac/src/main.rs`: CLI entrypoint and build pipeline orchestration.
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
+- `crates/oac/src/lsp.rs`: stdio LSP server loop (`oac lsp`) and diagnostics publishing.
 - `crates/oac/src/tokenizer.rs`: eager tokenizer and syntax error model.
 - `crates/oac/src/parser.rs`: AST definitions and parser.
 - `crates/oac/src/ir.rs`: type resolution, semantic checks, and resolved IR.
 - `crates/oac/src/qbe_backend.rs`: code generation to QBE IR and end-to-end execution tests.
 - `crates/oac/src/builtins.rs`: built-in types and libc signatures.
 - `crates/oac/src/riscv_smt.rs`: ELF -> SMT pipeline for bounded return-to-zero checks.
+- `crates/oac/src/struct_invariants.rs`: SMT-backed compile-time struct invariant verification pass.
 - `crates/oac/src/std.oa`: stdlib import entrypoint injected during resolution.
 - `crates/oac/src/std_*.oa`: split stdlib modules imported by `std.oa`.
 - `crates/oac/execution_tests/*.oa`: language behavior fixtures (positive + negative).

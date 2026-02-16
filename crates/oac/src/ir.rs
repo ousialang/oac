@@ -650,16 +650,39 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     if !program.function_definitions.contains_key("main") {
-        Err(anyhow::anyhow!("main function not defined"))
-    } else {
-        Ok(program)
+        return Err(anyhow::anyhow!("main function not defined"));
     }
+    validate_main_signature(&program)?;
+
+    Ok(program)
 }
 
 fn type_def_name(type_def: &parser::TypeDefDecl) -> &str {
     match type_def {
         parser::TypeDefDecl::Struct(s) => &s.name,
         parser::TypeDefDecl::Enum(e) => &e.name,
+    }
+}
+
+fn validate_main_signature(program: &ResolvedProgram) -> anyhow::Result<()> {
+    let main = program
+        .function_definitions
+        .get("main")
+        .ok_or_else(|| anyhow::anyhow!("main function not defined"))?;
+
+    if main.sig.return_type != "I32" {
+        return Err(anyhow::anyhow!(
+            "unsupported main signature: return type must be I32, got {}",
+            main.sig.return_type
+        ));
+    }
+
+    match main.sig.parameters.as_slice() {
+        [] => Ok(()),
+        [argc, argv] if argc.ty == "I32" && argv.ty == "I64" => Ok(()),
+        _ => Err(anyhow::anyhow!(
+            "unsupported main signature: expected `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`"
+        )),
     }
 }
 
@@ -1452,5 +1475,49 @@ fun main() -> I32 {
             resolved.function_sigs.contains_key("parse_json_document"),
             "missing parse_json_document function from split stdlib"
         );
+    }
+
+    #[test]
+    fn resolve_accepts_main_with_argc_argv_signature() {
+        let source = r#"
+fun main(argc: I32, argv: I64) -> I32 {
+	return argc
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_rejects_main_with_unsupported_parameters() {
+        let source = r#"
+fun main(argc: I64, argv: I64) -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err.to_string().contains("unsupported main signature"));
+    }
+
+    #[test]
+    fn resolve_rejects_main_with_non_i32_return_type() {
+        let source = r#"
+fun main() -> I64 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err.to_string().contains("return type must be I32"));
     }
 }
