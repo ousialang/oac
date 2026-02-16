@@ -49,7 +49,13 @@ pub struct TemplateInstantiation {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct ImportDecl {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
 pub struct Ast {
+    pub imports: Vec<ImportDecl>,
     pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
     pub template_definitions: Vec<TemplateDef>,
@@ -811,6 +817,7 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         .retain(|token| !matches!(token, TokenData::Comment(_)));
 
     let mut ast = Ast {
+        imports: vec![],
         type_definitions: vec![],
         top_level_functions: vec![],
         template_definitions: vec![],
@@ -841,6 +848,10 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
                 let instantiation = parse_template_instantiation(&mut tokens.tokens)?;
                 ast.template_instantiations.push(instantiation);
             }
+            TokenData::Word(name) if name == "import" => {
+                let import = parse_import_declaration(&mut tokens.tokens)?;
+                ast.imports.push(import);
+            }
             TokenData::Newline => {
                 tokens.tokens.remove(0);
             }
@@ -849,6 +860,20 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
     }
 
     Ok(ast)
+}
+
+fn parse_import_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<ImportDecl> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("import".to_string()),
+        "expected 'import' keyword"
+    );
+
+    let path = match tokens.remove(0) {
+        TokenData::String(path) => path,
+        _ => return Err(anyhow::anyhow!("expected import path as string literal")),
+    };
+
+    Ok(ImportDecl { path })
 }
 
 fn parse_struct_value(
@@ -1166,6 +1191,23 @@ instantiate OptionI32 = Option[I32]
         assert_eq!(ast.template_instantiations[0].alias, "OptionI32");
         assert_eq!(ast.template_instantiations[0].template_name, "Option");
         assert_eq!(ast.template_instantiations[0].concrete_type, "I32");
+    }
+
+    #[test]
+    fn parses_import_declaration() {
+        let source = r#"
+import "helpers.oa"
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize import source");
+        let ast = parse(tokens).expect("parse import source");
+        assert_eq!(ast.imports.len(), 1);
+        assert_eq!(ast.imports[0].path, "helpers.oa");
     }
 
     #[test]

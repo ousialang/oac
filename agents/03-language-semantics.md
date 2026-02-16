@@ -24,6 +24,7 @@ Observed in parser/IR implementation:
 - Enum definitions with optional payloads.
 - Pattern matching on enums (`match`) as statement and expression.
 - Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
+- Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
 
 ## Semantic Rules You Must Preserve
 
@@ -34,6 +35,8 @@ Observed in parser/IR implementation:
 - `if` and `while` conditions must type-check to `Bool`.
 - Function return paths must not mix incompatible return types.
 - Assignments bind variable type to expression type.
+- Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
+- The built-in stdlib is composed through flat imports from `std.oa` into split sibling files, then merged into one global scope before user type-checking.
 
 ## Notes on Specs vs Reality
 

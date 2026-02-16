@@ -591,8 +591,7 @@ fn lower_match_dispatch<Arm, PatternOf, CompileArm>(
 ) -> String
 where
     PatternOf: Fn(&Arm) -> &parser::MatchPattern,
-    CompileArm:
-        FnMut(&mut CodegenCtx, &mut qbe::Function, &mut Variables, &Arm) -> MatchArmOutcome,
+    CompileArm: FnMut(&mut CodegenCtx, &mut qbe::Function, &mut Variables, &Arm) -> MatchArmOutcome,
 {
     let end_label = new_id(&[label_root, "end"]);
     let mut any_arm_falls_through = false;

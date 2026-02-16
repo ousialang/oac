@@ -7,8 +7,8 @@ use tracing::trace;
 
 use crate::{
     builtins::{libc_type_signatures, BuiltInType},
+    flat_imports,
     parser::{self, Ast, Expression, Literal, StructDef, UnaryOp},
-    tokenizer,
 };
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -272,9 +272,10 @@ pub struct FunctionDefinition {
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     {
-        let stdlib_source = include_str!("std.oa");
-        let stdlib_tokens = tokenizer::tokenize(stdlib_source.to_string())?;
-        let stdlib_ast = parser::parse(stdlib_tokens)?;
+        let stdlib_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("std.oa");
+        let stdlib_ast = flat_imports::parse_and_resolve_file(&stdlib_path)?;
 
         ast.top_level_functions
             .extend(stdlib_ast.top_level_functions);
@@ -1421,5 +1422,35 @@ pub(crate) fn get_expression_type(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{parser, tokenizer};
+
+    use super::resolve;
+
+    #[test]
+    fn resolve_loads_split_stdlib_files() {
+        let source = r#"
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        assert!(
+            resolved.type_definitions.contains_key("ParseErr"),
+            "missing ParseErr type from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("parse_json_document"),
+            "missing parse_json_document function from split stdlib"
+        );
     }
 }

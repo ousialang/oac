@@ -1,0 +1,14 @@
+struct NewString {
+	ptr: I64,
+	len: I64,
+}
+
+
+fun print_newstring(s: NewString) -> I32 {
+	i = 0
+	// while i32_to_i64(i) < s.len {
+	// 	print_char(s.ptr + i)
+	// }
+
+	return 0
+}

@@ -28,6 +28,8 @@ cargo test -p oac
 Key tests:
 - `crates/oac/src/tokenizer.rs` test loads `crates/oac/tokenizer_tests/*`.
 - `crates/oac/src/parser.rs` tests assert template bracket syntax parsing and legacy `()` rejection.
+- `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
+- `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `std.oa` imports.
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program output.
 
 Snapshots live in:

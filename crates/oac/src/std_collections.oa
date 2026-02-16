@@ -1,0 +1,224 @@
+template LinkedList[T] {
+	struct Node {
+		value: T,
+		next: LinkedList,
+	}
+
+	enum LinkedList {
+		Empty,
+		Cons(Node),
+	}
+
+	fun empty() -> LinkedList {
+		return LinkedList.Empty
+	}
+
+	fun push_front(value: T, list: LinkedList) -> LinkedList {
+		node = Node struct {
+			value: value,
+			next: list,
+		}
+		return LinkedList.Cons(node)
+	}
+
+	fun is_empty(list: LinkedList) -> Bool {
+		return match list {
+			LinkedList.Empty => true
+			LinkedList.Cons(_node) => false
+		}
+	}
+
+	fun head_or(list: LinkedList, fallback: T) -> T {
+		return match list {
+			LinkedList.Empty => fallback
+			LinkedList.Cons(node) => node.value
+		}
+	}
+
+	fun tail_or(list: LinkedList, fallback: LinkedList) -> LinkedList {
+		return match list {
+			LinkedList.Empty => fallback
+			LinkedList.Cons(node) => node.next
+		}
+	}
+
+	fun length(list: LinkedList) -> I32 {
+		return match list {
+			LinkedList.Empty => 0
+			LinkedList.Cons(node) => 1 + length(node.next)
+		}
+	}
+}
+
+template HashTable[T] {
+	struct Entry {
+		key: I32,
+		value: T,
+	}
+
+	enum Slot {
+		Empty,
+		Node(Entry),
+	}
+
+	enum Lookup {
+		Missing,
+		Found(T),
+	}
+
+	struct HashTable {
+		s0: Slot,
+		s1: Slot,
+		s2: Slot,
+		s3: Slot,
+		s4: Slot,
+		s5: Slot,
+		s6: Slot,
+		s7: Slot,
+	}
+
+	fun empty() -> HashTable {
+		return HashTable struct { s0: Slot.Empty, s1: Slot.Empty, s2: Slot.Empty, s3: Slot.Empty, s4: Slot.Empty, s5: Slot.Empty, s6: Slot.Empty, s7: Slot.Empty, }
+	}
+
+	fun hash_key(key: I32) -> I32 {
+		k = key
+		if k < 0 {
+			k = 0 - k
+		}
+
+		div = k / 8
+		return k - (div * 8)
+	}
+
+	fun slot_at(table: HashTable, index: I32) -> Slot {
+		if index == 0 {
+			return table.s0
+		}
+		if index == 1 {
+			return table.s1
+		}
+		if index == 2 {
+			return table.s2
+		}
+		if index == 3 {
+			return table.s3
+		}
+		if index == 4 {
+			return table.s4
+		}
+		if index == 5 {
+			return table.s5
+		}
+		if index == 6 {
+			return table.s6
+		}
+
+		return table.s7
+	}
+
+	fun with_slot(table: HashTable, index: I32, slot: Slot) -> HashTable {
+		if index == 0 {
+			return HashTable struct { s0: slot, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 1 {
+			return HashTable struct { s0: table.s0, s1: slot, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 2 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: slot, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 3 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: slot, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 4 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: slot, s5: table.s5, s6: table.s6, s7: table.s7, }
+		}
+		if index == 5 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: slot, s6: table.s6, s7: table.s7, }
+		}
+		if index == 6 {
+			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: slot, s7: table.s7, }
+		}
+
+		return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: slot, }
+	}
+
+	fun add_wrap(index: I32, delta: I32) -> I32 {
+		n = index + delta
+		if n >= 8 {
+			return n - 8
+		}
+		return n
+	}
+
+	fun put_probe(table: HashTable, start: I32, delta: I32, key: I32, value: T) -> HashTable {
+		if delta >= 8 {
+			return table
+		}
+
+		index = add_wrap(start, delta)
+		slot = slot_at(table, index)
+		match slot {
+			Slot.Empty => {
+				entry = Entry struct { key: key, value: value, }
+				return with_slot(table, index, Slot.Node(entry))
+			}
+			Slot.Node(entry) => {
+				if entry.key == key {
+					replaced = Entry struct { key: key, value: value, }
+					return with_slot(table, index, Slot.Node(replaced))
+				}
+				return put_probe(table, start, delta + 1, key, value)
+			}
+		}
+	}
+
+	fun get_probe(table: HashTable, start: I32, delta: I32, key: I32) -> Lookup {
+		if delta >= 8 {
+			return Lookup.Missing
+		}
+
+		index = add_wrap(start, delta)
+		slot = slot_at(table, index)
+		match slot {
+			Slot.Empty => {
+				return Lookup.Missing
+			}
+			Slot.Node(entry) => {
+				if entry.key == key {
+					return Lookup.Found(entry.value)
+				}
+				return get_probe(table, start, delta + 1, key)
+			}
+		}
+	}
+
+	fun slot_size(slot: Slot) -> I32 {
+		return match slot {
+			Slot.Empty => 0
+			Slot.Node(_entry) => 1
+		}
+	}
+
+	fun put(table: HashTable, key: I32, value: T) -> HashTable {
+		start = hash_key(key)
+		return put_probe(table, start, 0, key, value)
+	}
+
+	fun get(table: HashTable, key: I32) -> Lookup {
+		start = hash_key(key)
+		return get_probe(table, start, 0, key)
+	}
+
+	fun contains_key(table: HashTable, key: I32) -> Bool {
+		return match get(table, key) {
+			Lookup.Missing => false
+			Lookup.Found(_value) => true
+		}
+	}
+
+	fun size(table: HashTable) -> I32 {
+		return slot_size(table.s0) + slot_size(table.s1) + slot_size(table.s2) + slot_size(table.s3) + slot_size(table.s4) + slot_size(table.s5) + slot_size(table.s6) + slot_size(table.s7)
+	}
+}
+

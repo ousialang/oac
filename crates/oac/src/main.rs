@@ -1,4 +1,5 @@
 mod builtins;
+mod flat_imports;
 mod ir;
 mod parser;
 mod qbe_backend;
@@ -68,7 +69,8 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     let target_dir = current_dir.join("target").join("oac");
     std::fs::create_dir_all(&target_dir)?;
 
-    let source = std::fs::read_to_string(build.source)?;
+    let source_path = Path::new(&build.source);
+    let source = std::fs::read_to_string(source_path)?;
     trace!(source_len = source.len(), "Read input file");
 
     let tokens = tokenizer::tokenize(source)?;
@@ -76,7 +78,8 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     std::fs::write(&tokens_path, serde_json::to_string_pretty(&tokens)?)?;
     trace!(tokens_path = %tokens_path.display(), "Tokenized source file");
 
-    let ast = parser::parse(tokens)?;
+    let root_ast = parser::parse(tokens)?;
+    let ast = flat_imports::resolve_ast(root_ast, source_path)?;
     let ast_path = target_dir.join("ast.json");
     std::fs::write(&ast_path, serde_json::to_string_pretty(&ast)?)?;
     debug!(ast_path = %ast_path.display(), "Parsed source file");
@@ -188,7 +191,9 @@ fn extract_named_qbe_function(qbe_ir_text: &str, function_name: &str) -> Option<
 }
 
 fn extract_first_qbe_function(qbe_ir_text: &str) -> Option<String> {
-    extract_qbe_function(qbe_ir_text, |line| line.contains("function") && line.contains('$'))
+    extract_qbe_function(qbe_ir_text, |line| {
+        line.contains("function") && line.contains('$')
+    })
 }
 
 fn extract_qbe_function<F>(qbe_ir_text: &str, predicate: F) -> Option<String>
@@ -220,7 +225,11 @@ where
         }
     }
 
-    if started_body { Some(out) } else { None }
+    if started_body {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 fn initialize_logging() {
