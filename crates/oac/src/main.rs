@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use tracing::info;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer};
@@ -96,8 +96,11 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     struct_invariants::verify_struct_invariants(&ir, &target_dir)?;
 
     let qbe_ir = qbe_backend::compile(ir);
+    reject_proven_non_terminating_main(&qbe_ir)?;
+    let qbe_ir_text = qbe_ir.to_string();
+
     let qbe_ir_path = target_dir.join("ir.qbe");
-    std::fs::write(&qbe_ir_path, qbe_ir.to_string())?;
+    std::fs::write(&qbe_ir_path, &qbe_ir_text)?;
     info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
 
     let assembly_path = target_dir.join("assembly.s");
@@ -146,6 +149,44 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     info!(executable_path = %executable_path.display(), "Assembly compiled to executable");
 
     Ok(())
+}
+
+fn reject_proven_non_terminating_main(qbe_module: &qbe::Module) -> anyhow::Result<()> {
+    let Some(main_function) = qbe_module.functions.iter().find(|f| f.name == "main") else {
+        return Ok(());
+    };
+
+    let proofs = match qbe_smt::classify_simple_loops(main_function) {
+        Ok(proofs) => proofs,
+        Err(err) => {
+            warn!(
+                "non-termination classifier skipped due to unsupported main QBE shape: {}",
+                err
+            );
+            return Ok(());
+        }
+    };
+
+    let mut findings = Vec::new();
+    for proof in proofs {
+        if proof.status == qbe_smt::LoopProofStatus::NonTerminating {
+            findings.push(proof);
+        }
+    }
+
+    if findings.is_empty() {
+        return Ok(());
+    }
+
+    let mut message = String::from("proven non-terminating loop(s) in `main`:\n");
+    for finding in findings {
+        message.push_str(&format!(
+            "- @{}: {}\n",
+            finding.header_label, finding.reason
+        ));
+    }
+
+    Err(anyhow::anyhow!(message.trim_end().to_string()))
 }
 fn initialize_logging() {
     let env_filter = env::var("RUST_LOG").unwrap_or_default();
@@ -199,4 +240,134 @@ struct RiscvSmtOpts {
     /// Check if the program returns 0 within MAX_CYCLES instead of generating SMT
     #[clap(short, long, default_value = "false")]
     check: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_proven_non_terminating_main;
+    use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
+
+    fn temp(name: &str) -> Value {
+        Value::Temporary(name.to_string())
+    }
+
+    fn assign(dest: &str, ty: Type, instr: Instr) -> Statement {
+        Statement::Assign(temp(dest), ty, instr)
+    }
+
+    fn volatile(instr: Instr) -> Statement {
+        Statement::Volatile(instr)
+    }
+
+    fn block(label: &str, statements: Vec<Statement>) -> Block {
+        Block {
+            label: label.to_string(),
+            items: statements
+                .into_iter()
+                .map(BlockItem::Statement)
+                .collect::<Vec<_>>(),
+        }
+    }
+
+    fn module_with_main(blocks: Vec<Block>) -> Module {
+        Module {
+            functions: vec![Function {
+                linkage: Linkage::default(),
+                name: "main".to_string(),
+                arguments: vec![],
+                return_ty: Some(Type::Word),
+                blocks,
+            }],
+            types: vec![],
+            data: vec![],
+        }
+    }
+
+    #[test]
+    fn rejects_proven_non_terminating_loop_in_main() {
+        let module = module_with_main(vec![
+            block(
+                "start",
+                vec![assign("i", Type::Word, Instr::Copy(Value::Const(7)))],
+            ),
+            block(
+                "while_cond",
+                vec![
+                    assign("zero", Type::Word, Instr::Copy(Value::Const(0))),
+                    assign(
+                        "cond",
+                        Type::Word,
+                        Instr::Cmp(Type::Word, Cmp::Sgt, temp("i"), temp("zero")),
+                    ),
+                    volatile(Instr::Jnz(
+                        temp("cond"),
+                        "while_body".to_string(),
+                        "while_end".to_string(),
+                    )),
+                ],
+            ),
+            block(
+                "while_body",
+                vec![
+                    assign(
+                        "next",
+                        Type::Word,
+                        Instr::Call(
+                            "sub".to_string(),
+                            vec![(Type::Word, temp("i")), (Type::Word, Value::Const(0))],
+                            None,
+                        ),
+                    ),
+                    assign("i", Type::Word, Instr::Copy(temp("next"))),
+                    volatile(Instr::Jmp("while_cond".to_string())),
+                ],
+            ),
+            block(
+                "while_end",
+                vec![volatile(Instr::Ret(Some(Value::Const(0))))],
+            ),
+        ]);
+
+        let err = reject_proven_non_terminating_main(&module).expect_err("expected rejection");
+        assert!(err.to_string().contains("proven non-terminating loop"));
+    }
+
+    #[test]
+    fn allows_unknown_or_terminating_loops() {
+        let module = module_with_main(vec![
+            block(
+                "start",
+                vec![assign("i", Type::Word, Instr::Copy(Value::Const(7)))],
+            ),
+            block(
+                "while_cond",
+                vec![
+                    assign(
+                        "cond",
+                        Type::Word,
+                        Instr::Cmp(Type::Word, Cmp::Sgt, temp("i"), Value::Const(0)),
+                    ),
+                    volatile(Instr::Jnz(
+                        temp("cond"),
+                        "while_body".to_string(),
+                        "while_end".to_string(),
+                    )),
+                ],
+            ),
+            block(
+                "while_body",
+                vec![
+                    assign("next", Type::Word, Instr::Sub(temp("i"), Value::Const(1))),
+                    assign("i", Type::Word, Instr::Copy(temp("next"))),
+                    volatile(Instr::Jmp("while_cond".to_string())),
+                ],
+            ),
+            block(
+                "while_end",
+                vec![volatile(Instr::Ret(Some(Value::Const(0))))],
+            ),
+        ]);
+
+        reject_proven_non_terminating_main(&module).expect("unknown loops should pass");
+    }
 }

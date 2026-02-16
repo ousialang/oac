@@ -33,10 +33,12 @@ Key tests:
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `std.oa` imports.
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()` and `main(argc, argv)`).
-- `crates/qbe-smt/src/lib.rs` tests cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, and strict rejection of unsupported operations.
+- `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, and strict rejection of unsupported operations.
+- `crates/qbe-smt/src/lib.rs` also tests loop classification (`classify_simple_loops`) for proven non-termination patterns (identity updates, including `call $sub(..., 0)`) vs unknown/progress loops.
 - `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), completion, document symbols, and file-URI handling.
 - `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation, template concrete-name support, obligation-site scoping, recursion rejection, `while` loop summarization behavior, and solver-obligation artifact generation.
-- `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program output.
+- `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
+- `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors).
 
 Snapshots live in:
 - `crates/oac/src/snapshots/*.snap`
@@ -55,7 +57,7 @@ Missing tools can cause test/build failures unrelated to Rust logic.
 ## Debugging Flow for Compiler Regressions
 
 1. Reproduce with a minimal `.oa` fixture in `crates/oac/execution_tests`.
-2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and invariant checker artifacts (`target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`) when applicable.
+2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and invariant checker artifacts (`target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory `qbe::Function` obligations.
 3. Isolate stage failure: tokenize, parse, resolve, codegen, or external tool invocation.
 4. Add/adjust snapshot to encode fixed behavior.
 5. Run full test suite.

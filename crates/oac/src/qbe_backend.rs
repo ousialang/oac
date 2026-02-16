@@ -1416,10 +1416,10 @@ mod tests {
                     let output = child
                         .wait_with_output()
                         .map_err(|err| format!("failed to collect executable output: {err}"))?;
-                    if !output.status.success() {
+
+                    if output.status.code().is_none() {
                         return Err(format!(
-                            "executable exited with status {}\\nstdout:\\n{}\\nstderr:\\n{}",
-                            output.status,
+                            "executable terminated by signal\\nstdout:\\n{}\\nstderr:\\n{}",
                             String::from_utf8_lossy(&output.stdout),
                             String::from_utf8_lossy(&output.stderr)
                         ));

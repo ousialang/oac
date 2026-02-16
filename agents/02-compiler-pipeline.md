@@ -11,9 +11,10 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 5. Resolve/type-check with `ir::resolve`.
 6. Verify struct invariants with `struct_invariants::verify_struct_invariants` (SMT-based, fail-closed).
 7. Lower to QBE with `qbe_backend::compile`.
-8. Emit QBE IR to `target/oac/ir.qbe`.
-9. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
-10. Invoke `zig cc` to link executable (`target/oac/app`).
+8. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
+9. Emit QBE IR to `target/oac/ir.qbe`.
+10. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
+11. Invoke `zig cc` to link executable (`target/oac/app`).
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -77,7 +78,9 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `riscv-smt` subcommand.
 - `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
-- `qbe-smt` is used by struct invariant verification to encode checker QBE programs into CHC/fixedpoint (Horn) constraints.
+- `qbe-smt` is used by struct invariant verification to encode checker QBE functions into CHC/fixedpoint (Horn) constraints.
+- `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
+- `qbe-smt` is parser-free: it consumes in-memory `qbe::Function` directly. Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), and `crates/qbe-smt/src/classify.rs` (loop classification).
 - `qbe-smt` models a broad integer + memory QBE subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - `call` with explicit support for `malloc` heap effects
@@ -88,6 +91,7 @@ Important enforced invariants include:
 - Property surface is fixed: query whether halt with `exit == 1` is reachable (`(query bad)`).
 - Unsupported constructs are fail-closed hard errors (no havoc fallback path).
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
+- Loop classification is intentionally conservative: currently proves only a narrow canonical while-loop shape where the guard is initially true on entry and the body preserves the guard variable (`x' = x`), otherwise result is unknown and build proceeds.
 
 ## LSP Path
 

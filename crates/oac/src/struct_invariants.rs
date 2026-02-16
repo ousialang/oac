@@ -1737,10 +1737,10 @@ enum CheckerTy {
 }
 
 impl CheckerTy {
-    fn qbe_token(self) -> &'static str {
+    fn qbe_type(self) -> qbe::Type {
         match self {
-            CheckerTy::Word => "w",
-            CheckerTy::Long => "l",
+            CheckerTy::Word => qbe::Type::Word,
+            CheckerTy::Long => qbe::Type::Long,
         }
     }
 
@@ -1755,14 +1755,13 @@ impl CheckerTy {
 #[derive(Clone, Debug)]
 struct CheckerValue {
     ty: CheckerTy,
-    operand: String,
+    value: qbe::Value,
 }
 
 #[derive(Default)]
 struct CheckerBuilder {
-    lines: Vec<String>,
+    statements: Vec<qbe::Statement>,
     temp_counter: usize,
-    instruction_count: usize,
     vars: HashMap<String, CheckerValue>,
 }
 
@@ -1773,44 +1772,52 @@ impl CheckerBuilder {
         name
     }
 
-    fn emit_assign(&mut self, ty: CheckerTy, dest: &str, rhs: impl Into<String>) {
-        self.instruction_count += 1;
-        self.lines
-            .push(format!("\t%{} ={} {}", dest, ty.qbe_token(), rhs.into()));
+    fn emit_assign(&mut self, ty: CheckerTy, dest: &str, instr: qbe::Instr) {
+        self.statements.push(qbe::Statement::Assign(
+            qbe::Value::Temporary(dest.to_string()),
+            ty.qbe_type(),
+            instr,
+        ));
     }
 
-    fn emit_instr(&mut self, instr: impl Into<String>) {
-        self.instruction_count += 1;
-        self.lines.push(format!("\t{}", instr.into()));
+    fn emit_instr(&mut self, instr: qbe::Instr) {
+        self.statements.push(qbe::Statement::Volatile(instr));
     }
 
     fn value_const_word(v: u64) -> CheckerValue {
         CheckerValue {
             ty: CheckerTy::Word,
-            operand: v.to_string(),
+            value: qbe::Value::Const(v),
         }
     }
 
     fn value_const_long(v: u64) -> CheckerValue {
         CheckerValue {
             ty: CheckerTy::Long,
-            operand: v.to_string(),
+            value: qbe::Value::Const(v),
         }
     }
 
     fn normalize_bool(&mut self, value: CheckerValue) -> CheckerValue {
         let dest = self.next_temp("bool");
-        match value.ty {
-            CheckerTy::Word => {
-                self.emit_assign(CheckerTy::Word, &dest, format!("cnew {}, 0", value.operand))
-            }
-            CheckerTy::Long => {
-                self.emit_assign(CheckerTy::Word, &dest, format!("cnel {}, 0", value.operand))
-            }
-        }
+        let instr = match value.ty {
+            CheckerTy::Word => qbe::Instr::Cmp(
+                qbe::Type::Word,
+                qbe::Cmp::Ne,
+                value.value,
+                qbe::Value::Const(0),
+            ),
+            CheckerTy::Long => qbe::Instr::Cmp(
+                qbe::Type::Long,
+                qbe::Cmp::Ne,
+                value.value,
+                qbe::Value::Const(0),
+            ),
+        };
+        self.emit_assign(CheckerTy::Word, &dest, instr);
         CheckerValue {
             ty: CheckerTy::Word,
-            operand: format!("%{}", dest),
+            value: qbe::Value::Temporary(dest),
         }
     }
 
@@ -1819,10 +1826,10 @@ impl CheckerBuilder {
             CheckerTy::Long => Ok(value),
             CheckerTy::Word => {
                 let dest = self.next_temp(context);
-                self.emit_assign(CheckerTy::Long, &dest, format!("extsw {}", value.operand));
+                self.emit_assign(CheckerTy::Long, &dest, qbe::Instr::Extsw(value.value));
                 Ok(CheckerValue {
                     ty: CheckerTy::Long,
-                    operand: format!("%{}", dest),
+                    value: qbe::Value::Temporary(dest),
                 })
             }
         }
@@ -1841,16 +1848,16 @@ impl CheckerBuilder {
         let dest = self.next_temp(context);
         match (value.ty, target) {
             (CheckerTy::Word, CheckerTy::Long) => {
-                self.emit_assign(CheckerTy::Long, &dest, format!("extsw {}", value.operand));
+                self.emit_assign(CheckerTy::Long, &dest, qbe::Instr::Extsw(value.value));
             }
             (CheckerTy::Long, CheckerTy::Word) => {
-                self.emit_assign(CheckerTy::Word, &dest, format!("copy {}", value.operand));
+                self.emit_assign(CheckerTy::Word, &dest, qbe::Instr::Copy(value.value));
             }
             (CheckerTy::Word, CheckerTy::Word) | (CheckerTy::Long, CheckerTy::Long) => {}
         }
         Ok(CheckerValue {
             ty: target,
-            operand: format!("%{}", dest),
+            value: qbe::Value::Temporary(dest),
         })
     }
 
@@ -1866,10 +1873,19 @@ impl CheckerBuilder {
                 let inner = self.lower_expr(inner)?;
                 let inner = self.normalize_bool(inner);
                 let dest = self.next_temp("not");
-                self.emit_assign(CheckerTy::Word, &dest, format!("ceqw {}, 0", inner.operand));
+                self.emit_assign(
+                    CheckerTy::Word,
+                    &dest,
+                    qbe::Instr::Cmp(
+                        qbe::Type::Word,
+                        qbe::Cmp::Eq,
+                        inner.value,
+                        qbe::Value::Const(0),
+                    ),
+                );
                 Ok(CheckerValue {
                     ty: CheckerTy::Word,
-                    operand: format!("%{}", dest),
+                    value: qbe::Value::Temporary(dest),
                 })
             }
             SymExpr::And(items) => {
@@ -1886,11 +1902,11 @@ impl CheckerBuilder {
                     self.emit_assign(
                         CheckerTy::Word,
                         &dest,
-                        format!("and {}, {}", acc.operand, rhs.operand),
+                        qbe::Instr::And(acc.value, rhs.value),
                     );
                     acc = CheckerValue {
                         ty: CheckerTy::Word,
-                        operand: format!("%{}", dest),
+                        value: qbe::Value::Temporary(dest),
                     };
                 }
                 Ok(acc)
@@ -1906,14 +1922,10 @@ impl CheckerBuilder {
                     let rhs = self.lower_expr(item)?;
                     let rhs = self.normalize_bool(rhs);
                     let dest = self.next_temp("or");
-                    self.emit_assign(
-                        CheckerTy::Word,
-                        &dest,
-                        format!("or {}, {}", acc.operand, rhs.operand),
-                    );
+                    self.emit_assign(CheckerTy::Word, &dest, qbe::Instr::Or(acc.value, rhs.value));
                     acc = CheckerValue {
                         ty: CheckerTy::Word,
-                        operand: format!("%{}", dest),
+                        value: qbe::Value::Temporary(dest),
                     };
                 }
                 Ok(acc)
@@ -1927,21 +1939,17 @@ impl CheckerBuilder {
                 let rhs_raw = self.lower_expr(rhs)?;
                 let rhs = self.expect_long(rhs_raw, "rhs")?;
                 let op = match expr {
-                    SymExpr::Add(_, _) => "add",
-                    SymExpr::Sub(_, _) => "sub",
-                    SymExpr::Mul(_, _) => "mul",
-                    SymExpr::Div(_, _) => "div",
+                    SymExpr::Add(_, _) => qbe::Instr::Add(lhs.value, rhs.value),
+                    SymExpr::Sub(_, _) => qbe::Instr::Sub(lhs.value, rhs.value),
+                    SymExpr::Mul(_, _) => qbe::Instr::Mul(lhs.value, rhs.value),
+                    SymExpr::Div(_, _) => qbe::Instr::Div(lhs.value, rhs.value),
                     _ => unreachable!(),
                 };
-                let dest = self.next_temp(op);
-                self.emit_assign(
-                    CheckerTy::Long,
-                    &dest,
-                    format!("{} {}, {}", op, lhs.operand, rhs.operand),
-                );
+                let dest = self.next_temp("arith");
+                self.emit_assign(CheckerTy::Long, &dest, op);
                 Ok(CheckerValue {
                     ty: CheckerTy::Long,
-                    operand: format!("%{}", dest),
+                    value: qbe::Value::Temporary(dest),
                 })
             }
             SymExpr::Eq(lhs, rhs) | SymExpr::Ne(lhs, rhs) => {
@@ -1956,31 +1964,36 @@ impl CheckerBuilder {
                     ));
                 }
 
-                let (cmp, lhs, rhs) = match lhs_sort {
+                let (cmp_ty, lhs, rhs) = match lhs_sort {
                     Sort::Bool => {
                         let lhs_raw = self.lower_expr(lhs)?;
                         let lhs = self.normalize_bool(lhs_raw);
                         let rhs_raw = self.lower_expr(rhs)?;
                         let rhs = self.normalize_bool(rhs_raw);
-                        (if eq { "ceqw" } else { "cnew" }, lhs, rhs)
+                        (qbe::Type::Word, lhs, rhs)
                     }
                     Sort::Int => {
                         let lhs_raw = self.lower_expr(lhs)?;
                         let lhs = self.expect_long(lhs_raw, "eq_lhs")?;
                         let rhs_raw = self.lower_expr(rhs)?;
                         let rhs = self.expect_long(rhs_raw, "eq_rhs")?;
-                        (if eq { "ceql" } else { "cnel" }, lhs, rhs)
+                        (qbe::Type::Long, lhs, rhs)
                     }
                 };
                 let dest = self.next_temp("cmp");
                 self.emit_assign(
                     CheckerTy::Word,
                     &dest,
-                    format!("{} {}, {}", cmp, lhs.operand, rhs.operand),
+                    qbe::Instr::Cmp(
+                        cmp_ty,
+                        if eq { qbe::Cmp::Eq } else { qbe::Cmp::Ne },
+                        lhs.value,
+                        rhs.value,
+                    ),
                 );
                 Ok(CheckerValue {
                     ty: CheckerTy::Word,
-                    operand: format!("%{}", dest),
+                    value: qbe::Value::Temporary(dest),
                 })
             }
             SymExpr::Lt(lhs, rhs)
@@ -1992,21 +2005,21 @@ impl CheckerBuilder {
                 let rhs_raw = self.lower_expr(rhs)?;
                 let rhs = self.expect_long(rhs_raw, "ord_rhs")?;
                 let cmp = match expr {
-                    SymExpr::Lt(_, _) => "csltl",
-                    SymExpr::Gt(_, _) => "csgtl",
-                    SymExpr::Le(_, _) => "cslel",
-                    SymExpr::Ge(_, _) => "csgel",
+                    SymExpr::Lt(_, _) => qbe::Cmp::Slt,
+                    SymExpr::Gt(_, _) => qbe::Cmp::Sgt,
+                    SymExpr::Le(_, _) => qbe::Cmp::Sle,
+                    SymExpr::Ge(_, _) => qbe::Cmp::Sge,
                     _ => unreachable!(),
                 };
                 let dest = self.next_temp("ord");
                 self.emit_assign(
                     CheckerTy::Word,
                     &dest,
-                    format!("{} {}, {}", cmp, lhs.operand, rhs.operand),
+                    qbe::Instr::Cmp(qbe::Type::Long, cmp, lhs.value, rhs.value),
                 );
                 Ok(CheckerValue {
                     ty: CheckerTy::Word,
-                    operand: format!("%{}", dest),
+                    value: qbe::Value::Temporary(dest),
                 })
             }
             SymExpr::Ite {
@@ -2025,50 +2038,62 @@ impl CheckerBuilder {
                 let cond_typed = self.coerce_to(cond, out_ty, "ite_cond")?;
 
                 let mask = self.next_temp("ite_mask");
-                self.emit_assign(out_ty, &mask, format!("sub 0, {}", cond_typed.operand));
+                self.emit_assign(
+                    out_ty,
+                    &mask,
+                    qbe::Instr::Sub(qbe::Value::Const(0), cond_typed.value),
+                );
+                let mask_value = qbe::Value::Temporary(mask);
 
                 let all_ones = match out_ty {
                     CheckerTy::Word => u32::MAX as u64,
                     CheckerTy::Long => u64::MAX,
                 };
                 let inv_mask = self.next_temp("ite_inv_mask");
-                self.emit_assign(out_ty, &inv_mask, format!("xor %{}, {}", mask, all_ones));
+                self.emit_assign(
+                    out_ty,
+                    &inv_mask,
+                    qbe::Instr::Sub(qbe::Value::Const(all_ones), mask_value.clone()),
+                );
+                let inv_mask_value = qbe::Value::Temporary(inv_mask);
 
                 let then_masked = self.next_temp("ite_then_masked");
                 self.emit_assign(
                     out_ty,
                     &then_masked,
-                    format!("and {}, %{}", then_value.operand, mask),
+                    qbe::Instr::And(then_value.value, mask_value),
                 );
+                let then_masked_value = qbe::Value::Temporary(then_masked);
 
                 let else_masked = self.next_temp("ite_else_masked");
                 self.emit_assign(
                     out_ty,
                     &else_masked,
-                    format!("and {}, %{}", else_value.operand, inv_mask),
+                    qbe::Instr::And(else_value.value, inv_mask_value),
                 );
+                let else_masked_value = qbe::Value::Temporary(else_masked);
 
                 let out_name = self.next_temp("ite_out");
                 self.emit_assign(
                     out_ty,
                     &out_name,
-                    format!("or %{}, %{}", then_masked, else_masked),
+                    qbe::Instr::Or(then_masked_value, else_masked_value),
                 );
                 Ok(CheckerValue {
                     ty: out_ty,
-                    operand: format!("%{}", out_name),
+                    value: qbe::Value::Temporary(out_name),
                 })
             }
         }
     }
 }
 
-fn render_obligation_checker_qbe(formula: &SymExpr) -> anyhow::Result<String> {
+fn render_obligation_checker_function(formula: &SymExpr) -> anyhow::Result<qbe::Function> {
     let mut vars = BTreeMap::new();
     collect_vars(formula, &mut vars);
 
     let mut builder = CheckerBuilder::default();
-    let mut args = Vec::new();
+    let mut arguments = Vec::new();
 
     for (idx, (name, sort)) in vars.iter().enumerate() {
         let arg_name = format!("a{}_{}", idx, sanitize_ident(name));
@@ -2076,11 +2101,11 @@ fn render_obligation_checker_qbe(formula: &SymExpr) -> anyhow::Result<String> {
             Sort::Bool => CheckerTy::Word,
             Sort::Int => CheckerTy::Word,
         };
-        args.push(format!("{} %{}", arg_ty.qbe_token(), arg_name));
+        arguments.push((arg_ty.qbe_type(), qbe::Value::Temporary(arg_name.clone())));
 
         let base = CheckerValue {
             ty: arg_ty,
-            operand: format!("%{}", arg_name),
+            value: qbe::Value::Temporary(arg_name),
         };
         let value = match sort {
             Sort::Bool => builder.normalize_bool(base),
@@ -2091,18 +2116,23 @@ fn render_obligation_checker_qbe(formula: &SymExpr) -> anyhow::Result<String> {
 
     let violation_raw = builder.lower_expr(formula)?;
     let violation = builder.normalize_bool(violation_raw);
-    builder.emit_instr(format!("ret {}", violation.operand));
+    builder.emit_instr(qbe::Instr::Ret(Some(violation.value)));
 
-    let mut qbe = String::new();
-    qbe.push_str(&format!("function w $main({}) {{\n", args.join(", ")));
-    qbe.push_str("@start\n");
-    for line in &builder.lines {
-        qbe.push_str(line);
-        qbe.push('\n');
-    }
-    qbe.push_str("}\n");
+    let mut function = qbe::Function::new(
+        qbe::Linkage::private(),
+        "main",
+        arguments,
+        Some(qbe::Type::Word),
+    );
+    let block = function.add_block("start");
+    block.items.extend(
+        builder
+            .statements
+            .into_iter()
+            .map(qbe::BlockItem::Statement),
+    );
 
-    Ok(qbe)
+    Ok(function)
 }
 
 fn solve_obligations(
@@ -2126,7 +2156,8 @@ fn solve_obligations(
             .cloned()
             .unwrap_or(SymExpr::BoolConst(false));
 
-        let checker_qbe = render_obligation_checker_qbe(&formula)?;
+        let checker_function = render_obligation_checker_function(&formula)?;
+        let checker_qbe = checker_function.to_string();
         let site_stem = format!("site_{}", sanitize_ident(&site.id));
         let qbe_filename = format!("{}.qbe", site_stem);
         let smt_filename = format!("{}.smt2", site_stem);
@@ -2137,7 +2168,7 @@ fn solve_obligations(
         })?;
 
         let smt = qbe_smt::qbe_to_smt(
-            &checker_qbe,
+            &checker_function,
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: false,
             },

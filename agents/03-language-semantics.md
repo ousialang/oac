@@ -41,7 +41,7 @@ Observed in parser/IR implementation:
 - Struct invariants are optional per struct type and identified by function name `__struct__<TypeName>__invariant`.
 - If an invariant function exists, it must have exact signature `fun __struct__<TypeName>__invariant(v: <TypeName>) -> Bool`; malformed signatures are compile errors.
 - Build-time verification checks struct invariants at return sites of user-defined function calls reachable from `main` (excluding invariant function bodies).
-- Verification compiles each site formula into a checker-style QBE program that returns `1` on violation and `0` otherwise, then asks if exit code `1` is reachable; `unsat` means invariant proven at the site, `sat` means compile failure.
+- Verification compiles each site formula into an in-memory checker `qbe::Function` (also written to `site_*.qbe`) that returns `1` on violation and `0` otherwise, then asks if exit code `1` is reachable; `unsat` means invariant proven at the site, `sat` means compile failure.
 - Checker lowering keeps symbolic `I32` inputs at `w` width and sign-extends internally for integer arithmetic, preventing accidental quantification over unconstrained 64-bit argument domains.
 - Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` form.
 - `while` is supported with conservative summarization: body-assigned variables are havocked at loop exit.
@@ -49,7 +49,9 @@ Observed in parser/IR implementation:
 - Unsupported verifier constructs (for example `match`, postfix calls, recursion cycles in analyzed paths, or missing return on a reachable path) fail closed.
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
+- `qbe-smt` is parser-free: proving consumes direct `qbe::Function` IR, not re-parsed QBE text.
 - `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced only for struct invariant obligations under `target/oac/struct_invariants/`.
+- `oac build` runs a conservative non-termination classifier over QBE `main` loops and rejects builds only when non-termination is proven (current proof shape: canonical while-loop with initially true guard and identity body update on guard variable, including simple `sub(x, 0)` forms). Unproven loops are treated as unknown and allowed.
 
 ## Notes on Specs vs Reality
 

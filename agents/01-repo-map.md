@@ -22,6 +22,9 @@ The active compiler workspace is:
 - `crates/oac/src/builtins.rs`: built-in types and libc signatures.
 - `crates/oac/src/riscv_smt.rs`: ELF -> SMT pipeline for bounded return-to-zero checks.
 - `crates/oac/src/struct_invariants.rs`: SMT-backed compile-time struct invariant verification pass.
+- `crates/qbe-smt/src/lib.rs`: public `qbe-smt` API and unit tests.
+- `crates/qbe-smt/src/encode.rs`: CHC/Horn fixedpoint encoder for `exit == 1` reachability.
+- `crates/qbe-smt/src/classify.rs`: conservative loop non-termination classifier used during `oac build`.
 - `crates/oac/src/std.oa`: stdlib import entrypoint injected during resolution.
 - `crates/oac/src/std_*.oa`: split stdlib modules imported by `std.oa`.
 - `crates/oac/execution_tests/*.oa`: language behavior fixtures (positive + negative).
