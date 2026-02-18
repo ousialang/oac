@@ -1,5 +1,8 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: output
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
 ---
-9
+COMPILATION ERROR
+
+struct invariant verification failed (SAT counterexamples found):
+main#1#0 (caller=main, callee=make_envelope, struct=Envelope, invariant="envelope stays normalized and stable (id=stable_envelope)", witness=cfg_path=@start -> @si_inl_0_make_envelope_start -> @si_inl_1_build_raw_start -> @si_inl_1_build_raw__L_cond_then_019c6e63fd047390a8cdedcede82a6d9 -> @si_inl_1_build_raw_cont -> @si_inl_2_normalize_start -> @si_inl_2_normalize__L_cond_then_019c6e63fd047390a8cddb8cbafe4fca -> @si_inl_2_normalize_cont -> @si_inl_0_make_envelope_cont -> @si_inl_3___struct__Envelope__invariant_start -> @si_inl_3___struct__Envelope__invariant_cont, branch_steps=[@start -> @si_inl_0_make_envelope_start (jmp); @si_inl_0_make_envelope_start -> @si_inl_1_build_raw_start (jmp); @si_inl_1_build_raw_start -> @si_inl_1_build_raw__L_cond_then_019c6e63fd047390a8cdedcede82a6d9 (jnz %si_inl_1_build_raw__L_bin_op_019c6e63fd057b23a497a3c270aa9435 != 0); @si_inl_1_build_raw__L_cond_then_019c6e63fd047390a8cdedcede82a6d9 -> @si_inl_1_build_raw_cont (jmp); @si_inl_1_build_raw_cont -> @si_inl_2_normalize_start (jmp); @si_inl_2_normalize_start -> @si_inl_2_normalize__L_cond_then_019c6e63fd047390a8cddb8cbafe4fca (jnz %si_inl_2_normalize__L_bin_op_019c6e63fd047390a8cddbb50a4b83ad != 0); @si_inl_2_normalize__L_cond_then_019c6e63fd047390a8cddb8cbafe4fca -> @si_inl_2_normalize_cont (jmp); @si_inl_2_normalize_cont -> @si_inl_0_make_envelope_cont (jmp); @si_inl_0_make_envelope_cont -> @si_inl_3___struct__Envelope__invariant_start (jmp); @si_inl_3___struct__Envelope__invariant_start -> @si_inl_3___struct__Envelope__invariant_cont (jmp)], bad_ret_temp=%si_bad, qbe_artifact=site_main_1_0.qbe, smt_artifact=site_main_1_0.smt2)

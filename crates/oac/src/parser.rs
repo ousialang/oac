@@ -39,6 +39,7 @@ pub struct TemplateDef {
     pub type_param: String,
     pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
+    pub invariants: Vec<StructInvariantDecl>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -58,6 +59,7 @@ pub struct Ast {
     pub imports: Vec<ImportDecl>,
     pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
+    pub invariants: Vec<StructInvariantDecl>,
     pub template_definitions: Vec<TemplateDef>,
     pub template_instantiations: Vec<TemplateInstantiation>,
 }
@@ -68,6 +70,14 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
     pub return_type: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StructInvariantDecl {
+    pub identifier: Option<String>,
+    pub display_name: String,
+    pub parameter: Parameter,
+    pub body: Vec<Statement>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -585,6 +595,82 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
     Ok(parameters)
 }
 
+fn parse_single_parameter(tokens: &mut Vec<TokenData>) -> anyhow::Result<Parameter> {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true
+            },
+        "expected opening parenthesis"
+    );
+    let parameter = match tokens.remove(0) {
+        TokenData::Word(name) => {
+            anyhow::ensure!(
+                tokens.remove(0) == TokenData::Symbols(":".to_string()),
+                "expected ':' after parameter name"
+            );
+            let ty = match tokens.remove(0) {
+                TokenData::Word(ty) => ty,
+                _ => return Err(anyhow::anyhow!("expected parameter type")),
+            };
+            Parameter { name, ty }
+        }
+        _ => return Err(anyhow::anyhow!("expected parameter name")),
+    };
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: ')',
+                is_opening: false
+            },
+        "expected closing parenthesis"
+    );
+    Ok(parameter)
+}
+
+fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Statement>> {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace"
+    );
+
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Newline,
+        "expected newline after opening brace"
+    );
+
+    let mut body = vec![];
+    loop {
+        trace!(
+            "Parsing entry in a function-like body: {:#?}",
+            tokens.first().unwrap()
+        );
+        match tokens.first().unwrap() {
+            TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            } => {
+                tokens.remove(0);
+                break;
+            }
+            TokenData::Newline => {
+                tokens.remove(0);
+            }
+            _ => {
+                let statement = parse_statement(tokens)?;
+                body.push(statement);
+            }
+        }
+    }
+
+    Ok(body)
+}
+
 fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<StructDef> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("struct".to_string()),
@@ -763,49 +849,58 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
         _ => return Err(anyhow::anyhow!("expected return type")),
     };
 
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: '{',
-                is_opening: true
-            },
-        "expected opening brace"
-    );
-
-    anyhow::ensure!(
-        tokens.remove(0) == TokenData::Newline,
-        "expected newline after opening brace"
-    );
-
-    let mut body = vec![];
-    loop {
-        trace!(
-            "Parsing entry in a function body: {:#?}",
-            tokens.first().unwrap()
-        );
-        match tokens.first().unwrap() {
-            TokenData::Parenthesis {
-                opening: '}',
-                is_opening: false,
-            } => {
-                tokens.remove(0);
-                break;
-            }
-            TokenData::Newline => {
-                tokens.remove(0);
-            }
-            _ => {
-                let statement = parse_statement(tokens)?;
-                body.push(statement);
-            }
-        }
-    }
+    let body = parse_function_like_body(tokens)?;
 
     Ok(Function {
         name,
         parameters,
         body,
         return_type,
+    })
+}
+
+fn parse_struct_invariant_declaration(
+    tokens: &mut Vec<TokenData>,
+) -> anyhow::Result<StructInvariantDecl> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("invariant".to_string()),
+        "expected 'invariant' keyword"
+    );
+
+    let (identifier, display_name) = match tokens.remove(0) {
+        TokenData::String(display_name) => (None, display_name),
+        TokenData::Word(identifier) => {
+            let display_name = match tokens.remove(0) {
+                TokenData::String(display_name) => display_name,
+                token => {
+                    return Err(anyhow::anyhow!(
+                        "expected invariant display name string after identifier, got {:?}",
+                        token
+                    ));
+                }
+            };
+            (Some(identifier), display_name)
+        }
+        token => {
+            return Err(anyhow::anyhow!(
+                "expected invariant display name string or identifier, got {:?}",
+                token
+            ));
+        }
+    };
+
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("for".to_string()),
+        "expected 'for' after invariant name"
+    );
+    let parameter = parse_single_parameter(tokens)?;
+    let body = parse_function_like_body(tokens)?;
+
+    Ok(StructInvariantDecl {
+        identifier,
+        display_name,
+        parameter,
+        body,
     })
 }
 
@@ -820,6 +915,7 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         imports: vec![],
         type_definitions: vec![],
         top_level_functions: vec![],
+        invariants: vec![],
         template_definitions: vec![],
         template_instantiations: vec![],
     };
@@ -839,6 +935,10 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
             TokenData::Word(name) if name == "fun" => {
                 let function = parse_function_declaration(&mut tokens.tokens)?;
                 ast.top_level_functions.push(function);
+            }
+            TokenData::Word(name) if name == "invariant" => {
+                let invariant = parse_struct_invariant_declaration(&mut tokens.tokens)?;
+                ast.invariants.push(invariant);
             }
             TokenData::Word(name) if name == "template" => {
                 let template = parse_template_declaration(&mut tokens.tokens)?;
@@ -1068,6 +1168,7 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
 
     let mut type_definitions = vec![];
     let mut top_level_functions = vec![];
+    let mut invariants = vec![];
     loop {
         match tokens.first() {
             Some(TokenData::Parenthesis {
@@ -1089,6 +1190,10 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
                 let function = parse_function_declaration(tokens)?;
                 top_level_functions.push(function);
             }
+            Some(TokenData::Word(name)) if name == "invariant" => {
+                let invariant = parse_struct_invariant_declaration(tokens)?;
+                invariants.push(invariant);
+            }
             Some(TokenData::Newline) => {
                 tokens.remove(0);
             }
@@ -1107,6 +1212,7 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
         type_param,
         type_definitions,
         top_level_functions,
+        invariants,
     })
 }
 
@@ -1227,5 +1333,77 @@ template Legacy(T) {
             err.to_string().contains("expected '[' after template name"),
             "unexpected parse error: {err}"
         );
+    }
+
+    #[test]
+    fn parses_struct_invariant_declaration() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "positive .value" for (v: Counter) {
+	return v.value >= 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize invariant source");
+        let ast = parse(tokens).expect("parse invariant source");
+
+        assert_eq!(ast.invariants.len(), 1);
+        assert_eq!(ast.invariants[0].identifier, None);
+        assert_eq!(ast.invariants[0].display_name, "positive .value");
+        assert_eq!(ast.invariants[0].parameter.name, "v");
+        assert_eq!(ast.invariants[0].parameter.ty, "Counter");
+    }
+
+    #[test]
+    fn parses_named_struct_invariant_declaration() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant positive_value "positive .value" for (v: Counter) {
+	return v.value >= 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize named invariant source");
+        let ast = parse(tokens).expect("parse named invariant source");
+
+        assert_eq!(ast.invariants.len(), 1);
+        assert_eq!(
+            ast.invariants[0].identifier.as_deref(),
+            Some("positive_value")
+        );
+        assert_eq!(ast.invariants[0].display_name, "positive .value");
+    }
+
+    #[test]
+    fn parses_template_struct_invariant_declaration() {
+        let source = r#"
+template Box[T] {
+	struct Box {
+		value: T,
+	}
+
+	invariant "value must be valid" for (v: Box) {
+		return true
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize template invariant source");
+        let ast = parse(tokens).expect("parse template invariant source");
+
+        assert_eq!(ast.template_definitions.len(), 1);
+        let template = &ast.template_definitions[0];
+        assert_eq!(template.invariants.len(), 1);
+        assert_eq!(template.invariants[0].display_name, "value must be valid");
+        assert_eq!(template.invariants[0].parameter.ty, "Box");
     }
 }

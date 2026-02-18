@@ -1,4 +1,6 @@
 use qbe::Function as QbeFunction;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use thiserror::Error;
 
 mod classify;
@@ -11,12 +13,15 @@ pub use classify::{LoopProof, LoopProofStatus};
 pub struct EncodeOptions {
     /// Add `argc >= 0` constraint for the first function argument in the initial state.
     pub assume_main_argc_non_negative: bool,
+    /// Constrain the first function argument (interpreted as signed I32) to an inclusive range.
+    pub first_arg_i32_range: Option<(i32, i32)>,
 }
 
 impl Default for EncodeOptions {
     fn default() -> Self {
         Self {
             assume_main_argc_non_negative: false,
+            first_arg_i32_range: None,
         }
     }
 }
@@ -32,6 +37,16 @@ pub enum QbeSmtError {
     EmptyFunction,
     #[error("unsupported QBE operation for strict proving: {message}")]
     Unsupported { message: String },
+    #[error("z3 executable not found. Install z3 to run CHC/fixedpoint proofs")]
+    SolverUnavailable,
+    #[error("failed to run z3: {message}")]
+    SolverIo { message: String },
+    #[error("unexpected z3 output (status={status}): stdout='{stdout}' stderr='{stderr}'")]
+    SolverOutput {
+        status: String,
+        stdout: String,
+        stderr: String,
+    },
 }
 
 /// Encode one QBE function body into SMT-LIB text.
@@ -46,6 +61,96 @@ pub fn qbe_to_smt(function: &QbeFunction, options: &EncodeOptions) -> Result<Str
 /// Classify simple loops in a single QBE function body.
 pub fn classify_simple_loops(function: &QbeFunction) -> Result<Vec<LoopProof>, QbeSmtError> {
     classify::classify_simple_loops_in_function(function)
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SolverResult {
+    Sat,
+    Unsat,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SolverRun {
+    pub result: SolverResult,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+pub fn solve_chc_script_with_diagnostics(
+    smt: &str,
+    timeout_seconds: u64,
+) -> Result<SolverRun, QbeSmtError> {
+    let (status, stdout, stderr) = run_z3_query(smt, timeout_seconds)?;
+    let first = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+
+    let result = match first {
+        "sat" => SolverResult::Sat,
+        "unsat" => SolverResult::Unsat,
+        "unknown" | "timeout" => SolverResult::Unknown,
+        _ => {
+            return Err(QbeSmtError::SolverOutput {
+                status,
+                stdout: stdout.trim().to_string(),
+                stderr: stderr.trim().to_string(),
+            })
+        }
+    };
+
+    Ok(SolverRun {
+        result,
+        stdout,
+        stderr,
+    })
+}
+
+pub fn solve_chc_script(smt: &str, timeout_seconds: u64) -> Result<SolverResult, QbeSmtError> {
+    Ok(solve_chc_script_with_diagnostics(smt, timeout_seconds)?.result)
+}
+
+fn run_z3_query(smt: &str, timeout_seconds: u64) -> Result<(String, String, String), QbeSmtError> {
+    let mut command = Command::new("z3");
+    command
+        .arg(format!("-T:{timeout_seconds}"))
+        .arg("-in")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            QbeSmtError::SolverUnavailable
+        } else {
+            QbeSmtError::SolverIo {
+                message: format!("spawn failed: {err}"),
+            }
+        }
+    })?;
+
+    {
+        let stdin = child.stdin.as_mut().ok_or_else(|| QbeSmtError::SolverIo {
+            message: "failed to open z3 stdin".to_string(),
+        })?;
+        stdin
+            .write_all(smt.as_bytes())
+            .map_err(|err| QbeSmtError::SolverIo {
+                message: format!("failed to send SMT query to z3: {err}"),
+            })?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|err| QbeSmtError::SolverIo {
+            message: format!("failed to wait for z3 process: {err}"),
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    Ok((output.status.to_string(), stdout, stderr))
 }
 
 pub(crate) const BLIT_INLINE_LIMIT: u64 = 64;
@@ -108,6 +213,7 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
             },
         )
         .expect("encodes");
@@ -143,13 +249,14 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
             },
         )
         .expect("encodes");
 
         assert!(smt.contains("(distinct (select regs (_ bv0 32)) (_ bv0 64))"));
-        assert!(smt.contains("(pc_1 regs_next mem_next heap_next exit_next)"));
-        assert!(smt.contains("(pc_2 regs_next mem_next heap_next exit_next)"));
+        assert!(smt.contains("(pc_1 regs_next mem_next heap_next exit_next pred_next)"));
+        assert!(smt.contains("(pc_2 regs_next mem_next heap_next exit_next pred_next)"));
     }
 
     #[test]
@@ -177,12 +284,13 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
             },
         )
         .expect("encodes");
 
-        assert!(smt.contains("(pc_2 regs mem heap exit)"));
-        assert!(smt.contains("(pc_1 regs_next mem_next heap_next exit_next)"));
+        assert!(smt.contains("(pc_2 regs mem heap exit pred)"));
+        assert!(smt.contains("(pc_1 regs_next mem_next heap_next exit_next pred_next)"));
     }
 
     #[test]
@@ -204,6 +312,7 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
             },
         )
         .expect("encodes");
@@ -227,11 +336,35 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: true,
+                first_arg_i32_range: None,
             },
         )
         .expect("encodes");
 
         assert!(smt.contains("(bvsge (select regs (_ bv0 32)) (_ bv0 64))"));
+    }
+
+    #[test]
+    fn emits_first_arg_i32_range_constraint_when_enabled() {
+        let function = make_main(
+            vec![(Type::Word, temp("argc")), (Type::Long, temp("argv"))],
+            vec![block(
+                "entry",
+                vec![volatile(Instr::Ret(Some(temp("argc"))))],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: Some((5, 9)),
+            },
+        )
+        .expect("encodes");
+
+        assert!(smt.contains("(bvsge (select regs (_ bv0 32)) (_ bv5 64))"));
+        assert!(smt.contains("(bvsle (select regs (_ bv0 32)) (_ bv9 64))"));
     }
 
     #[test]
@@ -248,6 +381,7 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
             },
         )
         .expect_err("should fail");
@@ -275,10 +409,47 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
             },
         )
         .expect_err("unsupported call should fail");
         assert!(err.to_string().contains("unsupported call target $foo"));
+    }
+
+    #[test]
+    fn ignores_unsupported_calls_in_unreachable_blocks() {
+        let function = make_main(
+            vec![],
+            vec![
+                block("entry", vec![volatile(Instr::Ret(Some(Value::Const(0))))]),
+                block(
+                    "dead",
+                    vec![
+                        assign(
+                            "y",
+                            Type::Word,
+                            Instr::Call(
+                                "foo".to_string(),
+                                vec![(Type::Word, Value::Const(1))],
+                                None,
+                            ),
+                        ),
+                        volatile(Instr::Ret(Some(temp("y")))),
+                    ],
+                ),
+            ],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("encodes while ignoring unreachable unsupported calls");
+
+        assert!(!smt.contains("foo"));
     }
 
     #[test]
@@ -298,11 +469,104 @@ mod tests {
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
             },
         )
         .expect_err("unsupported op should fail");
 
         assert!(err.to_string().contains("unsupported unary operation exts"));
+    }
+
+    #[test]
+    fn encodes_phi_with_predecessor_guard() {
+        let function = make_main(
+            vec![(Type::Word, temp("cond"))],
+            vec![
+                block(
+                    "entry",
+                    vec![volatile(Instr::Jnz(
+                        temp("cond"),
+                        "left".to_string(),
+                        "right".to_string(),
+                    ))],
+                ),
+                block(
+                    "left",
+                    vec![
+                        assign("x_left", Type::Word, Instr::Copy(Value::Const(1))),
+                        volatile(Instr::Jmp("join".to_string())),
+                    ],
+                ),
+                block(
+                    "right",
+                    vec![
+                        assign("x_right", Type::Word, Instr::Copy(Value::Const(2))),
+                        volatile(Instr::Jmp("join".to_string())),
+                    ],
+                ),
+                block(
+                    "join",
+                    vec![
+                        assign(
+                            "x",
+                            Type::Word,
+                            Instr::Phi(
+                                "left".to_string(),
+                                temp("x_left"),
+                                "right".to_string(),
+                                temp("x_right"),
+                            ),
+                        ),
+                        volatile(Instr::Ret(Some(temp("x")))),
+                    ],
+                ),
+            ],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("encodes");
+
+        assert!(smt.contains("(or (= pred (_ bv1 32)) (= pred (_ bv2 32)))"));
+        assert!(smt.contains("(ite (= pred (_ bv1 32))"));
+    }
+
+    #[test]
+    fn rejects_phi_with_unknown_label() {
+        let function = make_main(
+            vec![],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "x",
+                        Type::Word,
+                        Instr::Phi(
+                            "missing".to_string(),
+                            Value::Const(1),
+                            "entry".to_string(),
+                            Value::Const(2),
+                        ),
+                    ),
+                    volatile(Instr::Ret(Some(temp("x")))),
+                ],
+            )],
+        );
+
+        let err = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect_err("phi with unknown label should fail");
+        assert!(err.to_string().contains("unknown label @missing"));
     }
 
     #[test]

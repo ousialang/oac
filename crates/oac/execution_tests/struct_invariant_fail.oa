@@ -2,7 +2,7 @@ struct Counter {
 	value: I32,
 }
 
-fun __struct__Counter__invariant(v: Counter) -> Bool {
+invariant positive_value "counter value must be non-negative" for (v: Counter) {
 	return v.value >= 0
 }
 

@@ -9,8 +9,8 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 3. Parse with `parser::parse`.
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
 5. Resolve/type-check with `ir::resolve`.
-6. Verify struct invariants with `struct_invariants::verify_struct_invariants` (SMT-based, fail-closed).
-7. Lower to QBE with `qbe_backend::compile`.
+6. Lower to QBE with `qbe_backend::compile`.
+7. Verify struct invariants with `struct_invariants::verify_struct_invariants_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
 8. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
 9. Emit QBE IR to `target/oac/ir.qbe`.
 10. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
@@ -63,9 +63,10 @@ Important enforced invariants include:
 - conditions in `if` / `while` must be `Bool`
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`
-- optional struct invariants (`__struct__<TypeName>__invariant`) must have exact signature `fun ...(v: TypeName) -> Bool` when present
+- optional struct invariants are declared as `invariant ... for (v: TypeName) { ... }` (optionally named with an identifier); the compiler synthesizes `__struct__<TypeName>__invariant` and also validates legacy explicit invariant functions using that naming/signature pattern
 - reachable user-call return sites for struct-typed values are verified with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
-- verifier `while` handling is conservative: loop-body assigned variables are havocked at loop exit; loops containing invariant-obligation call sites or loop-body returns are rejected (fail-closed)
+- checker generation is QBE-native: site instrumentation happens on compiled caller QBE, then reachable user calls are inlined into a single checker function before CHC encoding
+- recursion cycles on the reachable user-call graph are rejected fail-closed during struct invariant verification
 
 ## Backend (`qbe_backend.rs`)
 
@@ -79,18 +80,23 @@ Important enforced invariants include:
 - `main.rs` also exposes `riscv-smt` subcommand.
 - `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
 - `qbe-smt` is used by struct invariant verification to encode checker QBE functions into CHC/fixedpoint (Horn) constraints.
+- `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
 - `qbe-smt` is parser-free: it consumes in-memory `qbe::Function` directly. Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), and `crates/qbe-smt/src/classify.rs` (loop classification).
 - `qbe-smt` models a broad integer + memory QBE subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
+  - `phi` merging via predecessor-tracking state in CHC (`pred`)
   - `call` with explicit support for `malloc` heap effects
   - `load*`/`store*` byte-addressed memory operations
   - `alloc4/alloc8/alloc16` heap-pointer modeling
   - control flow via Horn transition rules (`jnz`, `jmp`, `ret`, halt relation)
 - Register state is encoded as an SMT array and threaded through relation arguments.
+- Relation state also threads predecessor-block identity so branch-edge semantics for `phi` are explicit.
 - Property surface is fixed: query whether halt with `exit == 1` is reachable (`(query bad)`).
 - Unsupported constructs are fail-closed hard errors (no havoc fallback path).
+- Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
+- Struct-invariant SAT failures include a compact checker CFG witness (block path + branch directions); for `main(argc, argv)` obligations, `oac` also extracts a concrete `argc` witness via additional CHC range queries.
 - Loop classification is intentionally conservative: currently proves only a narrow canonical while-loop shape where the guard is initially true on entry and the body preserves the guard variable (`x' = x`), otherwise result is unknown and build proceeds.
 
 ## LSP Path

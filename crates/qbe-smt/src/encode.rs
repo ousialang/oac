@@ -15,35 +15,25 @@ pub(crate) fn encode_function(
 ) -> Result<String, QbeSmtError> {
     let args = collect_function_args(function)?;
 
-    let mut flat = Vec::<QbeStatement>::new();
-    let mut label_to_pc = HashMap::<String, usize>::new();
-    for block in &function.blocks {
-        if label_to_pc.contains_key(&block.label) {
-            return Err(QbeSmtError::DuplicateLabel {
-                label: block.label.clone(),
-            });
-        }
-        label_to_pc.insert(block.label.clone(), flat.len());
-        for item in &block.items {
-            if let BlockItem::Statement(statement) = item {
-                flat.push(statement.clone());
-            }
-        }
-    }
+    let flattened = flatten_reachable_statements(function)?;
+    let flat = &flattened.statements;
+    let label_to_pc = &flattened.label_to_pc;
+    let label_to_block_id = &flattened.label_to_block_id;
+    let pc_to_block_id = &flattened.pc_to_block_id;
 
     if flat.is_empty() {
         return Err(QbeSmtError::EmptyFunction);
     }
 
     for (pc, statement) in flat.iter().enumerate() {
-        validate_statement_supported(statement, pc)?;
+        validate_statement_supported(statement, pc, label_to_block_id)?;
     }
 
     let mut regs = BTreeSet::<String>::new();
     for arg in &args {
         regs.insert(arg.name.clone());
     }
-    for statement in &flat {
+    for statement in flat {
         collect_regs_statement(statement, &mut regs);
     }
 
@@ -54,7 +44,7 @@ pub(crate) fn encode_function(
     }
 
     let mut globals = BTreeSet::<String>::new();
-    for statement in &flat {
+    for statement in flat {
         collect_globals_statement(statement, &mut globals);
     }
     for arg in &args {
@@ -81,17 +71,18 @@ pub(crate) fn encode_function(
 
     for pc in 0..flat.len() {
         smt.push_str(&format!(
-            "(declare-rel {} ({} {} {} {}))\n",
+            "(declare-rel {} ({} {} {} {} {}))\n",
             pc_relation_name(pc),
             REG_STATE_SORT,
             MEM_STATE_SORT,
             BV64_SORT,
-            BV64_SORT
+            BV64_SORT,
+            BV32_SORT
         ));
     }
     smt.push_str(&format!(
-        "(declare-rel {halt_relation} ({} {} {} {}))\n",
-        REG_STATE_SORT, MEM_STATE_SORT, BV64_SORT, BV64_SORT
+        "(declare-rel {halt_relation} ({} {} {} {} {}))\n",
+        REG_STATE_SORT, MEM_STATE_SORT, BV64_SORT, BV64_SORT, BV32_SORT
     ));
     smt.push_str("(declare-rel bad ())\n\n");
 
@@ -99,16 +90,19 @@ pub(crate) fn encode_function(
     smt.push_str(&format!("(declare-var mem {})\n", MEM_STATE_SORT));
     smt.push_str(&format!("(declare-var heap {})\n", BV64_SORT));
     smt.push_str(&format!("(declare-var exit {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var pred {})\n", BV32_SORT));
     smt.push_str(&format!("(declare-var regs_next {})\n", REG_STATE_SORT));
     smt.push_str(&format!("(declare-var mem_next {})\n", MEM_STATE_SORT));
     smt.push_str(&format!("(declare-var heap_next {})\n", BV64_SORT));
     smt.push_str(&format!("(declare-var exit_next {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var pred_next {})\n", BV32_SORT));
     smt.push('\n');
 
     let arg_names: BTreeSet<&str> = args.iter().map(|arg| arg.name.as_str()).collect();
     let mut init_terms = vec![
         format!("(= exit {})", bv_const_u64(0, 64)),
         format!("(= heap {})", bv_const_u64(INITIAL_HEAP_BASE, 64)),
+        format!("(= pred {})", bv_const_u64(u32::MAX as u64, 32)),
     ];
     for reg_name in &reg_list {
         if !arg_names.contains(reg_name.as_str()) {
@@ -134,17 +128,47 @@ pub(crate) fn encode_function(
         }
     }
 
+    if let Some((lower, upper)) = options.first_arg_i32_range {
+        if let Some(first_arg) = args.first() {
+            let slot = *reg_slots
+                .get(&first_arg.name)
+                .expect("first arg register exists");
+            let lower_bits = lower as i64 as u64;
+            let upper_bits = upper as i64 as u64;
+            init_terms.push(format!(
+                "(bvsge (select regs {}) {})",
+                reg_slot_const(slot),
+                bv_const_u64(lower_bits, 64)
+            ));
+            init_terms.push(format!(
+                "(bvsle (select regs {}) {})",
+                reg_slot_const(slot),
+                bv_const_u64(upper_bits, 64)
+            ));
+        }
+    }
+
     smt.push_str(&format!(
         "(rule (=> {} {}))\n\n",
         and_terms(init_terms),
-        relation_app(&pc_relation_name(0), "regs", "mem", "heap", "exit")
+        relation_app(&pc_relation_name(0), "regs", "mem", "heap", "exit", "pred")
     ));
 
     for (pc, statement) in flat.iter().enumerate() {
         let from_rel = pc_relation_name(pc);
+        let phi_guard = phi_guard_expr(statement, "pred", label_to_block_id);
 
         let transition = TransitionExprs {
-            regs_next: regs_update_expr(statement, "regs", "mem", "heap", &reg_slots, &global_map),
+            regs_next: regs_update_expr(
+                statement,
+                "regs",
+                "mem",
+                "heap",
+                "pred",
+                &reg_slots,
+                &global_map,
+                label_to_block_id,
+            ),
             mem_next: memory_update_expr(statement, "mem", "regs", &reg_slots, &global_map),
             heap_next: heap_update_expr(statement, "heap", "regs", &reg_slots, &global_map),
             exit_next: exit_update_expr(statement, "exit", "regs", &reg_slots, &global_map),
@@ -162,8 +186,9 @@ pub(crate) fn encode_function(
                     &mut smt,
                     &from_rel,
                     &pc_relation_name(target_pc),
-                    None,
+                    phi_guard.clone(),
                     &transition,
+                    &pred_from_block(pc, pc_to_block_id),
                 );
             }
             QbeStatement::Volatile(QbeInstr::Jnz(cond, if_true, if_false)) => {
@@ -185,19 +210,34 @@ pub(crate) fn encode_function(
                     &mut smt,
                     &from_rel,
                     &pc_relation_name(true_pc),
-                    Some(format!("(distinct {} {})", cond_expr, bv_const_u64(0, 64))),
+                    and_optional_guards(
+                        phi_guard.clone(),
+                        Some(format!("(distinct {} {})", cond_expr, bv_const_u64(0, 64))),
+                    ),
                     &transition,
+                    &pred_from_block(pc, pc_to_block_id),
                 );
                 emit_transition_rule(
                     &mut smt,
                     &from_rel,
                     &pc_relation_name(false_pc),
-                    Some(format!("(= {} {})", cond_expr, bv_const_u64(0, 64))),
+                    and_optional_guards(
+                        phi_guard.clone(),
+                        Some(format!("(= {} {})", cond_expr, bv_const_u64(0, 64))),
+                    ),
                     &transition,
+                    &pred_from_block(pc, pc_to_block_id),
                 );
             }
             QbeStatement::Volatile(QbeInstr::Ret(_)) | QbeStatement::Volatile(QbeInstr::Hlt) => {
-                emit_transition_rule(&mut smt, &from_rel, halt_relation, None, &transition);
+                emit_transition_rule(
+                    &mut smt,
+                    &from_rel,
+                    halt_relation,
+                    phi_guard,
+                    &transition,
+                    "pred",
+                );
             }
             _ => {
                 if pc + 1 < flat.len() {
@@ -205,11 +245,19 @@ pub(crate) fn encode_function(
                         &mut smt,
                         &from_rel,
                         &pc_relation_name(pc + 1),
-                        None,
+                        phi_guard,
                         &transition,
+                        &pred_update_expr("pred", pc, pc + 1, pc_to_block_id),
                     );
                 } else {
-                    emit_transition_rule(&mut smt, &from_rel, halt_relation, None, &transition);
+                    emit_transition_rule(
+                        &mut smt,
+                        &from_rel,
+                        halt_relation,
+                        phi_guard,
+                        &transition,
+                        "pred",
+                    );
                 }
             }
         }
@@ -218,7 +266,7 @@ pub(crate) fn encode_function(
     smt.push('\n');
     smt.push_str(&format!(
         "(rule (=> (and {} (= exit {})) bad))\n",
-        relation_app(halt_relation, "regs", "mem", "heap", "exit"),
+        relation_app(halt_relation, "regs", "mem", "heap", "exit", "pred"),
         bv_const_u64(1, 64)
     ));
     smt.push_str("(query bad)\n");
@@ -229,6 +277,118 @@ pub(crate) fn encode_function(
 const REG_STATE_SORT: &str = "(Array (_ BitVec 32) (_ BitVec 64))";
 const MEM_STATE_SORT: &str = "(Array (_ BitVec 64) (_ BitVec 8))";
 const BV64_SORT: &str = "(_ BitVec 64)";
+const BV32_SORT: &str = "(_ BitVec 32)";
+
+struct FlattenedFunction {
+    statements: Vec<QbeStatement>,
+    label_to_pc: HashMap<String, usize>,
+    label_to_block_id: HashMap<String, u32>,
+    pc_to_block_id: Vec<u32>,
+}
+
+fn flatten_reachable_statements(function: &QbeFunction) -> Result<FlattenedFunction, QbeSmtError> {
+    let reachable_blocks = reachable_block_indices(function)?;
+    let mut flat = Vec::<QbeStatement>::new();
+    let mut label_to_pc = HashMap::<String, usize>::new();
+    let mut label_to_block_id = HashMap::<String, u32>::new();
+    let mut pc_to_block_id = Vec::<u32>::new();
+
+    for (idx, block) in function.blocks.iter().enumerate() {
+        if !reachable_blocks.contains(&idx) {
+            continue;
+        }
+        if label_to_pc.contains_key(&block.label) {
+            return Err(QbeSmtError::DuplicateLabel {
+                label: block.label.clone(),
+            });
+        }
+        if label_to_block_id.contains_key(&block.label) {
+            return Err(QbeSmtError::DuplicateLabel {
+                label: block.label.clone(),
+            });
+        }
+        let block_id = idx as u32;
+        label_to_block_id.insert(block.label.clone(), block_id);
+        label_to_pc.insert(block.label.clone(), flat.len());
+        for item in &block.items {
+            if let BlockItem::Statement(statement) = item {
+                flat.push(statement.clone());
+                pc_to_block_id.push(block_id);
+            }
+        }
+    }
+
+    Ok(FlattenedFunction {
+        statements: flat,
+        label_to_pc,
+        label_to_block_id,
+        pc_to_block_id,
+    })
+}
+
+fn reachable_block_indices(function: &QbeFunction) -> Result<BTreeSet<usize>, QbeSmtError> {
+    let mut label_to_index = HashMap::<String, usize>::new();
+    for (idx, block) in function.blocks.iter().enumerate() {
+        if label_to_index.insert(block.label.clone(), idx).is_some() {
+            return Err(QbeSmtError::DuplicateLabel {
+                label: block.label.clone(),
+            });
+        }
+    }
+
+    let mut reachable = BTreeSet::new();
+    let mut worklist = vec![0usize];
+
+    while let Some(block_idx) = worklist.pop() {
+        if block_idx >= function.blocks.len() || !reachable.insert(block_idx) {
+            continue;
+        }
+
+        let block = &function.blocks[block_idx];
+        let terminator = block.items.iter().rev().find_map(|item| {
+            if let BlockItem::Statement(QbeStatement::Volatile(instr)) = item {
+                Some(instr)
+            } else {
+                None
+            }
+        });
+
+        match terminator {
+            Some(QbeInstr::Jmp(target)) => {
+                let next = label_to_index
+                    .get(target)
+                    .ok_or_else(|| QbeSmtError::UnknownLabel {
+                        label: target.clone(),
+                    })?;
+                worklist.push(*next);
+            }
+            Some(QbeInstr::Jnz(_, if_true, if_false)) => {
+                let next_true =
+                    label_to_index
+                        .get(if_true)
+                        .ok_or_else(|| QbeSmtError::UnknownLabel {
+                            label: if_true.clone(),
+                        })?;
+                let next_false =
+                    label_to_index
+                        .get(if_false)
+                        .ok_or_else(|| QbeSmtError::UnknownLabel {
+                            label: if_false.clone(),
+                        })?;
+                worklist.push(*next_true);
+                worklist.push(*next_false);
+            }
+            Some(QbeInstr::Ret(_)) | Some(QbeInstr::Hlt) => {}
+            _ => {
+                if block_idx + 1 < function.blocks.len() {
+                    worklist.push(block_idx + 1);
+                }
+            }
+        }
+    }
+
+    Ok(reachable)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AssignType {
@@ -263,8 +423,15 @@ fn pc_relation_name(pc: usize) -> String {
     format!("pc_{}", pc)
 }
 
-fn relation_app(relation: &str, regs: &str, mem: &str, heap: &str, exit: &str) -> String {
-    format!("({relation} {regs} {mem} {heap} {exit})")
+fn relation_app(
+    relation: &str,
+    regs: &str,
+    mem: &str,
+    heap: &str,
+    exit: &str,
+    pred: &str,
+) -> String {
+    format!("({relation} {regs} {mem} {heap} {exit} {pred})")
 }
 
 fn and_terms(terms: Vec<String>) -> String {
@@ -283,8 +450,16 @@ fn emit_transition_rule(
     to_relation: &str,
     guard: Option<String>,
     next: &TransitionExprs,
+    pred_next_expr: &str,
 ) {
-    let mut body_terms = vec![relation_app(from_relation, "regs", "mem", "heap", "exit")];
+    let mut body_terms = vec![relation_app(
+        from_relation,
+        "regs",
+        "mem",
+        "heap",
+        "exit",
+        "pred",
+    )];
     if let Some(guard) = guard {
         body_terms.push(guard);
     }
@@ -292,6 +467,7 @@ fn emit_transition_rule(
     body_terms.push(format!("(= mem_next {})", next.mem_next));
     body_terms.push(format!("(= heap_next {})", next.heap_next));
     body_terms.push(format!("(= exit_next {})", next.exit_next));
+    body_terms.push(format!("(= pred_next {pred_next_expr})"));
 
     let body = and_terms(body_terms);
     let head = relation_app(
@@ -300,9 +476,61 @@ fn emit_transition_rule(
         "mem_next",
         "heap_next",
         "exit_next",
+        "pred_next",
     );
 
     smt.push_str(&format!("(rule (=> {body} {head}))\n"));
+}
+
+fn and_optional_guards(lhs: Option<String>, rhs: Option<String>) -> Option<String> {
+    match (lhs, rhs) {
+        (Some(lhs), Some(rhs)) => Some(format!("(and {lhs} {rhs})")),
+        (Some(lhs), None) => Some(lhs),
+        (None, Some(rhs)) => Some(rhs),
+        (None, None) => None,
+    }
+}
+
+fn pred_update_expr(
+    pred_curr: &str,
+    from_pc: usize,
+    to_pc: usize,
+    pc_to_block_id: &[u32],
+) -> String {
+    let from_block = pc_to_block_id[from_pc];
+    let to_block = pc_to_block_id[to_pc];
+    if from_block == to_block {
+        pred_curr.to_string()
+    } else {
+        bv_const_u64(from_block as u64, 32)
+    }
+}
+
+fn pred_from_block(from_pc: usize, pc_to_block_id: &[u32]) -> String {
+    let from_block = pc_to_block_id[from_pc];
+    bv_const_u64(from_block as u64, 32)
+}
+
+fn phi_guard_expr(
+    statement: &QbeStatement,
+    pred_curr: &str,
+    label_to_block_id: &HashMap<String, u32>,
+) -> Option<String> {
+    let QbeStatement::Assign(_, _, QbeInstr::Phi(label_left, _, label_right, _)) = statement else {
+        return None;
+    };
+
+    let left_id = *label_to_block_id
+        .get(label_left)
+        .expect("phi predecessor labels are validated");
+    let right_id = *label_to_block_id
+        .get(label_right)
+        .expect("phi predecessor labels are validated");
+    Some(format!(
+        "(or (= {pred_curr} {}) (= {pred_curr} {}))",
+        bv_const_u64(left_id as u64, 32),
+        bv_const_u64(right_id as u64, 32)
+    ))
 }
 
 fn collect_function_args(function: &QbeFunction) -> Result<Vec<FunctionArg>, QbeSmtError> {
@@ -332,7 +560,11 @@ fn collect_function_args(function: &QbeFunction) -> Result<Vec<FunctionArg>, Qbe
     Ok(out)
 }
 
-fn validate_statement_supported(statement: &QbeStatement, pc: usize) -> Result<(), QbeSmtError> {
+fn validate_statement_supported(
+    statement: &QbeStatement,
+    pc: usize,
+    label_to_block_id: &HashMap<String, u32>,
+) -> Result<(), QbeSmtError> {
     match statement {
         QbeStatement::Assign(dest, ty, instr) => {
             if !matches!(dest, QbeValue::Temporary(_)) {
@@ -468,13 +700,25 @@ fn validate_statement_supported(statement: &QbeStatement, pc: usize) -> Result<(
                         });
                     }
                 }
-                QbeInstr::Phi(..) => {
-                    return Err(QbeSmtError::Unsupported {
-                        message: format!(
-                            "pc {pc}: phi is unsupported for assignment type {:?}",
-                            assign_ty
-                        ),
-                    })
+                QbeInstr::Phi(label_left, _, label_right, _) => {
+                    if matches!(assign_ty, AssignType::Single | AssignType::Double) {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!(
+                                "pc {pc}: phi is unsupported for floating-point assignment type {:?}",
+                                assign_ty
+                            ),
+                        });
+                    }
+                    if !label_to_block_id.contains_key(label_left) {
+                        return Err(QbeSmtError::UnknownLabel {
+                            label: label_left.clone(),
+                        });
+                    }
+                    if !label_to_block_id.contains_key(label_right) {
+                        return Err(QbeSmtError::UnknownLabel {
+                            label: label_right.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -534,8 +778,10 @@ fn regs_update_expr(
     regs_curr: &str,
     mem_curr: &str,
     heap_curr: &str,
+    pred_curr: &str,
     reg_slots: &HashMap<String, u32>,
     global_map: &HashMap<String, u64>,
+    label_to_block_id: &HashMap<String, u32>,
 ) -> String {
     let QbeStatement::Assign(dest, ty, instr) = statement else {
         return regs_curr.to_string();
@@ -630,6 +876,28 @@ fn regs_update_expr(
             } else {
                 unreachable!("unsupported calls should be rejected")
             }
+        }
+        QbeInstr::Phi(label_left, left_value, label_right, right_value) => {
+            let left_expr = normalize_to_assign_type(
+                &value_to_smt(left_value, regs_curr, reg_slots, global_map),
+                assign_ty,
+            );
+            let right_expr = normalize_to_assign_type(
+                &value_to_smt(right_value, regs_curr, reg_slots, global_map),
+                assign_ty,
+            );
+            let left_block = *label_to_block_id
+                .get(label_left)
+                .expect("phi predecessor labels are validated");
+            let right_block = *label_to_block_id
+                .get(label_right)
+                .expect("phi predecessor labels are validated");
+            let pred_is_left = format!("(= {pred_curr} {})", bv_const_u64(left_block as u64, 32));
+            let pred_is_right = format!("(= {pred_curr} {})", bv_const_u64(right_block as u64, 32));
+            format!(
+                "(ite {pred_is_left} {left_expr} (ite {pred_is_right} {right_expr} {}))",
+                bv_const_u64(0, 64)
+            )
         }
         _ => {
             unreachable!("unsupported instructions should be rejected before transition generation")

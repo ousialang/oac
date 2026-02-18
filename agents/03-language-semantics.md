@@ -38,18 +38,22 @@ Observed in parser/IR implementation:
 - Assignments bind variable type to expression type.
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `std.oa` into split sibling files, then merged into one global scope before user type-checking.
-- Struct invariants are optional per struct type and identified by function name `__struct__<TypeName>__invariant`.
-- If an invariant function exists, it must have exact signature `fun __struct__<TypeName>__invariant(v: <TypeName>) -> Bool`; malformed signatures are compile errors.
+- Struct invariants are optional per struct type and can be declared directly as `invariant "Human label" for (v: TypeName) { ... }` or `invariant identifier "Human label" for (...) { ... }`.
+- Invariant declarations synthesize internal functions named `__struct__<TypeName>__invariant` with signature `fun ...(v: <TypeName>) -> Bool`; legacy explicit functions using that exact name/signature are still accepted for compatibility.
+- Malformed legacy invariant functions are compile errors.
 - Build-time verification checks struct invariants at return sites of user-defined function calls reachable from `main` (excluding invariant function bodies).
-- Verification compiles each site formula into an in-memory checker `qbe::Function` (also written to `site_*.qbe`) that returns `1` on violation and `0` otherwise, then asks if exit code `1` is reachable; `unsat` means invariant proven at the site, `sat` means compile failure.
-- Checker lowering keeps symbolic `I32` inputs at `w` width and sign-extends internally for integer arithmetic, preventing accidental quantification over unconstrained 64-bit argument domains.
+- Verification synthesizes each site checker from compiled QBE by instrumenting the target call with an invariant check and returning `1` on violation / `0` on success, then asks if exit code `1` is reachable (`unsat` means invariant proven, `sat` means compile failure).
+- Checker construction inlines reachable user-function calls into the site checker before CHC encoding, so loops/control-flow are reasoned about on QBE transitions.
 - Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` form.
-- `while` is supported with conservative summarization: body-assigned variables are havocked at loop exit.
-- `while` still fails closed if the loop region contains invariant-obligation call sites or loop-body `return` statements.
-- Unsupported verifier constructs (for example `match`, postfix calls, recursion cycles in analyzed paths, or missing return on a reachable path) fail closed.
+- Recursion cycles in the reachable user call graph are rejected fail-closed for struct invariant verification.
+- Unsupported proving constructs at QBE level fail closed through `qbe-smt` (hard `Unsupported` encoding errors).
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).
+- Struct-invariant proof obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
+- `qbe-smt` models `phi` by threading predecessor-block identity through CHC state and guarding predecessor-dependent merges.
 - `qbe-smt` is parser-free: proving consumes direct `qbe::Function` IR, not re-parsed QBE text.
+- `qbe-smt` flattens only entry-reachable blocks; unreachable unsupported instructions do not affect encoding.
+- When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions) plus, when the site is in `main(argc, argv)`, a concrete solver-derived `argc` witness (`program_input` field).
 - `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced only for struct invariant obligations under `target/oac/struct_invariants/`.
 - `oac build` runs a conservative non-termination classifier over QBE `main` loops and rejects builds only when non-termination is proven (current proof shape: canonical while-loop with initially true guard and identity body update on guard variable, including simple `sub(x, 0)` forms). Unproven loops are treated as unknown and allowed.
 

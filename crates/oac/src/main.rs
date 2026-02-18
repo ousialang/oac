@@ -93,9 +93,8 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     let ir_path = target_dir.join("ir.json");
     std::fs::write(&ir_path, serde_json::to_string_pretty(&ir)?)?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
-    struct_invariants::verify_struct_invariants(&ir, &target_dir)?;
-
-    let qbe_ir = qbe_backend::compile(ir);
+    let qbe_ir = qbe_backend::compile(ir.clone());
+    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, &target_dir)?;
     reject_proven_non_terminating_main(&qbe_ir)?;
     let qbe_ir_text = qbe_ir.to_string();
 

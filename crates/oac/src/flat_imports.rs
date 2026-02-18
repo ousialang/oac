@@ -71,6 +71,7 @@ fn resolve_ast_inner(
     merged
         .top_level_functions
         .extend(parsed_ast.top_level_functions);
+    merged.invariants.extend(parsed_ast.invariants);
     merged
         .template_definitions
         .extend(parsed_ast.template_definitions);
@@ -114,6 +115,7 @@ fn resolve_import_path(source_dir: &Path, import_path: &str) -> anyhow::Result<P
 fn merge_flat_ast(dst: &mut parser::Ast, mut src: parser::Ast) {
     dst.type_definitions.append(&mut src.type_definitions);
     dst.top_level_functions.append(&mut src.top_level_functions);
+    dst.invariants.append(&mut src.invariants);
     dst.template_definitions
         .append(&mut src.template_definitions);
     dst.template_instantiations
@@ -174,6 +176,47 @@ fun main() -> I32 {
             merged.top_level_functions.iter().any(|f| f.name == "main"),
             "missing root main function"
         );
+    }
+
+    #[test]
+    fn resolve_flat_imports_merges_invariant_declarations() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let helper_path = tmp.path().join("helper.oa");
+        let main_path = tmp.path().join("main.oa");
+
+        fs::write(
+            &helper_path,
+            r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter value must be non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+"#,
+        )
+        .expect("write helper");
+
+        fs::write(
+            &main_path,
+            r#"
+import "helper.oa"
+
+fun main() -> I32 {
+	return 0
+}
+"#,
+        )
+        .expect("write main");
+
+        let merged = parse_and_resolve_file(&main_path).expect("resolve imports");
+        assert_eq!(merged.invariants.len(), 1);
+        assert_eq!(
+            merged.invariants[0].display_name,
+            "counter value must be non-negative"
+        );
+        assert_eq!(merged.invariants[0].parameter.ty, "Counter");
     }
 
     #[test]

@@ -4,7 +4,7 @@ struct Envelope {
 	checksum: I32,
 }
 
-fun __struct__Envelope__invariant(v: Envelope) -> Bool {
+invariant stable_envelope "envelope stays normalized and stable" for (v: Envelope) {
 	paired = v.abs == v.raw || v.abs == (0 - v.raw)
 	stable = v.checksum == 0
 	return v.abs >= 0 && paired && stable

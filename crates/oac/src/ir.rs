@@ -11,6 +11,9 @@ use crate::{
     parser::{self, Ast, Expression, Literal, StructDef, UnaryOp},
 };
 
+const LEGACY_INVARIANT_PREFIX: &str = "__struct__";
+const LEGACY_INVARIANT_SUFFIX: &str = "__invariant";
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub enum TypeDef {
     Struct(StructDef),
@@ -38,10 +41,27 @@ pub struct ResolvedProgram {
     pub type_definitions: HashMap<String, TypeDef>,
     pub function_sigs: HashMap<String, FunctionSignature>,
     pub function_definitions: HashMap<String, FunctionDefinition>,
+    pub struct_invariants: HashMap<String, StructInvariantDefinition>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct StructInvariantDefinition {
+    pub struct_name: String,
+    pub function_name: String,
+    pub identifier: Option<String>,
+    pub display_name: String,
 }
 
 impl ResolvedProgram {
     fn type_check(&self, func_def: &FunctionDefinition) -> anyhow::Result<()> {
+        fn normalize_numeric_alias(ty: &str) -> &str {
+            if ty == "Int" {
+                "I32"
+            } else {
+                ty
+            }
+        }
+
         let mut var_types: HashMap<String, TypeRef> = HashMap::new();
         for param in &func_def.sig.parameters {
             var_types.insert(param.name.clone(), param.ty.clone());
@@ -50,6 +70,18 @@ impl ResolvedProgram {
         let mut return_type = None;
         for statement in &func_def.body {
             self.type_check_statement(statement, &mut var_types, &mut return_type)?;
+        }
+
+        if let Some(inferred) = return_type {
+            let declared = &func_def.sig.return_type;
+            if normalize_numeric_alias(&inferred) != normalize_numeric_alias(declared) {
+                return Err(anyhow::anyhow!(
+                    "function {} return type mismatch: declared {}, inferred {}",
+                    func_def.name,
+                    declared,
+                    inferred
+                ));
+            }
         }
 
         Ok(())
@@ -292,6 +324,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         function_definitions: HashMap::new(),
         function_sigs: HashMap::new(),
         type_definitions: HashMap::new(),
+        struct_invariants: HashMap::new(),
     };
 
     program
@@ -590,8 +623,17 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         }
     }
 
-    // Pass 1: register signatures for all top-level functions.
-    for function in ast.top_level_functions.iter() {
+    let mut all_functions = ast.top_level_functions.clone();
+    let synthesized_invariants = synthesize_invariant_functions(
+        &ast.invariants,
+        &program.type_definitions,
+        &all_functions,
+        &mut program.struct_invariants,
+    )?;
+    all_functions.extend(synthesized_invariants);
+
+    // Pass 1: register signatures for all top-level functions and synthesized invariants.
+    for function in all_functions.iter() {
         let mut parameters = Vec::new();
         for parameter in function.parameters.clone() {
             parameters.push(parameter);
@@ -621,7 +663,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     // Pass 2: register function bodies.
-    for function in ast.top_level_functions.iter() {
+    for function in all_functions.iter() {
         let sig = program
             .function_sigs
             .get(&function.name)
@@ -643,6 +685,13 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 ))
             })?;
     }
+
+    register_legacy_struct_invariants(
+        &all_functions,
+        &program.type_definitions,
+        &program.function_sigs,
+        &mut program.struct_invariants,
+    )?;
 
     // Pass 3: type-check with all signatures available.
     for func_def in program.function_definitions.values() {
@@ -684,6 +733,149 @@ fn validate_main_signature(program: &ResolvedProgram) -> anyhow::Result<()> {
             "unsupported main signature: expected `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`"
         )),
     }
+}
+
+fn parse_legacy_invariant_name(name: &str) -> Option<&str> {
+    if !name.starts_with(LEGACY_INVARIANT_PREFIX) || !name.ends_with(LEGACY_INVARIANT_SUFFIX) {
+        return None;
+    }
+    let middle = &name[LEGACY_INVARIANT_PREFIX.len()..name.len() - LEGACY_INVARIANT_SUFFIX.len()];
+    if middle.is_empty() {
+        None
+    } else {
+        Some(middle)
+    }
+}
+
+fn generated_invariant_function_name(struct_name: &str) -> String {
+    format!(
+        "{}{}{}",
+        LEGACY_INVARIANT_PREFIX, struct_name, LEGACY_INVARIANT_SUFFIX
+    )
+}
+
+fn synthesize_invariant_functions(
+    invariants: &[parser::StructInvariantDecl],
+    type_definitions: &HashMap<String, TypeDef>,
+    existing_functions: &[parser::Function],
+    out_struct_invariants: &mut HashMap<String, StructInvariantDefinition>,
+) -> anyhow::Result<Vec<parser::Function>> {
+    let mut out = Vec::new();
+    for invariant in invariants {
+        let struct_name = invariant.parameter.ty.clone();
+        let type_def = type_definitions
+            .get(&struct_name)
+            .ok_or_else(|| anyhow::anyhow!("invariant targets unknown type {}", struct_name))?;
+        if !matches!(type_def, TypeDef::Struct(_)) {
+            return Err(anyhow::anyhow!(
+                "invariant \"{}\" must target a struct type, but {} is not a struct",
+                invariant.display_name,
+                struct_name
+            ));
+        }
+
+        let function_name = generated_invariant_function_name(&struct_name);
+        if existing_functions.iter().any(|f| f.name == function_name) {
+            return Err(anyhow::anyhow!(
+                "invariant \"{}\" for {} conflicts with existing function {}",
+                invariant.display_name,
+                struct_name,
+                function_name
+            ));
+        }
+
+        if let Some(existing) = out_struct_invariants.get(&struct_name) {
+            return Err(anyhow::anyhow!(
+                "struct {} has multiple invariants: \"{}\" and \"{}\"",
+                struct_name,
+                existing.display_name,
+                invariant.display_name
+            ));
+        }
+        out_struct_invariants.insert(
+            struct_name.clone(),
+            StructInvariantDefinition {
+                struct_name: struct_name.clone(),
+                function_name: function_name.clone(),
+                identifier: invariant.identifier.clone(),
+                display_name: invariant.display_name.clone(),
+            },
+        );
+
+        out.push(parser::Function {
+            name: function_name,
+            parameters: vec![invariant.parameter.clone()],
+            body: invariant.body.clone(),
+            return_type: "Bool".to_string(),
+        });
+    }
+    Ok(out)
+}
+
+fn register_legacy_struct_invariants(
+    functions: &[parser::Function],
+    type_definitions: &HashMap<String, TypeDef>,
+    function_sigs: &HashMap<String, FunctionSignature>,
+    out_struct_invariants: &mut HashMap<String, StructInvariantDefinition>,
+) -> anyhow::Result<()> {
+    for function in functions {
+        let Some(struct_name) = parse_legacy_invariant_name(&function.name) else {
+            continue;
+        };
+
+        let Some(type_def) = type_definitions.get(struct_name) else {
+            return Err(anyhow::anyhow!(
+                "invariant {} targets unknown type {}",
+                function.name,
+                struct_name
+            ));
+        };
+        if !matches!(type_def, TypeDef::Struct(_)) {
+            return Err(anyhow::anyhow!(
+                "invariant {} must target a struct type, but {} is not a struct",
+                function.name,
+                struct_name
+            ));
+        }
+
+        let sig = function_sigs
+            .get(&function.name)
+            .ok_or_else(|| anyhow::anyhow!("missing signature for {}", function.name))?;
+        if sig.parameters.len() != 1
+            || sig.parameters[0].ty != struct_name
+            || sig.return_type != "Bool"
+        {
+            return Err(anyhow::anyhow!(
+                "invariant {} must have signature fun {}(v: {}) -> Bool",
+                function.name,
+                function.name,
+                struct_name
+            ));
+        }
+
+        if let Some(existing) = out_struct_invariants.get(struct_name) {
+            if existing.function_name != function.name {
+                return Err(anyhow::anyhow!(
+                    "struct {} has multiple invariants: \"{}\" and \"{}\"",
+                    struct_name,
+                    existing.display_name,
+                    function.name
+                ));
+            }
+            continue;
+        }
+
+        out_struct_invariants.insert(
+            struct_name.to_string(),
+            StructInvariantDefinition {
+                struct_name: struct_name.to_string(),
+                function_name: function.name.clone(),
+                identifier: None,
+                display_name: function.name.clone(),
+            },
+        );
+    }
+    Ok(())
 }
 
 fn rewrite_type_ref(
@@ -924,6 +1116,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
 
     let mut generated_type_defs = vec![];
     let mut generated_functions = vec![];
+    let mut generated_invariants = vec![];
 
     for instantiation in &ast.template_instantiations {
         let template = templates_by_name
@@ -1064,10 +1257,34 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                 ),
             });
         }
+
+        for invariant in &template.invariants {
+            generated_invariants.push(parser::StructInvariantDecl {
+                identifier: invariant.identifier.clone(),
+                display_name: invariant.display_name.clone(),
+                parameter: parser::Parameter {
+                    name: invariant.parameter.name.clone(),
+                    ty: rewrite_type_ref(
+                        &invariant.parameter.ty,
+                        &template.type_param,
+                        &instantiation.concrete_type,
+                        &local_type_name_map,
+                    ),
+                },
+                body: invariant
+                    .body
+                    .iter()
+                    .map(|statement| {
+                        rewrite_statement(statement, &local_type_name_map, &local_function_name_map)
+                    })
+                    .collect(),
+            });
+        }
     }
 
     ast.type_definitions.extend(generated_type_defs);
     ast.top_level_functions.extend(generated_functions);
+    ast.invariants.extend(generated_invariants);
     Ok(())
 }
 
@@ -1518,6 +1735,91 @@ fun main() -> I64 {
         let tokens = tokenizer::tokenize(source).expect("tokenize source");
         let ast = parser::parse(tokens).expect("parse source");
         let err = resolve(ast).expect_err("resolve should fail");
-        assert!(err.to_string().contains("return type must be I32"));
+        let message = err.to_string();
+        assert!(
+            message.contains("return type must be I32")
+                || message.contains("function main return type mismatch"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn resolve_synthesizes_struct_invariant_function_from_declaration() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant positive_value "counter value must be non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        let invariant = resolved
+            .struct_invariants
+            .get("Counter")
+            .expect("missing Counter invariant metadata");
+        assert_eq!(invariant.function_name, "__struct__Counter__invariant");
+        assert_eq!(invariant.display_name, "counter value must be non-negative");
+        assert_eq!(invariant.identifier.as_deref(), Some("positive_value"));
+
+        let function = resolved
+            .function_definitions
+            .get("__struct__Counter__invariant")
+            .expect("missing synthesized invariant function");
+        assert_eq!(function.sig.parameters.len(), 1);
+        assert_eq!(function.sig.parameters[0].ty, "Counter");
+        assert_eq!(function.sig.return_type, "Bool");
+    }
+
+    #[test]
+    fn resolve_expands_template_invariant_to_concrete_struct() {
+        let source = r#"
+template Box[T] {
+	struct Box {
+		value: T,
+	}
+
+	invariant "value must be non-negative" for (v: Box) {
+		return v.value >= 0
+	}
+}
+
+instantiate BoxI32 = Box[I32]
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        let invariant = resolved
+            .struct_invariants
+            .get("BoxI32")
+            .expect("missing BoxI32 invariant metadata");
+        assert_eq!(invariant.function_name, "__struct__BoxI32__invariant");
+        assert_eq!(invariant.display_name, "value must be non-negative");
+        assert_eq!(invariant.identifier, None);
+
+        let function = resolved
+            .function_definitions
+            .get("__struct__BoxI32__invariant")
+            .expect("missing synthesized BoxI32 invariant function");
+        assert_eq!(function.sig.parameters.len(), 1);
+        assert_eq!(function.sig.parameters[0].ty, "BoxI32");
+        assert_eq!(function.sig.return_type, "Bool");
     }
 }
