@@ -811,12 +811,9 @@ fn solve_obligations_qbe(
                 let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
                     .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                     .unwrap_or_default();
-                let program_input = try_find_program_input_counterexample(
-                    site,
-                    &checker_function,
-                )
-                .map(|input| format!(", program_input=\"{}\"", escape_diagnostic_value(&input)))
-                .unwrap_or_default();
+                let program_input = try_find_program_input_counterexample(site, &checker_function)
+                    .map(|input| format!(", program_input=\"{}\"", escape_diagnostic_value(&input)))
+                    .unwrap_or_default();
                 let invariant_label = if let Some(identifier) = &site.invariant_identifier {
                     format!("{} (id={})", site.invariant_display_name, identifier)
                 } else {
@@ -892,10 +889,7 @@ fn find_main_argc_counterexample(checker: &qbe::Function) -> Option<String> {
         }
     }
 
-    Some(format!(
-        "argc={} (solver witness for main(argc, argv))",
-        lo
-    ))
+    Some(format!("argc={} (solver witness for main(argc, argv))", lo))
 }
 
 fn is_sat_for_main_argc_range(checker: &qbe::Function, lower: i32, upper: i32) -> Option<bool> {

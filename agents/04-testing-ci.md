@@ -29,7 +29,7 @@ cargo test -p qbe-smt
 
 Key tests:
 - `crates/oac/src/tokenizer.rs` test loads `crates/oac/tokenizer_tests/*`.
-- `crates/oac/src/parser.rs` tests assert template bracket syntax parsing, legacy `()` rejection, and struct-invariant declaration syntax (`invariant ... for (...)`, with optional identifier, including inside templates).
+- `crates/oac/src/parser.rs` tests assert template bracket syntax parsing, legacy `()` rejection, struct-invariant declaration syntax (`invariant ... for (...)`, with optional identifier, including inside templates), and optional trailing commas for struct declarations/literals.
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `std.oa` imports.
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()` and `main(argc, argv)`).

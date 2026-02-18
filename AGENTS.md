@@ -32,6 +32,7 @@ This repository currently contains both the Ousia compiler workspace (`crates/*`
 
 - Templates use square brackets for type parameters and instantiation arguments: `template Option[T] { ... }`, `instantiate OptionI32 = Option[I32]`.
 - Top-level imports are flat and same-directory only: `import "helpers.oa"`. Imported declarations are merged into one global scope.
+- Struct field lists allow optional trailing commas in both type declarations and struct literals.
 - The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_newstring.oa`, `std_collections.oa`, `std_json.oa`).
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.

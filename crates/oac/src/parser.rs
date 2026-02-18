@@ -718,12 +718,25 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Struc
                     _ => return Err(anyhow::anyhow!("expected field type")),
                 };
 
-                let next_tok = tokens.remove(0);
-                anyhow::ensure!(
-                    next_tok == TokenData::Symbols(",".to_string())
-                        || next_tok == TokenData::Newline,
-                    "expected ',' or newline after field type"
-                );
+                match tokens.first() {
+                    Some(TokenData::Symbols(s)) if s == "," => {
+                        tokens.remove(0);
+                    }
+                    Some(TokenData::Newline) => {
+                        tokens.remove(0);
+                    }
+                    Some(TokenData::Parenthesis {
+                        opening: '}',
+                        is_opening: false,
+                    }) => {}
+                    Some(tok) => {
+                        return Err(anyhow::anyhow!(
+                            "expected ',', newline, or '}}' after field type, got {:?}",
+                            tok
+                        ));
+                    }
+                    None => return Err(anyhow::anyhow!("unexpected end of file in struct body")),
+                }
                 struct_fields.push(StructField {
                     name: field_name,
                     ty,
@@ -1010,7 +1023,25 @@ fn parse_struct_value(
 
         fields.push((field_name, parse_expression(tokens, 0)?));
 
-        assert_eq!(tokens.remove(0), TokenData::Symbols(",".to_string()));
+        match tokens.first() {
+            Some(TokenData::Symbols(s)) if s == "," => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {}
+            Some(tok) => {
+                return Err(anyhow::anyhow!(
+                    "expected ',', newline, or '}}' after struct field value, got {:?}",
+                    tok
+                ));
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in struct literal")),
+        }
     }
 
     tokens.remove(0);
@@ -1405,5 +1436,61 @@ template Box[T] {
         assert_eq!(template.invariants.len(), 1);
         assert_eq!(template.invariants[0].display_name, "value must be valid");
         assert_eq!(template.invariants[0].parameter.ty, "Box");
+    }
+
+    #[test]
+    fn parses_struct_declaration_without_trailing_comma() {
+        let source = r#"
+struct Counter {
+	value: I32
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+
+        assert_eq!(ast.type_definitions.len(), 1);
+        let super::TypeDefDecl::Struct(def) = &ast.type_definitions[0] else {
+            panic!("expected struct definition");
+        };
+        assert_eq!(def.name, "Counter");
+        assert_eq!(def.struct_fields.len(), 1);
+        assert_eq!(def.struct_fields[0].name, "value");
+        assert_eq!(def.struct_fields[0].ty, "I32");
+    }
+
+    #[test]
+    fn parses_struct_literal_without_trailing_comma() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+fun main() -> I32 {
+	c = Counter struct { value: 1 }
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+
+        assert_eq!(ast.top_level_functions.len(), 1);
+        let main = &ast.top_level_functions[0];
+        let super::Statement::Assign { value, .. } = &main.body[0] else {
+            panic!("expected first statement to be assignment");
+        };
+        let super::Expression::StructValue {
+            struct_name,
+            field_values,
+        } = value
+        else {
+            panic!("expected struct literal");
+        };
+        assert_eq!(struct_name, "Counter");
+        assert_eq!(field_values.len(), 1);
+        assert_eq!(field_values[0].0, "value");
     }
 }

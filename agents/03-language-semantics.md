@@ -25,6 +25,7 @@ Observed in parser/IR implementation:
 - Pattern matching on enums (`match`) as statement and expression.
 - Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
+- Struct declarations and struct literals accept an optional trailing comma after the last field.
 
 ## Semantic Rules You Must Preserve
 
