@@ -1,0 +1,18 @@
+struct Counter {
+	value: I32,
+}
+
+comptime fun meta_probe(T: Type) -> DeclSet {
+	meta_from_param = expr_meta_opt(T)
+	meta_from_expr = expr_meta_opt(resolve_type("I32"))
+	assert(!is_some(meta_from_param))
+	assert(is_some(meta_from_expr))
+	return declset_new()
+}
+
+comptime apply meta_probe(Counter)
+
+fun main() -> I32 {
+	print(5)
+	return 0
+}

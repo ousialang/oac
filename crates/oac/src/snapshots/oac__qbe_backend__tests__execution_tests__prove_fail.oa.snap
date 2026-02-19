@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+prove verification failed (SAT counterexamples found):
+main#0#1 (caller=main, qbe_artifact=site_main_0_1.qbe, smt_artifact=site_main_0_1.smt2)

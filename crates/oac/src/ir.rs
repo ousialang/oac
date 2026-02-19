@@ -13,6 +13,35 @@ use crate::{
 
 const LEGACY_INVARIANT_PREFIX: &str = "__struct__";
 const LEGACY_INVARIANT_SUFFIX: &str = "__invariant";
+const RESERVED_BUILTIN_FUNCTION_NAMES: [&str; 2] = ["prove", "assert"];
+const SEMANTIC_BUILTIN_TYPES: [&str; 6] = [
+    "Type",
+    "DeclSet",
+    "SemanticExpr",
+    "SourceSpan",
+    "StructInfo",
+    "FieldInfo",
+];
+const SEMANTIC_EMISSION_BUILTINS: [&str; 3] = [
+    "declset_new",
+    "declset_add_derived_struct",
+    "declset_add_invariant_field_gt_i32",
+];
+const SEMANTIC_INTROSPECTION_BUILTINS: [&str; 13] = [
+    "expr_meta_opt",
+    "definition_location_opt",
+    "is_struct",
+    "as_struct_opt",
+    "struct_field_count",
+    "struct_field_at",
+    "field_name",
+    "field_type",
+    "type_name",
+    "resolve_type",
+    "is_some",
+    "unwrap",
+    "concat",
+];
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub enum TypeDef {
@@ -42,6 +71,25 @@ pub struct ResolvedProgram {
     pub function_sigs: HashMap<String, FunctionSignature>,
     pub function_definitions: HashMap<String, FunctionDefinition>,
     pub struct_invariants: HashMap<String, StructInvariantDefinition>,
+    pub comptime_function_definitions: HashMap<String, FunctionDefinition>,
+    pub comptime_apply_order: Vec<parser::ComptimeApply>,
+    pub semantic_expr_metadata: HashMap<String, SemanticExprMetadata>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub file: Option<String>,
+    pub start_line: Option<u32>,
+    pub start_column: Option<u32>,
+    pub end_line: Option<u32>,
+    pub end_column: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SemanticExprMetadata {
+    pub id: String,
+    pub ty: Option<String>,
+    pub source_span: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -65,6 +113,11 @@ impl ResolvedProgram {
         let mut var_types: HashMap<String, TypeRef> = HashMap::new();
         for param in &func_def.sig.parameters {
             var_types.insert(param.name.clone(), param.ty.clone());
+        }
+        if self.comptime_function_definitions.contains_key(&func_def.name) {
+            for type_name in self.type_definitions.keys() {
+                var_types.insert(type_name.clone(), "Type".to_string());
+            }
         }
 
         let mut return_type = None;
@@ -228,6 +281,34 @@ impl ResolvedProgram {
                     }
                 }
             }
+            parser::Statement::Prove { condition } => {
+                let condition_type = get_expression_type(
+                    condition,
+                    var_types,
+                    &self.function_sigs,
+                    &self.type_definitions,
+                )?;
+                if condition_type != "Bool" {
+                    return Err(anyhow::anyhow!(
+                        "prove expects Bool condition, got {:?}",
+                        condition_type
+                    ));
+                }
+            }
+            parser::Statement::Assert { condition } => {
+                let condition_type = get_expression_type(
+                    condition,
+                    var_types,
+                    &self.function_sigs,
+                    &self.type_definitions,
+                )?;
+                if condition_type != "Bool" {
+                    return Err(anyhow::anyhow!(
+                        "assert expects Bool condition, got {:?}",
+                        condition_type
+                    ));
+                }
+            }
             parser::Statement::While { condition, body } => {
                 let condition_type = get_expression_type(
                     condition,
@@ -325,6 +406,9 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         function_sigs: HashMap::new(),
         type_definitions: HashMap::new(),
         struct_invariants: HashMap::new(),
+        comptime_function_definitions: HashMap::new(),
+        comptime_apply_order: ast.comptime_applies.clone(),
+        semantic_expr_metadata: HashMap::new(),
     };
 
     program
@@ -357,6 +441,20 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         .map_or(Ok(()), |_| {
             Err(anyhow::anyhow!("failed to insert String type definition"))
         })?;
+    for semantic_ty in SEMANTIC_BUILTIN_TYPES {
+        program
+            .type_definitions
+            .insert(
+                semantic_ty.to_string(),
+                TypeDef::BuiltIn(BuiltInType::String),
+            )
+            .map_or(Ok(()), |_| {
+                Err(anyhow::anyhow!(
+                    "failed to insert semantic builtin type definition for {}",
+                    semantic_ty
+                ))
+            })?;
+    }
 
     // Built-in functions
 
@@ -623,17 +721,37 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         }
     }
 
-    let mut all_functions = ast.top_level_functions.clone();
+    let user_runtime_functions = ast
+        .top_level_functions
+        .iter()
+        .filter(|f| !f.is_comptime)
+        .cloned()
+        .collect::<Vec<_>>();
+    let user_comptime_functions = ast
+        .top_level_functions
+        .iter()
+        .filter(|f| f.is_comptime)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut all_functions = user_runtime_functions.clone();
     let synthesized_invariants = synthesize_invariant_functions(
         &ast.invariants,
         &program.type_definitions,
-        &all_functions,
+        &ast.top_level_functions,
         &mut program.struct_invariants,
     )?;
     all_functions.extend(synthesized_invariants);
 
     // Pass 1: register signatures for all top-level functions and synthesized invariants.
     for function in all_functions.iter() {
+        if RESERVED_BUILTIN_FUNCTION_NAMES.contains(&function.name.as_str()) {
+            return Err(anyhow::anyhow!(
+                "function name {} is reserved for builtin assertion semantics",
+                function.name
+            ));
+        }
+
         let mut parameters = Vec::new();
         for parameter in function.parameters.clone() {
             parameters.push(parameter);
@@ -662,6 +780,30 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
             })?;
     }
 
+    for function in user_comptime_functions.iter() {
+        if program
+            .function_sigs
+            .contains_key(&function.name)
+        {
+            return Err(anyhow::anyhow!(
+                "duplicate function signature for {}",
+                function.name
+            ));
+        }
+        let sig = FunctionSignature {
+            parameters: function
+                .parameters
+                .iter()
+                .map(|p| FunctionParameter {
+                    name: p.name.clone(),
+                    ty: p.ty.clone(),
+                })
+                .collect::<Vec<_>>(),
+            return_type: function.return_type.clone(),
+        };
+        program.function_sigs.insert(function.name.clone(), sig);
+    }
+
     // Pass 2: register function bodies.
     for function in all_functions.iter() {
         let sig = program
@@ -686,6 +828,34 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
             })?;
     }
 
+    for function in user_comptime_functions.iter() {
+        let sig = FunctionSignature {
+            parameters: function
+                .parameters
+                .iter()
+                .map(|p| FunctionParameter {
+                    name: p.name.clone(),
+                    ty: p.ty.clone(),
+                })
+                .collect::<Vec<_>>(),
+            return_type: function.return_type.clone(),
+        };
+        let definition = FunctionDefinition {
+            name: function.name.clone(),
+            body: function.body.clone(),
+            sig,
+        };
+        program
+            .comptime_function_definitions
+            .insert(function.name.clone(), definition)
+            .map_or(Ok(()), |_| {
+                Err(anyhow::anyhow!(
+                    "duplicate comptime function definition {}",
+                    function.name
+                ))
+            })?;
+    }
+
     register_legacy_struct_invariants(
         &all_functions,
         &program.type_definitions,
@@ -697,6 +867,9 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     for func_def in program.function_definitions.values() {
         program.type_check(func_def)?;
     }
+
+    reject_runtime_semantic_builtin_usage(&program)?;
+    program.semantic_expr_metadata = index_semantic_expression_metadata(&program);
 
     if !program.function_definitions.contains_key("main") {
         return Err(anyhow::anyhow!("main function not defined"));
@@ -732,6 +905,251 @@ fn validate_main_signature(program: &ResolvedProgram) -> anyhow::Result<()> {
         _ => Err(anyhow::anyhow!(
             "unsupported main signature: expected `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`"
         )),
+    }
+}
+
+fn reject_runtime_semantic_builtin_usage(program: &ResolvedProgram) -> anyhow::Result<()> {
+    for function in program.function_definitions.values() {
+        for statement in &function.body {
+            let mut calls = Vec::new();
+            collect_called_functions_in_statement(statement, &mut calls);
+            for call in calls {
+                if SEMANTIC_EMISSION_BUILTINS.contains(&call.as_str()) {
+                    return Err(anyhow::anyhow!(
+                        "runtime function {} cannot call semantic emission builtin {}",
+                        function.name,
+                        call
+                    ));
+                }
+                if SEMANTIC_INTROSPECTION_BUILTINS.contains(&call.as_str()) {
+                    return Err(anyhow::anyhow!(
+                        "runtime function {} cannot call semantic introspection builtin {}",
+                        function.name,
+                        call
+                    ));
+                }
+                if program.comptime_function_definitions.contains_key(&call) {
+                    return Err(anyhow::anyhow!(
+                        "runtime function {} cannot call comptime function {}",
+                        function.name,
+                        call
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_called_functions_in_statement(statement: &parser::Statement, out: &mut Vec<String>) {
+    match statement {
+        parser::Statement::StructDef { .. } => {}
+        parser::Statement::Assign { value, .. } => collect_called_functions_in_expression(value, out),
+        parser::Statement::Return { expr } => collect_called_functions_in_expression(expr, out),
+        parser::Statement::Expression { expr } => collect_called_functions_in_expression(expr, out),
+        parser::Statement::Prove { condition } => {
+            collect_called_functions_in_expression(condition, out)
+        }
+        parser::Statement::Assert { condition } => {
+            collect_called_functions_in_expression(condition, out)
+        }
+        parser::Statement::Conditional {
+            condition,
+            body,
+            else_body,
+        } => {
+            collect_called_functions_in_expression(condition, out);
+            for statement in body {
+                collect_called_functions_in_statement(statement, out);
+            }
+            if let Some(else_body) = else_body {
+                for statement in else_body {
+                    collect_called_functions_in_statement(statement, out);
+                }
+            }
+        }
+        parser::Statement::While { condition, body } => {
+            collect_called_functions_in_expression(condition, out);
+            for statement in body {
+                collect_called_functions_in_statement(statement, out);
+            }
+        }
+        parser::Statement::Match { subject, arms } => {
+            collect_called_functions_in_expression(subject, out);
+            for arm in arms {
+                for statement in &arm.body {
+                    collect_called_functions_in_statement(statement, out);
+                }
+            }
+        }
+    }
+}
+
+fn collect_called_functions_in_expression(expression: &Expression, out: &mut Vec<String>) {
+    match expression {
+        Expression::Match { subject, arms } => {
+            collect_called_functions_in_expression(subject, out);
+            for arm in arms {
+                collect_called_functions_in_expression(&arm.value, out);
+            }
+        }
+        Expression::Literal(_) | Expression::Variable(_) => {}
+        Expression::Call(name, args) => {
+            out.push(name.clone());
+            for arg in args {
+                collect_called_functions_in_expression(arg, out);
+            }
+        }
+        Expression::PostfixCall { callee, args } => {
+            collect_called_functions_in_expression(callee, out);
+            for arg in args {
+                collect_called_functions_in_expression(arg, out);
+            }
+        }
+        Expression::BinOp(_, left, right) => {
+            collect_called_functions_in_expression(left, out);
+            collect_called_functions_in_expression(right, out);
+        }
+        Expression::UnaryOp(_, expr) => collect_called_functions_in_expression(expr, out),
+        Expression::FieldAccess { .. } => {}
+        Expression::StructValue { field_values, .. } => {
+            for (_, value) in field_values {
+                collect_called_functions_in_expression(value, out);
+            }
+        }
+    }
+}
+
+fn index_semantic_expression_metadata(program: &ResolvedProgram) -> HashMap<String, SemanticExprMetadata> {
+    let mut out = HashMap::new();
+    for (name, function) in &program.function_definitions {
+        for (statement_index, statement) in function.body.iter().enumerate() {
+            index_statement_expression_metadata(
+                statement,
+                &format!("fn:{name}/stmt:{statement_index}"),
+                &mut out,
+            );
+        }
+    }
+    for (name, function) in &program.comptime_function_definitions {
+        for (statement_index, statement) in function.body.iter().enumerate() {
+            index_statement_expression_metadata(
+                statement,
+                &format!("comptime_fn:{name}/stmt:{statement_index}"),
+                &mut out,
+            );
+        }
+    }
+    out
+}
+
+fn index_statement_expression_metadata(
+    statement: &parser::Statement,
+    path: &str,
+    out: &mut HashMap<String, SemanticExprMetadata>,
+) {
+    match statement {
+        parser::Statement::StructDef { .. } => {}
+        parser::Statement::Assign { value, .. } => {
+            index_expression_metadata(value, &format!("{path}/assign.value"), out)
+        }
+        parser::Statement::Return { expr } => {
+            index_expression_metadata(expr, &format!("{path}/return.expr"), out)
+        }
+        parser::Statement::Expression { expr } => {
+            index_expression_metadata(expr, &format!("{path}/expr"), out)
+        }
+        parser::Statement::Prove { condition } => {
+            index_expression_metadata(condition, &format!("{path}/prove.cond"), out)
+        }
+        parser::Statement::Assert { condition } => {
+            index_expression_metadata(condition, &format!("{path}/assert.cond"), out)
+        }
+        parser::Statement::Conditional {
+            condition,
+            body,
+            else_body,
+        } => {
+            index_expression_metadata(condition, &format!("{path}/if.cond"), out);
+            for (index, statement) in body.iter().enumerate() {
+                index_statement_expression_metadata(statement, &format!("{path}/if.body.{index}"), out);
+            }
+            if let Some(else_body) = else_body {
+                for (index, statement) in else_body.iter().enumerate() {
+                    index_statement_expression_metadata(
+                        statement,
+                        &format!("{path}/if.else.{index}"),
+                        out,
+                    );
+                }
+            }
+        }
+        parser::Statement::While { condition, body } => {
+            index_expression_metadata(condition, &format!("{path}/while.cond"), out);
+            for (index, statement) in body.iter().enumerate() {
+                index_statement_expression_metadata(statement, &format!("{path}/while.body.{index}"), out);
+            }
+        }
+        parser::Statement::Match { subject, arms } => {
+            index_expression_metadata(subject, &format!("{path}/match.subject"), out);
+            for (arm_index, arm) in arms.iter().enumerate() {
+                for (statement_index, statement) in arm.body.iter().enumerate() {
+                    index_statement_expression_metadata(
+                        statement,
+                        &format!("{path}/match.arm.{arm_index}.{statement_index}"),
+                        out,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn index_expression_metadata(
+    expression: &Expression,
+    path: &str,
+    out: &mut HashMap<String, SemanticExprMetadata>,
+) {
+    out.insert(
+        path.to_string(),
+        SemanticExprMetadata {
+            id: path.to_string(),
+            ty: None,
+            source_span: None,
+        },
+    );
+
+    match expression {
+        Expression::Match { subject, arms } => {
+            index_expression_metadata(subject, &format!("{path}/match.subject"), out);
+            for (index, arm) in arms.iter().enumerate() {
+                index_expression_metadata(&arm.value, &format!("{path}/match.arm.{index}"), out);
+            }
+        }
+        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
+        Expression::Call(_, args) => {
+            for (index, arg) in args.iter().enumerate() {
+                index_expression_metadata(arg, &format!("{path}/call.arg.{index}"), out);
+            }
+        }
+        Expression::PostfixCall { callee, args } => {
+            index_expression_metadata(callee, &format!("{path}/postfix.callee"), out);
+            for (index, arg) in args.iter().enumerate() {
+                index_expression_metadata(arg, &format!("{path}/postfix.arg.{index}"), out);
+            }
+        }
+        Expression::BinOp(_, left, right) => {
+            index_expression_metadata(left, &format!("{path}/bin.left"), out);
+            index_expression_metadata(right, &format!("{path}/bin.right"), out);
+        }
+        Expression::UnaryOp(_, expr) => {
+            index_expression_metadata(expr, &format!("{path}/unary"), out);
+        }
+        Expression::StructValue { field_values, .. } => {
+            for (index, (_, value)) in field_values.iter().enumerate() {
+                index_expression_metadata(value, &format!("{path}/struct.field.{index}"), out);
+            }
+        }
     }
 }
 
@@ -807,6 +1225,7 @@ fn synthesize_invariant_functions(
             parameters: vec![invariant.parameter.clone()],
             body: invariant.body.clone(),
             return_type: "Bool".to_string(),
+            is_comptime: false,
         });
     }
     Ok(out)
@@ -1079,6 +1498,12 @@ fn rewrite_statement(
         parser::Statement::Expression { expr } => parser::Statement::Expression {
             expr: rewrite_expression(expr, local_type_name_map, local_function_name_map),
         },
+        parser::Statement::Prove { condition } => parser::Statement::Prove {
+            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+        },
+        parser::Statement::Assert { condition } => parser::Statement::Assert {
+            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+        },
         parser::Statement::While { condition, body } => parser::Statement::While {
             condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
             body: body
@@ -1255,6 +1680,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                     &instantiation.concrete_type,
                     &local_type_name_map,
                 ),
+                is_comptime: function.is_comptime,
             });
         }
 
@@ -1551,6 +1977,271 @@ pub(crate) fn get_expression_type(
             .ok_or_else(|| anyhow::anyhow!("unknown variable {}", name))
             .map(|ty| ty.clone()),
         Expression::Call(function, arguments) => {
+            if function == "prove" || function == "assert" {
+                return Err(anyhow::anyhow!(
+                    "{}(...) is statement-only and cannot be used as an expression",
+                    function
+                ));
+            }
+            if function == "is_some" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "is_some expects exactly one argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_type = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if !arg_type.starts_with("Option[") || !arg_type.ends_with(']') {
+                    return Err(anyhow::anyhow!(
+                        "is_some expects an Option[T] argument, got {}",
+                        arg_type
+                    ));
+                }
+                return Ok("Bool".to_string());
+            }
+            if function == "unwrap" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "unwrap expects exactly one argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_type = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let Some(inner) = arg_type
+                    .strip_prefix("Option[")
+                    .and_then(|s| s.strip_suffix(']'))
+                else {
+                    return Err(anyhow::anyhow!(
+                        "unwrap expects an Option[T] argument, got {}",
+                        arg_type
+                    ));
+                };
+                return Ok(inner.to_string());
+            }
+            if function == "concat" {
+                if arguments.len() != 2 {
+                    return Err(anyhow::anyhow!(
+                        "concat expects exactly two String arguments, got {}",
+                        arguments.len()
+                    ));
+                }
+                let left = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let right = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
+                if left != "String" || right != "String" {
+                    return Err(anyhow::anyhow!(
+                        "concat expects (String, String), got ({}, {})",
+                        left,
+                        right
+                    ));
+                }
+                return Ok("String".to_string());
+            }
+            if function == "type_name" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "type_name expects exactly one Type argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if arg_ty != "Type" {
+                    return Err(anyhow::anyhow!(
+                        "type_name expects Type argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("String".to_string());
+            }
+            if function == "resolve_type" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "resolve_type expects exactly one String argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if arg_ty != "String" {
+                    return Err(anyhow::anyhow!(
+                        "resolve_type expects String argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("Type".to_string());
+            }
+            if function == "expr_meta_opt" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "expr_meta_opt expects exactly one argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                return Ok("Option[SemanticExpr]".to_string());
+            }
+            if function == "definition_location_opt" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "definition_location_opt expects exactly one argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                return Ok("Option[SourceSpan]".to_string());
+            }
+            if function == "is_struct" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "is_struct expects exactly one Type argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if arg_ty != "Type" {
+                    return Err(anyhow::anyhow!(
+                        "is_struct expects Type argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("Bool".to_string());
+            }
+            if function == "as_struct_opt" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "as_struct_opt expects exactly one Type argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if arg_ty != "Type" {
+                    return Err(anyhow::anyhow!(
+                        "as_struct_opt expects Type argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("Option[StructInfo]".to_string());
+            }
+            if function == "struct_field_count" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "struct_field_count expects exactly one StructInfo argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if arg_ty != "StructInfo" {
+                    return Err(anyhow::anyhow!(
+                        "struct_field_count expects StructInfo argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("I32".to_string());
+            }
+            if function == "struct_field_at" {
+                if arguments.len() != 2 {
+                    return Err(anyhow::anyhow!(
+                        "struct_field_at expects (StructInfo, I32), got {} arguments",
+                        arguments.len()
+                    ));
+                }
+                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
+                if a != "StructInfo" || b != "I32" {
+                    return Err(anyhow::anyhow!(
+                        "struct_field_at expects (StructInfo, I32), got ({}, {})",
+                        a,
+                        b
+                    ));
+                }
+                return Ok("Option[FieldInfo]".to_string());
+            }
+            if function == "field_name" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "field_name expects exactly one FieldInfo argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if arg_ty != "FieldInfo" {
+                    return Err(anyhow::anyhow!(
+                        "field_name expects FieldInfo argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("String".to_string());
+            }
+            if function == "field_type" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "field_type expects exactly one FieldInfo argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                if arg_ty != "FieldInfo" {
+                    return Err(anyhow::anyhow!(
+                        "field_type expects FieldInfo argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("Type".to_string());
+            }
+            if function == "declset_new" {
+                if !arguments.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "declset_new expects zero arguments, got {}",
+                        arguments.len()
+                    ));
+                }
+                return Ok("DeclSet".to_string());
+            }
+            if function == "declset_add_derived_struct" {
+                if arguments.len() != 3 {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_derived_struct expects (DeclSet, StructInfo, String), got {} arguments",
+                        arguments.len()
+                    ));
+                }
+                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
+                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions)?;
+                if a != "DeclSet" || b != "StructInfo" || c != "String" {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_derived_struct expects (DeclSet, StructInfo, String), got ({}, {}, {})",
+                        a,
+                        b,
+                        c
+                    ));
+                }
+                return Ok("DeclSet".to_string());
+            }
+            if function == "declset_add_invariant_field_gt_i32" {
+                if arguments.len() != 5 {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_invariant_field_gt_i32 expects (DeclSet, Type, String, String, I32), got {} arguments",
+                        arguments.len()
+                    ));
+                }
+                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
+                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions)?;
+                let d = get_expression_type(&arguments[3], var_types, fns, type_definitions)?;
+                let e = get_expression_type(&arguments[4], var_types, fns, type_definitions)?;
+                if a != "DeclSet"
+                    || b != "Type"
+                    || c != "String"
+                    || d != "String"
+                    || e != "I32"
+                {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_invariant_field_gt_i32 expects (DeclSet, Type, String, String, I32), got ({}, {}, {}, {}, {})",
+                        a,
+                        b,
+                        c,
+                        d,
+                        e
+                    ));
+                }
+                return Ok("DeclSet".to_string());
+            }
             let func = fns
                 .get(function)
                 .ok_or_else(|| anyhow::anyhow!("unknown function {}", function))?;
@@ -1821,5 +2512,135 @@ fun main() -> I32 {
         assert_eq!(function.sig.parameters.len(), 1);
         assert_eq!(function.sig.parameters[0].ty, "BoxI32");
         assert_eq!(function.sig.return_type, "Bool");
+    }
+
+    #[test]
+    fn resolve_rejects_non_bool_prove_condition() {
+        let source = r#"
+fun main() -> I32 {
+	prove(1)
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err.to_string().contains("prove expects Bool condition"));
+    }
+
+    #[test]
+    fn resolve_rejects_assert_as_expression() {
+        let source = r#"
+fun main() -> I32 {
+	x = assert(true)
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err
+            .to_string()
+            .contains("assert(...) is statement-only and cannot be used as an expression"));
+    }
+
+    #[test]
+    fn resolve_rejects_reserved_builtin_function_name() {
+        let source = r#"
+fun prove(a: Bool) -> Bool {
+	return a
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err.to_string().contains("function name prove is reserved"));
+    }
+
+    #[test]
+    fn resolve_tracks_comptime_registry_and_apply_order() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+comptime fun build_counter(T: Type) -> DeclSet {
+	return declset_new()
+}
+
+comptime apply build_counter(Counter)
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        assert!(resolved
+            .comptime_function_definitions
+            .contains_key("build_counter"));
+        assert_eq!(resolved.comptime_apply_order.len(), 1);
+        assert_eq!(
+            resolved.comptime_apply_order[0].function_name,
+            "build_counter"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_runtime_semantic_emission_builtin_call() {
+        let source = r#"
+fun main() -> I32 {
+	ds = declset_new()
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(
+            err.to_string()
+                .contains("cannot call semantic emission builtin declset_new"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_runtime_calling_comptime_function() {
+        let source = r#"
+comptime fun build_counter(name: String) -> DeclSet {
+	return declset_new()
+}
+
+fun main() -> I32 {
+	x = build_counter("I32")
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(
+            err.to_string()
+                .contains("runtime function main cannot call comptime function build_counter"),
+            "unexpected error: {err}"
+        );
     }
 }

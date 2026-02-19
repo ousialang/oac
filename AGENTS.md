@@ -36,7 +36,10 @@ This repository currently contains both the Ousia compiler workspace (`crates/*`
 - The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_newstring.oa`, `std_collections.oa`, `std_json.oa`).
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
+- `prove(cond)` and `assert(cond)` are statement-only builtins with call syntax. `prove` is compile-time (fail-closed); `assert` is runtime and exits with code `242` on failure.
+- Function names `prove` and `assert` are reserved and cannot be user-defined.
 - Struct type invariants are optional and declared with `invariant "Human label" for (v: TypeName) { ... }` or `invariant identifier "Human label" for (...) { ... }`; the compiler synthesizes internal functions named `__struct__<TypeName>__invariant` and still accepts legacy explicit function declarations with that name/signature.
+- During `oac build`, prove obligations are verified first at reachable `prove(...)` sites by synthesizing per-site QBE checker functions that return `1` on violated proof conditions and `0` on success (`unsat` passes, `sat` fails). Debug artifacts are emitted under `target/oac/prove/`.
 - During `oac build`, struct invariants are verified at user-function call return sites (reachable from `main`) by synthesizing per-site QBE checker functions from compiled QBE: the target call site is instrumented with an invariant check and checker exit is `1` on violation / `0` on success (`unsat` passes, `sat` fails).
 - Checker synthesis is now QBE-native: reachable user calls are inlined into the checker before CHC encoding so loop/control-flow reasoning happens on QBE transitions (fixedpoint/Spacer), not via source-level symbolic formula summarization.
 - Recursion cycles on the reachable user-call graph are rejected fail-closed for struct invariant verification.
@@ -49,8 +52,10 @@ This repository currently contains both the Ousia compiler workspace (`crates/*`
 - `qbe-smt` CHC state now tracks predecessor-block identity (`pred`) so `phi` assignments are modeled directly in Horn transitions (with predecessor guards), instead of being rejected.
 - `qbe-smt` source split: `lib.rs` (public API + tests), `encode.rs` (CHC/Horn encoding), `classify.rs` (loop classification).
 - CHC solving is centralized in `qbe-smt` (`solve_chc_script` / `solve_chc_script_with_diagnostics`); struct invariant verification uses this shared backend runner instead of owning a separate Z3 invocation path.
+- `qbe-smt` also models `exit(code)` calls as halting transitions with `exit` state updates, in addition to `malloc`.
 - CHC encoding only includes reachable QBE blocks from entry; unsupported instructions in unreachable blocks are ignored by design.
 - SAT struct-invariant failures now include a control-flow witness summary (checker CFG path + branch choices); for `main(argc, argv)` obligations they also include a concrete solver-derived `argc` witness when extraction succeeds.
 - `oac build` no longer emits `target/oac/ir.smt2` sidecar output; SMT artifacts are only produced for struct invariant obligations under `target/oac/struct_invariants/`.
+- Build/test environments that hit prove obligations also require `z3`; debug SMT artifacts are emitted under `target/oac/prove/`.
 - `oac build` now runs a best-effort non-termination classifier on the generated QBE `main` function; when it proves a canonical while-loop is non-terminating, compilation fails early with the loop header label and proof reason.
 - Execution fixture snapshots in `qbe_backend` are based on program stdout even when the process exits with a non-zero code; runtime errors are reserved for spawn failures, timeouts, invalid UTF-8, or signal termination.

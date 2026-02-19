@@ -54,6 +54,12 @@ pub struct ImportDecl {
     pub path: String,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ComptimeApply {
+    pub function_name: String,
+    pub argument_type: String,
+}
+
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct Ast {
     pub imports: Vec<ImportDecl>,
@@ -62,6 +68,7 @@ pub struct Ast {
     pub invariants: Vec<StructInvariantDecl>,
     pub template_definitions: Vec<TemplateDef>,
     pub template_instantiations: Vec<TemplateInstantiation>,
+    pub comptime_applies: Vec<ComptimeApply>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -70,6 +77,7 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
     pub return_type: String,
+    pub is_comptime: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -103,6 +111,12 @@ pub enum Statement {
     },
     Expression {
         expr: Expression,
+    },
+    Prove {
+        condition: Expression,
+    },
+    Assert {
+        condition: Expression,
     },
     While {
         condition: Expression,
@@ -255,6 +269,18 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                 tokens.remove(0);
                 let expr = parse_expression(tokens, 0)?;
                 return Ok(Statement::Return { expr });
+            } else if name == "comptime" {
+                return Err(anyhow::anyhow!(
+                    "`comptime` declarations are only allowed at top level"
+                ));
+            } else if (name == "prove" || name == "assert")
+                && tokens.get(1)
+                    == Some(&TokenData::Parenthesis {
+                        opening: '(',
+                        is_opening: true,
+                    })
+            {
+                return parse_builtin_assertion_statement(tokens);
             } else if name == "match" {
                 tokens.remove(0);
                 return parse_match_statement(tokens);
@@ -288,6 +314,33 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
             }
         }
         token => return Err(anyhow::anyhow!("expected statement instead of {:?}", token)),
+    }
+}
+
+fn parse_builtin_assertion_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
+    let keyword = match tokens.remove(0) {
+        TokenData::Word(name) if name == "prove" || name == "assert" => name,
+        other => {
+            return Err(anyhow::anyhow!(
+                "expected builtin assertion keyword, got {:?}",
+                other
+            ))
+        }
+    };
+
+    let args = parse_call_args(tokens)?;
+    if args.len() != 1 {
+        return Err(anyhow::anyhow!(
+            "{} expects exactly one Bool argument, got {}",
+            keyword,
+            args.len()
+        ));
+    }
+    let condition = args.into_iter().next().expect("single argument exists");
+    if keyword == "prove" {
+        Ok(Statement::Prove { condition })
+    } else {
+        Ok(Statement::Assert { condition })
     }
 }
 
@@ -336,6 +389,9 @@ fn parse_call_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Expression
     let mut args = vec![];
     loop {
         match tokens.get(0) {
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
             Some(TokenData::Parenthesis {
                 opening: ')',
                 is_opening: false,
@@ -350,11 +406,27 @@ fn parse_call_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Expression
                 match tokens.get(0) {
                     Some(TokenData::Symbols(s)) if s == "," => {
                         tokens.remove(0);
+                        while tokens.get(0) == Some(&TokenData::Newline) {
+                            tokens.remove(0);
+                        }
                     }
                     Some(TokenData::Parenthesis {
                         opening: ')',
                         is_opening: false,
                     }) => {}
+                    Some(TokenData::Newline) => {
+                        while tokens.get(0) == Some(&TokenData::Newline) {
+                            tokens.remove(0);
+                        }
+                        anyhow::ensure!(
+                            tokens.get(0)
+                                == Some(&TokenData::Parenthesis {
+                                    opening: ')',
+                                    is_opening: false
+                                }),
+                            "expected ')' after function call argument"
+                        );
+                    }
                     Some(tok) => {
                         return Err(anyhow::anyhow!(
                             "expected ',' or ')' after function call argument, got {:?}",
@@ -581,10 +653,7 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
                     tokens.remove(0) == TokenData::Symbols(":".to_string()),
                     "expected ':' after parameter name"
                 );
-                let ty = match tokens.remove(0) {
-                    TokenData::Word(ty) => ty,
-                    _ => return Err(anyhow::anyhow!("expected parameter type")),
-                };
+                let ty = parse_type_reference(tokens)?;
 
                 parameters.push(Parameter { name, ty });
             }
@@ -610,10 +679,7 @@ fn parse_single_parameter(tokens: &mut Vec<TokenData>) -> anyhow::Result<Paramet
                 tokens.remove(0) == TokenData::Symbols(":".to_string()),
                 "expected ':' after parameter name"
             );
-            let ty = match tokens.remove(0) {
-                TokenData::Word(ty) => ty,
-                _ => return Err(anyhow::anyhow!("expected parameter type")),
-            };
+            let ty = parse_type_reference(tokens)?;
             Parameter { name, ty }
         }
         _ => return Err(anyhow::anyhow!("expected parameter name")),
@@ -829,7 +895,13 @@ fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef
     Ok(EnumDef { name, variants })
 }
 
-fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Function> {
+fn parse_function_declaration(tokens: &mut Vec<TokenData>, is_comptime: bool) -> anyhow::Result<Function> {
+    if is_comptime {
+        anyhow::ensure!(
+            tokens.remove(0) == TokenData::Word("comptime".to_string()),
+            "expected 'comptime' keyword"
+        );
+    }
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("fun".to_string()),
         "expected 'fun' keyword"
@@ -857,10 +929,7 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
         "expected '->' after function parameters"
     );
 
-    let return_type = match tokens.remove(0) {
-        TokenData::Word(name) => name,
-        _ => return Err(anyhow::anyhow!("expected return type")),
-    };
+    let return_type = parse_type_reference(tokens)?;
 
     let body = parse_function_like_body(tokens)?;
 
@@ -869,7 +938,36 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Fun
         parameters,
         body,
         return_type,
+        is_comptime,
     })
+}
+
+fn parse_type_reference(tokens: &mut Vec<TokenData>) -> anyhow::Result<String> {
+    let base = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        token => return Err(anyhow::anyhow!("expected type name, got {:?}", token)),
+    };
+
+    if tokens.first()
+        == Some(&TokenData::Parenthesis {
+            opening: '[',
+            is_opening: true,
+        })
+    {
+        tokens.remove(0);
+        let inner = parse_type_reference(tokens)?;
+        anyhow::ensure!(
+            tokens.remove(0)
+                == TokenData::Parenthesis {
+                    opening: ']',
+                    is_opening: false
+                },
+            "expected closing ']' in type reference"
+        );
+        Ok(format!("{base}[{inner}]"))
+    } else {
+        Ok(base)
+    }
 }
 
 fn parse_struct_invariant_declaration(
@@ -917,6 +1015,47 @@ fn parse_struct_invariant_declaration(
     })
 }
 
+fn parse_comptime_apply(tokens: &mut Vec<TokenData>) -> anyhow::Result<ComptimeApply> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("comptime".to_string()),
+        "expected 'comptime' keyword"
+    );
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("apply".to_string()),
+        "expected 'apply' keyword after 'comptime'"
+    );
+    let function_name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        token => {
+            return Err(anyhow::anyhow!(
+                "expected comptime function name after 'comptime apply', got {:?}",
+                token
+            ));
+        }
+    };
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true
+            },
+        "expected '(' after comptime apply function name"
+    );
+    let argument_type = parse_type_reference(tokens)?;
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: ')',
+                is_opening: false
+            },
+        "expected ')' after comptime apply argument"
+    );
+    Ok(ComptimeApply {
+        function_name,
+        argument_type,
+    })
+}
+
 #[tracing::instrument(level = "trace", skip(tokens))]
 pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
     // Discard all comments.
@@ -931,6 +1070,7 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         invariants: vec![],
         template_definitions: vec![],
         template_instantiations: vec![],
+        comptime_applies: vec![],
     };
 
     while let Some(token) = tokens.tokens.first() {
@@ -946,9 +1086,25 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
                     .push(TypeDefDecl::Enum(type_definition));
             }
             TokenData::Word(name) if name == "fun" => {
-                let function = parse_function_declaration(&mut tokens.tokens)?;
+                let function = parse_function_declaration(&mut tokens.tokens, false)?;
                 ast.top_level_functions.push(function);
             }
+            TokenData::Word(name) if name == "comptime" => match tokens.tokens.get(1) {
+                Some(TokenData::Word(kind)) if kind == "fun" => {
+                    let function = parse_function_declaration(&mut tokens.tokens, true)?;
+                    ast.top_level_functions.push(function);
+                }
+                Some(TokenData::Word(kind)) if kind == "apply" => {
+                    let apply = parse_comptime_apply(&mut tokens.tokens)?;
+                    ast.comptime_applies.push(apply);
+                }
+                token => {
+                    return Err(anyhow::anyhow!(
+                        "unexpected token after 'comptime': expected 'fun' or 'apply', got {:?}",
+                        token
+                    ))
+                }
+            },
             TokenData::Word(name) if name == "invariant" => {
                 let invariant = parse_struct_invariant_declaration(&mut tokens.tokens)?;
                 ast.invariants.push(invariant);
@@ -1218,9 +1374,21 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
                 type_definitions.push(TypeDefDecl::Enum(enum_def));
             }
             Some(TokenData::Word(name)) if name == "fun" => {
-                let function = parse_function_declaration(tokens)?;
+                let function = parse_function_declaration(tokens, false)?;
                 top_level_functions.push(function);
             }
+            Some(TokenData::Word(name)) if name == "comptime" => match tokens.get(1) {
+                Some(TokenData::Word(kind)) if kind == "fun" => {
+                    let function = parse_function_declaration(tokens, true)?;
+                    top_level_functions.push(function);
+                }
+                token => {
+                    return Err(anyhow::anyhow!(
+                        "unexpected token after 'comptime' in template body: {:?}",
+                        token
+                    ))
+                }
+            },
             Some(TokenData::Word(name)) if name == "invariant" => {
                 let invariant = parse_struct_invariant_declaration(tokens)?;
                 invariants.push(invariant);
@@ -1278,10 +1446,7 @@ fn parse_template_instantiation(
             },
         "expected '[' after template name"
     );
-    let concrete_type = match tokens.remove(0) {
-        TokenData::Word(name) => name,
-        _ => return Err(anyhow::anyhow!("expected concrete type name")),
-    };
+    let concrete_type = parse_type_reference(tokens)?;
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1492,5 +1657,82 @@ fun main() -> I32 {
         assert_eq!(struct_name, "Counter");
         assert_eq!(field_values.len(), 1);
         assert_eq!(field_values[0].0, "value");
+    }
+
+    #[test]
+    fn parses_prove_and_assert_statements() {
+        let source = r#"
+fun main() -> I32 {
+	prove(true)
+	assert(1 < 2)
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        let main = &ast.top_level_functions[0];
+        assert!(!main.is_comptime);
+        assert!(matches!(main.body[0], super::Statement::Prove { .. }));
+        assert!(matches!(main.body[1], super::Statement::Assert { .. }));
+    }
+
+    #[test]
+    fn rejects_prove_wrong_arity() {
+        let source = r#"
+fun main() -> I32 {
+	prove(true, false)
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("prove wrong arity must fail");
+        assert!(
+            err.to_string()
+                .contains("prove expects exactly one Bool argument"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parses_comptime_fun_and_apply() {
+        let source = r#"
+comptime fun build_counter(T: Type) -> DeclSet {
+	return declset_new()
+}
+
+comptime apply build_counter(Counter)
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        assert_eq!(ast.top_level_functions.len(), 1);
+        assert!(ast.top_level_functions[0].is_comptime);
+        assert_eq!(ast.comptime_applies.len(), 1);
+        assert_eq!(ast.comptime_applies[0].function_name, "build_counter");
+        assert_eq!(ast.comptime_applies[0].argument_type, "Counter");
+    }
+
+    #[test]
+    fn rejects_comptime_apply_inside_function_body() {
+        let source = r#"
+fun main() -> I32 {
+	comptime apply x(Counter)
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("comptime apply must be top-level");
+        assert!(
+            err.to_string()
+                .contains("`comptime` declarations are only allowed at top level"),
+            "unexpected error: {err}"
+        );
     }
 }

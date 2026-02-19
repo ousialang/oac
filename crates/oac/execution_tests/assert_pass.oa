@@ -1,0 +1,6 @@
+fun main() -> I32 {
+	print(1)
+	assert(true)
+	print(2)
+	return 0
+}

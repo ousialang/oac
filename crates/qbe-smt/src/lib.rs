@@ -389,6 +389,56 @@ mod tests {
     }
 
     #[test]
+    fn models_exit_call_as_halting_transition() {
+        let function = make_main(
+            vec![],
+            vec![block(
+                "entry",
+                vec![volatile(Instr::Call(
+                    "exit".to_string(),
+                    vec![(Type::Word, Value::Const(242))],
+                    None,
+                ))],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("exit call should encode");
+
+        assert!(smt.contains("(= exit_next (_ bv242 64))"));
+        assert!(smt.contains("(halt_state regs_next mem_next heap_next exit_next pred_next)"));
+    }
+
+    #[test]
+    fn rejects_exit_without_argument() {
+        let function = make_main(
+            vec![],
+            vec![block(
+                "entry",
+                vec![volatile(Instr::Call("exit".to_string(), vec![], None))],
+            )],
+        );
+
+        let err = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect_err("exit without args should fail");
+        assert!(err
+            .to_string()
+            .contains("call target $exit requires one argument"));
+    }
+
+    #[test]
     fn rejects_unsupported_calls() {
         let function = make_main(
             vec![(Type::Word, temp("x"))],

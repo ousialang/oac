@@ -169,6 +169,12 @@ fn collect_called_user_functions_in_statement(
         }
         Statement::Return { expr } => collect_called_user_functions_in_expr(expr, program, out),
         Statement::Expression { expr } => collect_called_user_functions_in_expr(expr, program, out),
+        Statement::Prove { condition } => {
+            collect_called_user_functions_in_expr(condition, program, out)
+        }
+        Statement::Assert { condition } => {
+            collect_called_user_functions_in_expr(condition, program, out)
+        }
         Statement::Conditional {
             condition,
             body,
@@ -415,6 +421,18 @@ fn index_statement_expressions(
             next_index,
             out,
         ),
+        Statement::Prove { condition } => index_expression(
+            condition,
+            &join_path(statement_path, "prove.cond"),
+            next_index,
+            out,
+        ),
+        Statement::Assert { condition } => index_expression(
+            condition,
+            &join_path(statement_path, "assert.cond"),
+            next_index,
+            out,
+        ),
         Statement::Conditional {
             condition,
             body,
@@ -582,6 +600,16 @@ fn collect_call_nodes_from_statement(
         Statement::Expression { expr } => {
             collect_call_nodes_from_expression(expr, &join_path(statement_path, "expr.expr"), out)
         }
+        Statement::Prove { condition } => collect_call_nodes_from_expression(
+            condition,
+            &join_path(statement_path, "prove.cond"),
+            out,
+        ),
+        Statement::Assert { condition } => collect_call_nodes_from_expression(
+            condition,
+            &join_path(statement_path, "assert.cond"),
+            out,
+        ),
         Statement::Conditional {
             condition,
             body,
@@ -953,7 +981,7 @@ fn sat_cfg_witness_summary(function: &qbe::Function) -> Option<String> {
 
     let labels = path
         .iter()
-        .map(|idx| format!("@{}", function.blocks[*idx].label))
+        .map(|idx| format!("b{}", idx))
         .collect::<Vec<_>>()
         .join(" -> ");
 
@@ -1093,25 +1121,17 @@ fn describe_path_edges(function: &qbe::Function, path: &[usize]) -> Option<Vec<S
         let from = window[0];
         let to = window[1];
         let from_block = &function.blocks[from];
-        let to_block = &function.blocks[to];
-        let edge = describe_edge(
-            &from_block.label,
-            &to_block.label,
-            &from_block.items,
-            &label_to_index,
-            to,
-        )?;
+        let edge = describe_edge(from, to, &from_block.items, &label_to_index)?;
         edges.push(edge);
     }
     Some(edges)
 }
 
 fn describe_edge(
-    from_label: &str,
-    to_label: &str,
+    from_index: usize,
+    to_index: usize,
     from_items: &[qbe::BlockItem],
     label_to_index: &HashMap<String, usize>,
-    to_index: usize,
 ) -> Option<String> {
     let terminator = from_items.iter().rev().find_map(|item| {
         if let qbe::BlockItem::Statement(qbe::Statement::Volatile(instr)) = item {
@@ -1122,20 +1142,20 @@ fn describe_edge(
     });
 
     match terminator {
-        Some(qbe::Instr::Jmp(_)) => Some(format!("@{from_label} -> @{to_label} (jmp)")),
-        Some(qbe::Instr::Jnz(cond, on_true, on_false)) => {
+        Some(qbe::Instr::Jmp(_)) => Some(format!("b{from_index} -> b{to_index} (jmp)")),
+        Some(qbe::Instr::Jnz(_cond, on_true, on_false)) => {
             let true_idx = label_to_index.get(on_true).copied();
             let false_idx = label_to_index.get(on_false).copied();
             if Some(to_index) == true_idx {
-                Some(format!("@{from_label} -> @{to_label} (jnz {cond} != 0)"))
+                Some(format!("b{from_index} -> b{to_index} (jnz true)"))
             } else if Some(to_index) == false_idx {
-                Some(format!("@{from_label} -> @{to_label} (jnz {cond} == 0)"))
+                Some(format!("b{from_index} -> b{to_index} (jnz false)"))
             } else {
                 None
             }
         }
         Some(qbe::Instr::Ret(_)) | Some(qbe::Instr::Hlt) => None,
-        _ => Some(format!("@{from_label} -> @{to_label} (fallthrough)")),
+        _ => Some(format!("b{from_index} -> b{to_index} (fallthrough)")),
     }
 }
 
@@ -1282,7 +1302,7 @@ fn inject_site_check_and_return(
     }
 }
 
-fn inline_reachable_user_calls(
+pub(crate) fn inline_reachable_user_calls(
     function: &mut qbe::Function,
     function_map: &HashMap<String, qbe::Function>,
 ) -> anyhow::Result<()> {

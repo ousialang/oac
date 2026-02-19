@@ -622,12 +622,16 @@ fn completion_response(
         "enum",
         "template",
         "instantiate",
+        "comptime",
+        "apply",
         "import",
         "if",
         "else",
         "while",
         "return",
         "match",
+        "prove",
+        "assert",
         "true",
         "false",
     ] {
@@ -829,6 +833,14 @@ fn scan_symbols_in_file(uri: &str, text: &str) -> Vec<IndexedSymbol> {
 }
 
 fn parse_symbol_declaration(line: &str) -> Option<(String, String, u32)> {
+    if let Some(rest) = line.strip_prefix("comptime fun ") {
+        let name = parse_symbol_name(rest)?;
+        return Some((name.clone(), format!("comptime fun {name}"), 12));
+    }
+    if let Some(rest) = line.strip_prefix("comptime apply ") {
+        let name = parse_symbol_name(rest)?;
+        return Some((name.clone(), format!("comptime apply {name}"), 5));
+    }
     if let Some(rest) = line.strip_prefix("fun ") {
         let name = parse_symbol_name(rest)?;
         return Some((name.clone(), format!("fun {name}"), 12));

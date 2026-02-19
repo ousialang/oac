@@ -11,6 +11,8 @@ use crate::{
 
 type QbeAssignName = String;
 type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
+pub(crate) const PROVE_MARKER_PREFIX: &str = ".oac_prove_site_";
+const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
 
 struct CodegenCtx {
     module: qbe::Module,
@@ -657,6 +659,7 @@ fn compile_statement(
     qbe_func: &mut qbe::Function,
     statement: &parser::Statement,
     variables: &mut Variables,
+    prove_site_counter: &mut usize,
 ) {
     match statement {
         parser::Statement::StructDef { def } => {
@@ -682,7 +685,13 @@ fn compile_statement(
                 false,
                 |ctx, qbe_func, arm_variables, arm| {
                     for statement in &arm.body {
-                        compile_statement(ctx, qbe_func, statement, arm_variables);
+                        compile_statement(
+                            ctx,
+                            qbe_func,
+                            statement,
+                            arm_variables,
+                            prove_site_counter,
+                        );
                     }
                     if qbe_func.blocks.last().unwrap().jumps() {
                         MatchArmOutcome::Terminated
@@ -715,7 +724,7 @@ fn compile_statement(
 
             qbe_func.add_block(&then_label);
             for statement in body {
-                compile_statement(ctx, qbe_func, statement, variables);
+                compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
             }
             let then_falls_through = !qbe_func.blocks.last().unwrap().jumps();
             if then_falls_through {
@@ -726,7 +735,7 @@ fn compile_statement(
             if let Some(else_body) = else_body {
                 qbe_func.add_block(&else_label);
                 for statement in else_body {
-                    compile_statement(ctx, qbe_func, statement, variables);
+                    compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
                 }
                 else_falls_through = !qbe_func.blocks.last().unwrap().jumps();
                 if else_falls_through {
@@ -755,7 +764,7 @@ fn compile_statement(
 
             qbe_func.add_block(&start_label);
             for statement in body {
-                compile_statement(ctx, qbe_func, statement, variables);
+                compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
             }
             qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
 
@@ -768,6 +777,37 @@ fn compile_statement(
         }
         parser::Statement::Expression { expr } => {
             compile_expr(ctx, qbe_func, &expr, variables);
+        }
+        parser::Statement::Prove { condition } => {
+            let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+            let marker_temp = format!("{PROVE_MARKER_PREFIX}{}", *prove_site_counter);
+            *prove_site_counter += 1;
+            qbe_func.assign_instr(
+                qbe::Value::Temporary(marker_temp),
+                qbe::Type::Word,
+                qbe::Instr::Copy(qbe::Value::Temporary(condition_var)),
+            );
+        }
+        parser::Statement::Assert { condition } => {
+            let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+            let assert_pass_label = new_id(&["assert", "pass"]);
+            let assert_fail_label = new_id(&["assert", "fail"]);
+
+            qbe_func.add_instr(qbe::Instr::Jnz(
+                qbe::Value::Temporary(condition_var),
+                assert_pass_label.clone(),
+                assert_fail_label.clone(),
+            ));
+
+            qbe_func.add_block(assert_fail_label);
+            qbe_func.add_instr(qbe::Instr::Call(
+                "exit".to_string(),
+                vec![(qbe::Type::Word, qbe::Value::Const(ASSERT_FAILURE_EXIT_CODE))],
+                None,
+            ));
+            qbe_func.add_instr(qbe::Instr::Hlt);
+
+            qbe_func.add_block(assert_pass_label);
         }
         parser::Statement::Assign { variable, value } => {
             trace!(%variable, "Compiling assignment");
@@ -818,12 +858,19 @@ fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
     qbe_func.add_block("start".to_string());
 
     let mut variables = HashMap::new();
+    let mut prove_site_counter = 0usize;
     for param in &func_def.sig.parameters {
         variables.insert(param.name.clone(), (param.name.clone(), param.ty.clone()));
     }
 
     for statement in &func_def.body {
-        compile_statement(ctx, &mut qbe_func, statement, &mut variables);
+        compile_statement(
+            ctx,
+            &mut qbe_func,
+            statement,
+            &mut variables,
+            &mut prove_site_counter,
+        );
     }
 
     ctx.module.add_function(qbe_func);

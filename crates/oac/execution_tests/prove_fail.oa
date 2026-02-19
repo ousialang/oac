@@ -1,0 +1,4 @@
+fun main() -> I32 {
+	prove(false)
+	return 0
+}

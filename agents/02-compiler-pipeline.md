@@ -10,17 +10,20 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
 5. Resolve/type-check with `ir::resolve`.
 6. Lower to QBE with `qbe_backend::compile`.
-7. Verify struct invariants with `struct_invariants::verify_struct_invariants_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
-8. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
-9. Emit QBE IR to `target/oac/ir.qbe`.
-10. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
-11. Invoke `zig cc` to link executable (`target/oac/app`).
+7. Verify `prove(...)` obligations with `prove::verify_prove_obligations_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
+8. Verify struct invariants with `struct_invariants::verify_struct_invariants_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
+9. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
+10. Emit QBE IR to `target/oac/ir.qbe`.
+11. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
+12. Invoke `zig cc` to link executable (`target/oac/app`).
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
 - `target/oac/ast.json`
 - `target/oac/ir.json`
 - `target/oac/ir.qbe`
+- `target/oac/prove/site_*.qbe` (generated checker programs, when prove obligations exist)
+- `target/oac/prove/site_*.smt2` (when prove obligations exist)
 - `target/oac/struct_invariants/site_*.qbe` (generated checker programs, when obligations exist)
 - `target/oac/struct_invariants/site_*.smt2` (when invariant obligations exist)
 - `target/oac/assembly.s`
@@ -41,7 +44,7 @@ Core AST includes:
 - Type defs: `Struct`, `Enum`
 - Templates and template instantiations (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`)
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
-- Statements: assign, return, expression, while, if/else, match
+- Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr
 
 Operator precedence is explicitly encoded in parser.
@@ -61,12 +64,17 @@ Important enforced invariants include:
 - payload binder rules must match variant payload presence
 - match exhaustiveness required
 - conditions in `if` / `while` must be `Bool`
+- `prove(...)` and `assert(...)` conditions must be `Bool`
+- `prove(...)` and `assert(...)` are statement-only; expression usage is rejected
+- user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`
 - optional struct invariants are declared as `invariant ... for (v: TypeName) { ... }` (optionally named with an identifier); the compiler synthesizes `__struct__<TypeName>__invariant` and also validates legacy explicit invariant functions using that naming/signature pattern
+- `prove(...)` sites reachable from `main` are verified by checker QBE synthesis: the site condition is marked in QBE, checker returns `1` when the proof condition is false at the site, and proving asks reachability of exit code `1` (`unsat` = proven, `sat` = compile failure)
 - reachable user-call return sites for struct-typed values are verified with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
 - checker generation is QBE-native: site instrumentation happens on compiled caller QBE, then reachable user calls are inlined into a single checker function before CHC encoding
 - recursion cycles on the reachable user-call graph are rejected fail-closed during struct invariant verification
+- recursion cycles on the reachable user-call graph are also rejected fail-closed when prove obligations exist
 
 ## Backend (`qbe_backend.rs`)
 
@@ -79,14 +87,14 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `riscv-smt` subcommand.
 - `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
-- `qbe-smt` is used by struct invariant verification to encode checker QBE functions into CHC/fixedpoint (Horn) constraints.
+- `qbe-smt` is used by prove verification and struct invariant verification to encode checker QBE functions into CHC/fixedpoint (Horn) constraints.
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
 - `qbe-smt` is parser-free: it consumes in-memory `qbe::Function` directly. Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), and `crates/qbe-smt/src/classify.rs` (loop classification).
 - `qbe-smt` models a broad integer + memory QBE subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - `phi` merging via predecessor-tracking state in CHC (`pred`)
-  - `call` with explicit support for `malloc` heap effects
+  - `call` with explicit support for `malloc` heap effects and `exit(code)` halting transitions
   - `load*`/`store*` byte-addressed memory operations
   - `alloc4/alloc8/alloc16` heap-pointer modeling
   - control flow via Horn transition rules (`jnz`, `jmp`, `ret`, halt relation)

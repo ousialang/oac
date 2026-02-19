@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-invariant __struct__Counter__invariant must have signature fun __struct__Counter__invariant(v: Counter) -> Bool
+unsupported function call print in comptime evaluator (v1 is deterministic and pure)

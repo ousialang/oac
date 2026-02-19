@@ -1,0 +1,5 @@
+fun main() -> I32 {
+	prove(1 < 2)
+	print(7)
+	return 0
+}

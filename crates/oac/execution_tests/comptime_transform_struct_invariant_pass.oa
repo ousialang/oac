@@ -1,0 +1,37 @@
+struct Counter {
+	label: String,
+	value: I32,
+}
+
+comptime fun make_my_struct_with_invariant(T: Type) -> DeclSet {
+	ds = declset_new()
+	s = as_struct_opt(T)
+	if is_some(s) {
+		info = unwrap(s)
+		if struct_field_count(info) >= 2 {
+			f = struct_field_at(info, 1)
+			if is_some(f) {
+				second = unwrap(f)
+				if field_type(second) == I32 {
+					new_name = concat(type_name(T), "PositiveSecond")
+					ds2 = declset_add_derived_struct(ds, info, new_name)
+					return declset_add_invariant_field_gt_i32(
+						ds2,
+						resolve_type(new_name),
+						"second field must be > 0",
+						field_name(second),
+						0
+					)
+				}
+			}
+		}
+	}
+	return ds
+}
+
+comptime apply make_my_struct_with_invariant(Counter)
+
+fun main() -> I32 {
+	print(42)
+	return 0
+}

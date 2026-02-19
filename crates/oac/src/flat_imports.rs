@@ -78,6 +78,7 @@ fn resolve_ast_inner(
     merged
         .template_instantiations
         .extend(parsed_ast.template_instantiations);
+    merged.comptime_applies.extend(parsed_ast.comptime_applies);
 
     loading.pop();
     visited.insert(canonical_source);
@@ -120,6 +121,7 @@ fn merge_flat_ast(dst: &mut parser::Ast, mut src: parser::Ast) {
         .append(&mut src.template_definitions);
     dst.template_instantiations
         .append(&mut src.template_instantiations);
+    dst.comptime_applies.append(&mut src.comptime_applies);
 }
 
 #[cfg(test)]

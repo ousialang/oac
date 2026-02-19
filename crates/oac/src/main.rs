@@ -1,8 +1,10 @@
 mod builtins;
+mod comptime;
 mod flat_imports;
 mod ir;
 mod lsp;
 mod parser;
+mod prove;
 mod qbe_backend;
 mod riscv_smt; // Add the new module
 mod struct_invariants;
@@ -84,7 +86,8 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     trace!(tokens_path = %tokens_path.display(), "Tokenized source file");
 
     let root_ast = parser::parse(tokens)?;
-    let ast = flat_imports::resolve_ast(root_ast, source_path)?;
+    let mut ast = flat_imports::resolve_ast(root_ast, source_path)?;
+    comptime::execute_comptime_applies(&mut ast)?;
     let ast_path = target_dir.join("ast.json");
     std::fs::write(&ast_path, serde_json::to_string_pretty(&ast)?)?;
     debug!(ast_path = %ast_path.display(), "Parsed source file");
@@ -94,6 +97,7 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     std::fs::write(&ir_path, serde_json::to_string_pretty(&ir)?)?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
     let qbe_ir = qbe_backend::compile(ir.clone());
+    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, &target_dir)?;
     struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, &target_dir)?;
     reject_proven_non_terminating_main(&qbe_ir)?;
     let qbe_ir_text = qbe_ir.to_string();

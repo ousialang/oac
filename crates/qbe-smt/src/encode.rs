@@ -239,6 +239,19 @@ pub(crate) fn encode_function(
                     "pred",
                 );
             }
+            QbeStatement::Assign(_, _, QbeInstr::Call(function, _, _))
+            | QbeStatement::Volatile(QbeInstr::Call(function, _, _))
+                if is_exit_call(function) =>
+            {
+                emit_transition_rule(
+                    &mut smt,
+                    &from_rel,
+                    halt_relation,
+                    phi_guard,
+                    &transition,
+                    "pred",
+                );
+            }
             _ => {
                 if pc + 1 < flat.len() {
                     emit_transition_rule(
@@ -686,7 +699,7 @@ fn validate_statement_supported(
                         });
                     }
                 }
-                QbeInstr::Call(function, _, variadic_index) => {
+                QbeInstr::Call(function, args, variadic_index) => {
                     if variadic_index.is_some() {
                         return Err(QbeSmtError::Unsupported {
                             message: format!(
@@ -694,9 +707,21 @@ fn validate_statement_supported(
                             ),
                         });
                     }
-                    if !is_malloc_call(function) {
+                    if !is_malloc_call(function) && !is_exit_call(function) {
                         return Err(QbeSmtError::Unsupported {
                             message: format!("pc {pc}: unsupported call target ${function}"),
+                        });
+                    }
+                    if is_exit_call(function) && args.is_empty() {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!("pc {pc}: call target $exit requires one argument"),
+                        });
+                    }
+                    if is_exit_call(function) {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!(
+                                "pc {pc}: call target $exit is unsupported in assignments"
+                            ),
                         });
                     }
                 }
@@ -748,7 +773,7 @@ fn validate_statement_supported(
                     });
                 }
             }
-            QbeInstr::Call(function, _, variadic_index) => {
+            QbeInstr::Call(function, args, variadic_index) => {
                 if variadic_index.is_some() {
                     return Err(QbeSmtError::Unsupported {
                         message: format!(
@@ -756,9 +781,14 @@ fn validate_statement_supported(
                         ),
                     });
                 }
-                if !is_malloc_call(function) {
+                if !is_malloc_call(function) && !is_exit_call(function) {
                     return Err(QbeSmtError::Unsupported {
                         message: format!("pc {pc}: unsupported call target ${function}"),
+                    });
+                }
+                if is_exit_call(function) && args.is_empty() {
+                    return Err(QbeSmtError::Unsupported {
+                        message: format!("pc {pc}: call target $exit requires one argument"),
                     });
                 }
             }
@@ -873,6 +903,8 @@ fn regs_update_expr(
         QbeInstr::Call(function, ..) => {
             if is_malloc_call(function) {
                 normalize_to_assign_type(heap_curr, assign_ty)
+            } else if is_exit_call(function) {
+                normalize_to_assign_type(&bv_const_u64(0, 64), assign_ty)
             } else {
                 unreachable!("unsupported calls should be rejected")
             }
@@ -965,6 +997,9 @@ fn heap_update_expr(
                 }
                 return format!("(bvadd {heap_curr} {})", bv_const_u64(8, 64));
             }
+            if is_exit_call(function) {
+                return heap_curr.to_string();
+            }
             unreachable!("unsupported calls should be rejected")
         }
         _ => heap_curr.to_string(),
@@ -997,6 +1032,16 @@ fn exit_update_expr(
             value_to_smt(value, regs_curr, reg_slots, global_map)
         }
         QbeStatement::Volatile(QbeInstr::Ret(None)) => bv_const_u64(0, 64),
+        QbeStatement::Assign(_, _, QbeInstr::Call(function, args, _))
+        | QbeStatement::Volatile(QbeInstr::Call(function, args, _))
+            if is_exit_call(function) =>
+        {
+            if let Some((_, code)) = args.first() {
+                value_to_smt(code, regs_curr, reg_slots, global_map)
+            } else {
+                bv_const_u64(0, 64)
+            }
+        }
         _ => exit_curr.to_string(),
     }
 }
@@ -1375,6 +1420,10 @@ fn bv_const_u64(value: u64, width: u32) -> String {
 
 fn is_malloc_call(function: &str) -> bool {
     function == "malloc"
+}
+
+fn is_exit_call(function: &str) -> bool {
+    function == "exit"
 }
 
 fn temp_name(value: &QbeValue) -> Option<&str> {

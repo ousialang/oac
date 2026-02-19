@@ -1,0 +1,10 @@
+struct Counter {
+	value: I32,
+}
+
+comptime apply missing_transform(Counter)
+
+fun main() -> I32 {
+	return 0
+}
+

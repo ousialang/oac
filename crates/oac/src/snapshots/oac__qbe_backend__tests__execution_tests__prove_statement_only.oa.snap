@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-invariant __struct__Counter__invariant must have signature fun __struct__Counter__invariant(v: Counter) -> Bool
+prove(...) is statement-only and cannot be used as an expression

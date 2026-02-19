@@ -1,0 +1,10 @@
+comptime fun impure(T: Type) -> DeclSet {
+	print(1)
+	return declset_new()
+}
+
+comptime apply impure(I32)
+
+fun main() -> I32 {
+	return 0
+}
