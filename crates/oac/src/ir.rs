@@ -114,7 +114,10 @@ impl ResolvedProgram {
         for param in &func_def.sig.parameters {
             var_types.insert(param.name.clone(), param.ty.clone());
         }
-        if self.comptime_function_definitions.contains_key(&func_def.name) {
+        if self
+            .comptime_function_definitions
+            .contains_key(&func_def.name)
+        {
             for type_name in self.type_definitions.keys() {
                 var_types.insert(type_name.clone(), "Type".to_string());
             }
@@ -781,10 +784,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     for function in user_comptime_functions.iter() {
-        if program
-            .function_sigs
-            .contains_key(&function.name)
-        {
+        if program.function_sigs.contains_key(&function.name) {
             return Err(anyhow::anyhow!(
                 "duplicate function signature for {}",
                 function.name
@@ -912,7 +912,7 @@ fn reject_runtime_semantic_builtin_usage(program: &ResolvedProgram) -> anyhow::R
     for function in program.function_definitions.values() {
         for statement in &function.body {
             let mut calls = Vec::new();
-            collect_called_functions_in_statement(statement, &mut calls);
+            collect_called_functions_in_statement(statement, program, &mut calls);
             for call in calls {
                 if SEMANTIC_EMISSION_BUILTINS.contains(&call.as_str()) {
                     return Err(anyhow::anyhow!(
@@ -941,86 +941,113 @@ fn reject_runtime_semantic_builtin_usage(program: &ResolvedProgram) -> anyhow::R
     Ok(())
 }
 
-fn collect_called_functions_in_statement(statement: &parser::Statement, out: &mut Vec<String>) {
+fn collect_called_functions_in_statement(
+    statement: &parser::Statement,
+    program: &ResolvedProgram,
+    out: &mut Vec<String>,
+) {
     match statement {
         parser::Statement::StructDef { .. } => {}
-        parser::Statement::Assign { value, .. } => collect_called_functions_in_expression(value, out),
-        parser::Statement::Return { expr } => collect_called_functions_in_expression(expr, out),
-        parser::Statement::Expression { expr } => collect_called_functions_in_expression(expr, out),
+        parser::Statement::Assign { value, .. } => {
+            collect_called_functions_in_expression(value, program, out)
+        }
+        parser::Statement::Return { expr } => {
+            collect_called_functions_in_expression(expr, program, out)
+        }
+        parser::Statement::Expression { expr } => {
+            collect_called_functions_in_expression(expr, program, out)
+        }
         parser::Statement::Prove { condition } => {
-            collect_called_functions_in_expression(condition, out)
+            collect_called_functions_in_expression(condition, program, out)
         }
         parser::Statement::Assert { condition } => {
-            collect_called_functions_in_expression(condition, out)
+            collect_called_functions_in_expression(condition, program, out)
         }
         parser::Statement::Conditional {
             condition,
             body,
             else_body,
         } => {
-            collect_called_functions_in_expression(condition, out);
+            collect_called_functions_in_expression(condition, program, out);
             for statement in body {
-                collect_called_functions_in_statement(statement, out);
+                collect_called_functions_in_statement(statement, program, out);
             }
             if let Some(else_body) = else_body {
                 for statement in else_body {
-                    collect_called_functions_in_statement(statement, out);
+                    collect_called_functions_in_statement(statement, program, out);
                 }
             }
         }
         parser::Statement::While { condition, body } => {
-            collect_called_functions_in_expression(condition, out);
+            collect_called_functions_in_expression(condition, program, out);
             for statement in body {
-                collect_called_functions_in_statement(statement, out);
+                collect_called_functions_in_statement(statement, program, out);
             }
         }
         parser::Statement::Match { subject, arms } => {
-            collect_called_functions_in_expression(subject, out);
+            collect_called_functions_in_expression(subject, program, out);
             for arm in arms {
                 for statement in &arm.body {
-                    collect_called_functions_in_statement(statement, out);
+                    collect_called_functions_in_statement(statement, program, out);
                 }
             }
         }
     }
 }
 
-fn collect_called_functions_in_expression(expression: &Expression, out: &mut Vec<String>) {
+fn collect_called_functions_in_expression(
+    expression: &Expression,
+    program: &ResolvedProgram,
+    out: &mut Vec<String>,
+) {
     match expression {
         Expression::Match { subject, arms } => {
-            collect_called_functions_in_expression(subject, out);
+            collect_called_functions_in_expression(subject, program, out);
             for arm in arms {
-                collect_called_functions_in_expression(&arm.value, out);
+                collect_called_functions_in_expression(&arm.value, program, out);
             }
         }
         Expression::Literal(_) | Expression::Variable(_) => {}
         Expression::Call(name, args) => {
             out.push(name.clone());
             for arg in args {
-                collect_called_functions_in_expression(arg, out);
+                collect_called_functions_in_expression(arg, program, out);
             }
         }
         Expression::PostfixCall { callee, args } => {
-            collect_called_functions_in_expression(callee, out);
+            if let Expression::FieldAccess {
+                struct_variable,
+                field,
+            } = callee.as_ref()
+            {
+                let namespaced_call =
+                    parser::qualify_namespace_function_name(struct_variable, field);
+                if program.function_sigs.contains_key(&namespaced_call) {
+                    out.push(namespaced_call);
+                }
+            }
+            collect_called_functions_in_expression(callee, program, out);
             for arg in args {
-                collect_called_functions_in_expression(arg, out);
+                collect_called_functions_in_expression(arg, program, out);
             }
         }
         Expression::BinOp(_, left, right) => {
-            collect_called_functions_in_expression(left, out);
-            collect_called_functions_in_expression(right, out);
+            collect_called_functions_in_expression(left, program, out);
+            collect_called_functions_in_expression(right, program, out);
         }
-        Expression::UnaryOp(_, expr) => collect_called_functions_in_expression(expr, out),
+        Expression::UnaryOp(_, expr) => collect_called_functions_in_expression(expr, program, out),
         Expression::FieldAccess { .. } => {}
         Expression::StructValue { field_values, .. } => {
             for (_, value) in field_values {
-                collect_called_functions_in_expression(value, out);
+                collect_called_functions_in_expression(value, program, out);
             }
         }
     }
 }
 
-fn index_semantic_expression_metadata(program: &ResolvedProgram) -> HashMap<String, SemanticExprMetadata> {
+fn index_semantic_expression_metadata(
+    program: &ResolvedProgram,
+) -> HashMap<String, SemanticExprMetadata> {
     let mut out = HashMap::new();
     for (name, function) in &program.function_definitions {
         for (statement_index, statement) in function.body.iter().enumerate() {
@@ -1072,7 +1099,11 @@ fn index_statement_expression_metadata(
         } => {
             index_expression_metadata(condition, &format!("{path}/if.cond"), out);
             for (index, statement) in body.iter().enumerate() {
-                index_statement_expression_metadata(statement, &format!("{path}/if.body.{index}"), out);
+                index_statement_expression_metadata(
+                    statement,
+                    &format!("{path}/if.body.{index}"),
+                    out,
+                );
             }
             if let Some(else_body) = else_body {
                 for (index, statement) in else_body.iter().enumerate() {
@@ -1087,7 +1118,11 @@ fn index_statement_expression_metadata(
         parser::Statement::While { condition, body } => {
             index_expression_metadata(condition, &format!("{path}/while.cond"), out);
             for (index, statement) in body.iter().enumerate() {
-                index_statement_expression_metadata(statement, &format!("{path}/while.body.{index}"), out);
+                index_statement_expression_metadata(
+                    statement,
+                    &format!("{path}/while.body.{index}"),
+                    out,
+                );
             }
         }
         parser::Statement::Match { subject, arms } => {
@@ -1890,48 +1925,70 @@ pub(crate) fn get_expression_type(
                 struct_variable,
                 field,
             } => {
-                let enum_def = match type_definitions.get(struct_variable) {
-                    Some(TypeDef::Enum(enum_def)) => enum_def,
-                    _ => {
-                        return Err(anyhow::anyhow!(
-                            "unsupported call target {:?}",
-                            callee.as_ref()
-                        ));
+                if let Some(TypeDef::Enum(enum_def)) = type_definitions.get(struct_variable) {
+                    if let Some(variant) = enum_def.variants.iter().find(|v| v.name == *field) {
+                        let payload_ty = variant.payload_ty.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "tag-only variant {}.{} does not accept payload",
+                                struct_variable,
+                                field
+                            )
+                        })?;
+                        if args.len() != 1 {
+                            return Err(anyhow::anyhow!(
+                                "expected 1 payload argument for constructor {}.{}, got {}",
+                                struct_variable,
+                                field,
+                                args.len()
+                            ));
+                        }
+                        let arg_ty =
+                            get_expression_type(&args[0], var_types, fns, type_definitions)?;
+                        if &arg_ty != payload_ty {
+                            return Err(anyhow::anyhow!(
+                                "mismatched payload type for {}.{}: expected {}, got {}",
+                                struct_variable,
+                                field,
+                                payload_ty,
+                                arg_ty
+                            ));
+                        }
+                        return Ok(enum_def.name.clone());
                     }
-                };
-                let variant = enum_def
-                    .variants
-                    .iter()
-                    .find(|v| v.name == *field)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("variant {} not found in enum {}", field, struct_variable)
-                    })?;
-                let payload_ty = variant.payload_ty.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "tag-only variant {}.{} does not accept payload",
-                        struct_variable,
-                        field
-                    )
-                })?;
-                if args.len() != 1 {
+
+                    let namespaced_call =
+                        parser::qualify_namespace_function_name(struct_variable, field);
+                    if fns.contains_key(&namespaced_call) {
+                        return get_expression_type(
+                            &Expression::Call(namespaced_call, args.clone()),
+                            var_types,
+                            fns,
+                            type_definitions,
+                        );
+                    }
+
                     return Err(anyhow::anyhow!(
-                        "expected 1 payload argument for constructor {}.{}, got {}",
-                        struct_variable,
+                        "variant {} not found in enum {}",
                         field,
-                        args.len()
+                        struct_variable
                     ));
                 }
-                let arg_ty = get_expression_type(&args[0], var_types, fns, type_definitions)?;
-                if &arg_ty != payload_ty {
-                    return Err(anyhow::anyhow!(
-                        "mismatched payload type for {}.{}: expected {}, got {}",
-                        struct_variable,
-                        field,
-                        payload_ty,
-                        arg_ty
-                    ));
+
+                let namespaced_call =
+                    parser::qualify_namespace_function_name(struct_variable, field);
+                if fns.contains_key(&namespaced_call) {
+                    return get_expression_type(
+                        &Expression::Call(namespaced_call, args.clone()),
+                        var_types,
+                        fns,
+                        type_definitions,
+                    );
                 }
-                Ok(enum_def.name.clone())
+
+                Err(anyhow::anyhow!(
+                    "unsupported call target {:?}",
+                    callee.as_ref()
+                ))
             }
             _ => Err(anyhow::anyhow!(
                 "unsupported call target {:?}",
@@ -1990,7 +2047,8 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_type = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_type =
+                    get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
                 if !arg_type.starts_with("Option[") || !arg_type.ends_with(']') {
                     return Err(anyhow::anyhow!(
                         "is_some expects an Option[T] argument, got {}",
@@ -2006,7 +2064,8 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_type = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_type =
+                    get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
                 let Some(inner) = arg_type
                     .strip_prefix("Option[")
                     .and_then(|s| s.strip_suffix(']'))
@@ -2225,12 +2284,7 @@ pub(crate) fn get_expression_type(
                 let c = get_expression_type(&arguments[2], var_types, fns, type_definitions)?;
                 let d = get_expression_type(&arguments[3], var_types, fns, type_definitions)?;
                 let e = get_expression_type(&arguments[4], var_types, fns, type_definitions)?;
-                if a != "DeclSet"
-                    || b != "Type"
-                    || c != "String"
-                    || d != "String"
-                    || e != "I32"
-                {
+                if a != "DeclSet" || b != "Type" || c != "String" || d != "String" || e != "I32" {
                     return Err(anyhow::anyhow!(
                         "declset_add_invariant_field_gt_i32 expects (DeclSet, Type, String, String, I32), got ({}, {}, {}, {}, {})",
                         a,
@@ -2598,6 +2652,35 @@ fun main() -> I32 {
             resolved.comptime_apply_order[0].function_name,
             "build_counter"
         );
+    }
+
+    #[test]
+    fn resolve_accepts_namespaced_function_calls() {
+        let source = r#"
+struct Option {
+	value: I32,
+}
+
+namespace Option {
+	fun is_some(v: Option) -> I32 {
+		return v.value
+	}
+}
+
+fun main() -> I32 {
+	v = Option struct { value: 7 }
+	return Option.is_some(v)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        assert!(resolved.function_sigs.contains_key("Option__is_some"));
+        assert!(resolved
+            .function_definitions
+            .contains_key("Option__is_some"));
     }
 
     #[test]

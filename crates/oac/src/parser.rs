@@ -60,6 +60,12 @@ pub struct ComptimeApply {
     pub argument_type: String,
 }
 
+pub const NAMESPACE_FUNCTION_SEPARATOR: &str = "__";
+
+pub fn qualify_namespace_function_name(namespace: &str, function_name: &str) -> String {
+    format!("{namespace}{NAMESPACE_FUNCTION_SEPARATOR}{function_name}")
+}
+
 #[derive(Clone, Debug, Serialize, Default)]
 pub struct Ast {
     pub imports: Vec<ImportDecl>,
@@ -895,7 +901,10 @@ fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef
     Ok(EnumDef { name, variants })
 }
 
-fn parse_function_declaration(tokens: &mut Vec<TokenData>, is_comptime: bool) -> anyhow::Result<Function> {
+fn parse_function_declaration(
+    tokens: &mut Vec<TokenData>,
+    is_comptime: bool,
+) -> anyhow::Result<Function> {
     if is_comptime {
         anyhow::ensure!(
             tokens.remove(0) == TokenData::Word("comptime".to_string()),
@@ -940,6 +949,69 @@ fn parse_function_declaration(tokens: &mut Vec<TokenData>, is_comptime: bool) ->
         return_type,
         is_comptime,
     })
+}
+
+fn parse_namespace_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Function>> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("namespace".to_string()),
+        "expected 'namespace' keyword"
+    );
+
+    let namespace = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        token => {
+            return Err(anyhow::anyhow!(
+                "expected namespace name after 'namespace', got {:?}",
+                token
+            ));
+        }
+    };
+
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected '{{' after namespace name"
+    );
+
+    let mut functions = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Word(name)) if name == "fun" => {
+                let mut function = parse_function_declaration(tokens, false)?;
+                function.name = qualify_namespace_function_name(&namespace, &function.name);
+                functions.push(function);
+            }
+            Some(TokenData::Word(name)) if name == "comptime" => {
+                return Err(anyhow::anyhow!(
+                    "namespace {} only supports runtime `fun` declarations in v1",
+                    namespace
+                ));
+            }
+            Some(token) => {
+                return Err(anyhow::anyhow!(
+                    "unexpected token in namespace {} body: {:?}",
+                    namespace,
+                    token
+                ));
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in namespace body")),
+        }
+    }
+
+    Ok(functions)
 }
 
 fn parse_type_reference(tokens: &mut Vec<TokenData>) -> anyhow::Result<String> {
@@ -1112,6 +1184,10 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
             TokenData::Word(name) if name == "template" => {
                 let template = parse_template_declaration(&mut tokens.tokens)?;
                 ast.template_definitions.push(template);
+            }
+            TokenData::Word(name) if name == "namespace" => {
+                let functions = parse_namespace_declaration(&mut tokens.tokens)?;
+                ast.top_level_functions.extend(functions);
             }
             TokenData::Word(name) if name == "instantiate" => {
                 let instantiation = parse_template_instantiation(&mut tokens.tokens)?;
@@ -1715,6 +1791,72 @@ comptime apply build_counter(Counter)
         assert_eq!(ast.comptime_applies.len(), 1);
         assert_eq!(ast.comptime_applies[0].function_name, "build_counter");
         assert_eq!(ast.comptime_applies[0].argument_type, "Counter");
+    }
+
+    #[test]
+    fn parses_namespace_function_and_namespaced_call() {
+        let source = r#"
+struct Option {
+	value: I32,
+}
+
+namespace Option {
+	fun is_some(v: Option) -> Bool {
+		return v.value > 0
+	}
+}
+
+fun main() -> I32 {
+	v = Option struct { value: 1 }
+	Option.is_some(v)
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+
+        assert_eq!(ast.top_level_functions.len(), 2);
+        assert_eq!(ast.top_level_functions[0].name, "Option__is_some");
+
+        let main = &ast.top_level_functions[1];
+        let super::Statement::Expression { expr } = &main.body[1] else {
+            panic!("expected namespaced call expression");
+        };
+        let super::Expression::PostfixCall { callee, args } = expr else {
+            panic!("expected postfix call for namespaced call");
+        };
+        let super::Expression::FieldAccess {
+            struct_variable,
+            field,
+        } = callee.as_ref()
+        else {
+            panic!("expected field-access callee in namespaced call");
+        };
+        assert_eq!(struct_variable, "Option");
+        assert_eq!(field, "is_some");
+        assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn rejects_comptime_function_inside_namespace() {
+        let source = r#"
+namespace Option {
+	comptime fun bad(v: I32) -> I32 {
+		return v
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("namespace comptime function must fail");
+        assert!(
+            err.to_string()
+                .contains("only supports runtime `fun` declarations"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

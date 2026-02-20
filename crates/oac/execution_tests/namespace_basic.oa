@@ -1,0 +1,15 @@
+struct Option {
+	value: I32,
+}
+
+namespace Option {
+	fun is_some(v: Option) -> I32 {
+		return v.value
+	}
+}
+
+fun main() -> I32 {
+	v = Option struct { value: 7 }
+	print(Option.is_some(v))
+	return 0
+}

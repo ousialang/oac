@@ -320,7 +320,13 @@ fn evaluate_statement(
             body,
             else_body,
         } => {
-            let cond = evaluate_expression(condition, &format!("{path}/if.cond"), env, world, call_stack)?;
+            let cond = evaluate_expression(
+                condition,
+                &format!("{path}/if.cond"),
+                env,
+                world,
+                call_stack,
+            )?;
             let cond_bool = expect_bool(&cond.value, "if condition")?;
             if cond_bool {
                 for (index, statement) in body.iter().enumerate() {
@@ -350,13 +356,19 @@ fn evaluate_statement(
             Ok(None)
         }
         Statement::Assign { variable, value } => {
-            let evaluated =
-                evaluate_expression(value, &format!("{path}/assign.value"), env, world, call_stack)?;
+            let evaluated = evaluate_expression(
+                value,
+                &format!("{path}/assign.value"),
+                env,
+                world,
+                call_stack,
+            )?;
             env.insert(variable.clone(), evaluated);
             Ok(None)
         }
         Statement::Return { expr } => {
-            let evaluated = evaluate_expression(expr, &format!("{path}/return"), env, world, call_stack)?;
+            let evaluated =
+                evaluate_expression(expr, &format!("{path}/return"), env, world, call_stack)?;
             Ok(Some(evaluated))
         }
         Statement::Expression { expr } => {
@@ -482,13 +494,16 @@ fn evaluate_expression(
             "postfix calls are unsupported in comptime evaluator v1"
         )),
         Expression::BinOp(op, left, right) => {
-            let left = evaluate_expression(left, &format!("{path}/bin.left"), env, world, call_stack)?;
-            let right = evaluate_expression(right, &format!("{path}/bin.right"), env, world, call_stack)?;
+            let left =
+                evaluate_expression(left, &format!("{path}/bin.left"), env, world, call_stack)?;
+            let right =
+                evaluate_expression(right, &format!("{path}/bin.right"), env, world, call_stack)?;
             let value = evaluate_binary_op(*op, &left.value, &right.value)?;
             Ok(CtValueWithMeta::new(value, Some(path.to_string())))
         }
         Expression::UnaryOp(op, expr) => {
-            let inner = evaluate_expression(expr, &format!("{path}/unary"), env, world, call_stack)?;
+            let inner =
+                evaluate_expression(expr, &format!("{path}/unary"), env, world, call_stack)?;
             match op {
                 UnaryOp::Not => Ok(CtValueWithMeta::new(
                     CtValue::Bool(!expect_bool(&inner.value, "unary ! operand")?),
@@ -698,11 +713,9 @@ fn evaluate_call(
                     .clone();
             let base =
                 expect_struct_info(&args[1].value, "declset_add_derived_struct second argument")?;
-            let new_name = expect_string(
-                &args[2].value,
-                "declset_add_derived_struct third argument",
-            )?
-            .to_string();
+            let new_name =
+                expect_string(&args[2].value, "declset_add_derived_struct third argument")?
+                    .to_string();
             if world.type_catalog.all_types.contains(&new_name)
                 || declset.type_definitions.iter().any(|def| match def {
                     TypeDefDecl::Struct(def) => def.name == new_name,
@@ -743,8 +756,10 @@ fn evaluate_call(
                 "declset_add_invariant_field_gt_i32 fourth argument",
             )?
             .to_string();
-            let min_exclusive =
-                expect_i32(&args[4].value, "declset_add_invariant_field_gt_i32 fifth argument")?;
+            let min_exclusive = expect_i32(
+                &args[4].value,
+                "declset_add_invariant_field_gt_i32 fifth argument",
+            )?;
 
             let struct_def = find_struct_for_type(target_type, &declset, &world.type_catalog)
                 .ok_or_else(|| {
@@ -888,7 +903,10 @@ fn expect_type_name<'a>(value: &'a CtValue, context: &str) -> anyhow::Result<&'a
     }
 }
 
-fn expect_struct_info<'a>(value: &'a CtValue, context: &str) -> anyhow::Result<&'a StructInfoValue> {
+fn expect_struct_info<'a>(
+    value: &'a CtValue,
+    context: &str,
+) -> anyhow::Result<&'a StructInfoValue> {
     if let CtValue::StructInfo(value) = value {
         Ok(value)
     } else {

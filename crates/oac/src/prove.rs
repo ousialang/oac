@@ -136,6 +136,16 @@ fn collect_called_user_functions_in_expr(
             }
         }
         Expression::PostfixCall { callee, args } => {
+            if let Expression::FieldAccess {
+                struct_variable,
+                field,
+            } = callee.as_ref()
+            {
+                let call = crate::parser::qualify_namespace_function_name(struct_variable, field);
+                if program.function_definitions.contains_key(&call) {
+                    out.insert(call);
+                }
+            }
             collect_called_user_functions_in_expr(callee, program, out);
             for arg in args {
                 collect_called_user_functions_in_expr(arg, program, out);

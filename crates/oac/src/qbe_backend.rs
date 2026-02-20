@@ -951,6 +951,52 @@ fn struct_size_bytes(ctx: &CodegenCtx, struct_def: &StructDef) -> u64 {
         .sum()
 }
 
+fn compile_named_call(
+    ctx: &mut CodegenCtx,
+    func: &mut qbe::Function,
+    function_name: &str,
+    args: &[parser::Expression],
+    variables: &mut Variables,
+) -> (QbeAssignName, ir::TypeRef) {
+    let id = new_id(&["call", function_name]);
+    let mut arg_vars = vec![];
+    for arg in args {
+        let arg_var = compile_expr(ctx, func, arg, variables);
+        arg_vars.push(arg_var);
+    }
+
+    let instr = qbe::Instr::Call(
+        function_name.to_string(),
+        arg_vars
+            .iter()
+            .map(|v| {
+                let type_def = ctx.resolved.type_definitions.get(&v.1).unwrap();
+                let qbe_type = type_to_qbe(type_def);
+                (qbe_type, qbe::Value::Temporary(v.0.clone()))
+            })
+            .collect::<Vec<_>>(),
+        None,
+    );
+
+    let sig = ctx
+        .resolved
+        .function_sigs
+        .get(function_name)
+        .unwrap()
+        .clone();
+    let return_type_def = ctx
+        .resolved
+        .type_definitions
+        .get(&sig.return_type)
+        .unwrap()
+        .clone();
+    let tmp_id_type = type_to_qbe(&return_type_def);
+
+    func.assign_instr(Value::Temporary(id.clone()), tmp_id_type, instr);
+
+    (id, sig.return_type.clone())
+}
+
 fn compile_expr(
     ctx: &mut CodegenCtx,
     func: &mut qbe::Function,
@@ -1132,69 +1178,77 @@ fn compile_expr(
                 struct_variable,
                 field,
             } => {
-                let (enum_name, variant_tag) =
-                    match ctx.resolved.type_definitions.get(struct_variable) {
-                        Some(ir::TypeDef::Enum(enum_def)) => {
-                            let variant =
-                                enum_def.variants.iter().find(|v| v.name == *field).unwrap();
-                            variant
-                                .payload_ty
-                                .as_ref()
-                                .expect("tag-only enum variant is not callable");
-                            (enum_def.name.clone(), variant.tag)
-                        }
-                        _ => panic!("unsupported postfix call target"),
-                    };
-                assert_eq!(
-                    args.len(),
-                    1,
-                    "enum payload constructors currently support a single argument"
-                );
-                let (arg_var, arg_ty) = compile_expr(ctx, func, &args[0], variables);
-                let enum_ptr = new_id(&["enum", "alloc"]);
-                func.assign_instr(
-                    qbe::Value::Temporary(enum_ptr.clone()),
-                    qbe::Type::Long,
-                    qbe::Instr::Call(
-                        "malloc".to_string(),
-                        vec![(qbe::Type::Long, qbe::Value::Const(16))],
-                        None,
-                    ),
-                );
+                if let Some(ir::TypeDef::Enum(enum_def)) =
+                    ctx.resolved.type_definitions.get(struct_variable)
+                {
+                    if let Some(variant) = enum_def.variants.iter().find(|v| v.name == *field) {
+                        variant
+                            .payload_ty
+                            .as_ref()
+                            .expect("tag-only enum variant is not callable");
+                        let enum_name = enum_def.name.clone();
+                        let variant_tag = variant.tag;
 
-                func.add_instr(qbe::Instr::Store(
-                    qbe::Type::Word,
-                    qbe::Value::Temporary(enum_ptr.clone()),
-                    qbe::Value::Const(variant_tag as u64),
-                ));
+                        assert_eq!(
+                            args.len(),
+                            1,
+                            "enum payload constructors currently support a single argument"
+                        );
+                        let (arg_var, arg_ty) = compile_expr(ctx, func, &args[0], variables);
+                        let enum_ptr = new_id(&["enum", "alloc"]);
+                        func.assign_instr(
+                            qbe::Value::Temporary(enum_ptr.clone()),
+                            qbe::Type::Long,
+                            qbe::Instr::Call(
+                                "malloc".to_string(),
+                                vec![(qbe::Type::Long, qbe::Value::Const(16))],
+                                None,
+                            ),
+                        );
 
-                let payload_addr = new_id(&["enum", "payload", "addr"]);
-                func.assign_instr(
-                    qbe::Value::Temporary(payload_addr.clone()),
-                    qbe::Type::Long,
-                    qbe::Instr::Add(
-                        qbe::Value::Temporary(enum_ptr.clone()),
-                        qbe::Value::Const(8),
-                    ),
-                );
-                let payload_value = if is_word_sized_value_type(ctx, &arg_ty) {
-                    let ext = new_id(&["enum", "payload", "ext"]);
-                    func.assign_instr(
-                        qbe::Value::Temporary(ext.clone()),
-                        qbe::Type::Long,
-                        qbe::Instr::Extsw(qbe::Value::Temporary(arg_var)),
-                    );
-                    qbe::Value::Temporary(ext)
-                } else {
-                    qbe::Value::Temporary(arg_var)
-                };
-                func.add_instr(qbe::Instr::Store(
-                    qbe::Type::Long,
-                    qbe::Value::Temporary(payload_addr),
-                    payload_value,
-                ));
+                        func.add_instr(qbe::Instr::Store(
+                            qbe::Type::Word,
+                            qbe::Value::Temporary(enum_ptr.clone()),
+                            qbe::Value::Const(variant_tag as u64),
+                        ));
 
-                (enum_ptr, enum_name)
+                        let payload_addr = new_id(&["enum", "payload", "addr"]);
+                        func.assign_instr(
+                            qbe::Value::Temporary(payload_addr.clone()),
+                            qbe::Type::Long,
+                            qbe::Instr::Add(
+                                qbe::Value::Temporary(enum_ptr.clone()),
+                                qbe::Value::Const(8),
+                            ),
+                        );
+                        let payload_value = if is_word_sized_value_type(ctx, &arg_ty) {
+                            let ext = new_id(&["enum", "payload", "ext"]);
+                            func.assign_instr(
+                                qbe::Value::Temporary(ext.clone()),
+                                qbe::Type::Long,
+                                qbe::Instr::Extsw(qbe::Value::Temporary(arg_var)),
+                            );
+                            qbe::Value::Temporary(ext)
+                        } else {
+                            qbe::Value::Temporary(arg_var)
+                        };
+                        func.add_instr(qbe::Instr::Store(
+                            qbe::Type::Long,
+                            qbe::Value::Temporary(payload_addr),
+                            payload_value,
+                        ));
+
+                        return (enum_ptr, enum_name);
+                    }
+                }
+
+                let namespaced_call =
+                    parser::qualify_namespace_function_name(struct_variable, field);
+                if ctx.resolved.function_sigs.contains_key(&namespaced_call) {
+                    return compile_named_call(ctx, func, &namespaced_call, args, variables);
+                }
+
+                panic!("unsupported postfix call target")
             }
             _ => panic!("unsupported postfix call target"),
         },
@@ -1315,38 +1369,7 @@ fn compile_expr(
             (id, "Bool".to_string())
         }
         parser::Expression::Call(name, args) => {
-            let id = new_id(&["call", name]);
-            let mut arg_vars = vec![];
-            for arg in args {
-                let arg_var = compile_expr(ctx, func, arg, variables);
-                arg_vars.push(arg_var);
-            }
-
-            let instr = qbe::Instr::Call(
-                name.clone(),
-                arg_vars
-                    .iter()
-                    .map(|v| {
-                        let type_def = ctx.resolved.type_definitions.get(&v.1).unwrap();
-                        let qbe_type = type_to_qbe(type_def);
-                        (qbe_type, qbe::Value::Temporary(v.0.clone()))
-                    })
-                    .collect::<Vec<_>>(),
-                None,
-            );
-
-            let sig = ctx.resolved.function_sigs.get(name).unwrap().clone();
-            let return_type_def = ctx
-                .resolved
-                .type_definitions
-                .get(&sig.return_type)
-                .unwrap()
-                .clone();
-            let tmp_id_type = type_to_qbe(&return_type_def);
-
-            func.assign_instr(Value::Temporary(id.clone()), tmp_id_type, instr);
-
-            (id, sig.return_type.clone())
+            compile_named_call(ctx, func, name, args, variables)
         }
         parser::Expression::BinOp(op, left, right) => {
             let id = new_id(&["bin_op"]);
@@ -1509,6 +1532,37 @@ mod tests {
 
         let qbe_ir = format!("{}", qbe_module);
         insta::assert_snapshot!(qbe_ir);
+    }
+
+    #[test]
+    fn qbe_codegen_supports_namespaced_function_calls() {
+        let source = r#"
+struct Option {
+	value: I32,
+}
+
+namespace Option {
+	fun is_some(v: Option) -> I32 {
+		return v.value
+	}
+}
+
+fun main() -> I32 {
+	v = Option struct { value: 7 }
+	return Option.is_some(v)
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("call $Option__is_some"),
+            "expected namespaced function call in qbe output, got:\n{qbe_ir}"
+        );
     }
 
     #[test]

@@ -1,0 +1,88 @@
+{
+  "name": "ousia-vscode",
+  "displayName": "Ousia",
+  "description": "Language support for Ousia through the oac language server",
+  "version": "0.1.0",
+  "publisher": "ousia-lang",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:ousia",
+    "onCommand:ousia.restartLanguageServer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ousia",
+        "aliases": [
+          "Ousia",
+          "ousia"
+        ],
+        "extensions": [
+          ".oa"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ousia",
+        "scopeName": "source.ousia",
+        "path": "./syntaxes/ousia.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ousia.restartLanguageServer",
+        "title": "Ousia: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "Ousia",
+      "properties": {
+        "ousia.server.path": {
+          "type": "string",
+          "default": "oac",
+          "markdownDescription": "Path to the Ousia CLI executable used to run the language server."
+        },
+        "ousia.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra CLI arguments passed before `lsp` when starting the server."
+        },
+        "ousia.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "markdownDescription": "Trace level for Ousia LSP traffic in the output panel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "lint": "tsc --noEmit -p .",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

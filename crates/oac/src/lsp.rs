@@ -621,6 +621,7 @@ fn completion_response(
         "struct",
         "enum",
         "template",
+        "namespace",
         "instantiate",
         "comptime",
         "apply",
@@ -787,15 +788,8 @@ fn scan_symbols_in_file(uri: &str, text: &str) -> Vec<IndexedSymbol> {
         if line.is_empty() {
             continue;
         }
-        if line
-            .chars()
-            .next()
-            .map(|ch| ch.is_ascii_whitespace())
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        if let Some((name, detail, kind)) = parse_symbol_declaration(line) {
+        let trimmed = line.trim_start();
+        if let Some((name, detail, kind)) = parse_symbol_declaration(trimmed) {
             if let Some(start_char) = line.find(&name) {
                 let end_char = start_char + name.len();
                 let range = LspRange {
@@ -856,6 +850,10 @@ fn parse_symbol_declaration(line: &str) -> Option<(String, String, u32)> {
     if let Some(rest) = line.strip_prefix("template ") {
         let name = parse_symbol_name(rest)?;
         return Some((name.clone(), format!("template {name}"), 5));
+    }
+    if let Some(rest) = line.strip_prefix("namespace ") {
+        let name = parse_symbol_name(rest)?;
+        return Some((name.clone(), format!("namespace {name}"), 3));
     }
     if let Some(rest) = line.strip_prefix("instantiate ") {
         let name = parse_symbol_name(rest)?;
@@ -1118,6 +1116,38 @@ mod tests {
         assert!(
             arr.len() >= 2,
             "expected at least definition + usage references, got {arr:?}"
+        );
+    }
+
+    #[test]
+    fn hover_resolves_namespaced_function_symbol() {
+        let mut docs = HashMap::new();
+        let uri = "file:///tmp/namespace_hover.oa".to_string();
+        docs.insert(
+            uri.clone(),
+            DocumentState {
+                text: r#"namespace Option {
+	fun is_some(v: I32) -> I32 {
+		return v
+	}
+}
+
+fun main() -> I32 {
+	return Option.is_some(1)
+}
+"#
+                .to_string(),
+                version: Some(1),
+            },
+        );
+
+        let result = super::hover_response(&uri, 7, 18, &docs);
+        let value = result["contents"]["value"]
+            .as_str()
+            .expect("hover markdown value");
+        assert!(
+            value.contains("is_some"),
+            "expected hover to resolve namespaced function symbol, got {value:?}"
         );
     }
 

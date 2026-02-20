@@ -25,6 +25,7 @@ Observed in parser/IR implementation:
 - Pattern matching on enums (`match`) as statement and expression.
 - Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
+- Top-level namespaces for helper functions: `namespace TypeName { fun helper(...) -> ... { ... } }`, callable as `TypeName.helper(...)`.
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
 
@@ -41,6 +42,8 @@ Observed in parser/IR implementation:
 - `main` must use one of two signatures: `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`.
 - Assignments bind variable type to expression type.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
+- Namespace bodies currently accept runtime `fun` declarations only (no `comptime` declarations inside `namespace` blocks).
+- Namespace calls are syntactic sugar for internal function names using `Namespace__function` lowering, while preserving existing enum constructor call syntax `Enum.Variant(...)`.
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `std.oa` into split sibling files, then merged into one global scope before user type-checking.
 - Struct invariants are optional per struct type and can be declared directly as `invariant "Human label" for (v: TypeName) { ... }` or `invariant identifier "Human label" for (...) { ... }`.

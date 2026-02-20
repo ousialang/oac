@@ -44,8 +44,9 @@ Core AST includes:
 - Type defs: `Struct`, `Enum`
 - Templates and template instantiations (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`)
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
+- Top-level namespaces (`namespace Name { fun ... }`) flattened into mangled function symbols (`Name__fn`).
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
-- Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr
+- Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`Name.fn(args)` parses as postfix call and resolves either as enum constructor or namespace call)
 
 Operator precedence is explicitly encoded in parser.
 
@@ -67,6 +68,7 @@ Important enforced invariants include:
 - `prove(...)` and `assert(...)` conditions must be `Bool`
 - `prove(...)` and `assert(...)` are statement-only; expression usage is rejected
 - user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
+- namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`
 - optional struct invariants are declared as `invariant ... for (v: TypeName) { ... }` (optionally named with an identifier); the compiler synthesizes `__struct__<TypeName>__invariant` and also validates legacy explicit invariant functions using that naming/signature pattern

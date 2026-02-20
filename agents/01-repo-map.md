@@ -10,11 +10,17 @@ The active compiler workspace is:
 - `crates/qbe-rs` (QBE Rust bindings/wrapper)
 - `crates/qbe-smt` (QBE-to-SMT CHC/fixedpoint encoding support for invariant proving)
 
+Editor tooling in this repository:
+- `tools/vscode-ousia` (VS Code extension client for `oac lsp`)
+
 ## High-Value Paths
 
 - `crates/oac/src/main.rs`: CLI entrypoint and build pipeline orchestration.
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
 - `crates/oac/src/lsp.rs`: stdio LSP server loop (`oac lsp`) and diagnostics publishing.
+- `tools/vscode-ousia/src/extension.ts`: VS Code client activation and `oac lsp` process launch.
+- `tools/vscode-ousia/package.json`: extension manifest, language registration, and server settings.
+- `tools/vscode-ousia/README.md`: extension runtime expectations (notably `oac lsp` launch semantics and settings behavior).
 - `crates/oac/src/tokenizer.rs`: eager tokenizer and syntax error model.
 - `crates/oac/src/parser.rs`: AST definitions and parser.
 - `crates/oac/src/ir.rs`: type resolution, semantic checks, and resolved IR.
@@ -36,6 +42,7 @@ The active compiler workspace is:
 
 - `stdlib/` and `examples/`: Ousia sample/library programs.
 - `docs/`: language notes/spec drafts (some are historical/incomplete).
+- `tools/vscode-ousia/`: editor integration package for local development and packaging (`.vsix`).
 - `tools/selfie/`: external project/reference material; treat as separate domain.
 
 ## Source of Truth Order (When Docs Disagree)
