@@ -1,5 +1,5 @@
 fun print_kind(src: String) -> I32 {
-	match json_kind(src) {
+	match Json.json_kind(src) {
 		JsonKind.True => {
 			print(1)
 		}

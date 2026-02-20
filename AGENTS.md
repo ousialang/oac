@@ -35,6 +35,8 @@ This repository currently contains both the Ousia compiler workspace (`crates/*`
 - Namespaces are top-level and declaration-only: `namespace TypeName { fun helper(...) -> ... { ... } }`. Namespace functions are called via `TypeName.helper(...)` and are lowered to internal function names using `TypeName__helper`.
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.
 - The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_newstring.oa`, `std_collections.oa`, `std_json.oa`).
+- The split stdlib now exposes namespaced helper APIs where applicable: JSON parsing helpers are called via `Json.*` (for example `Json.json_kind`, `Json.parse_json_document_result`), and newstring printing via `NewString.print(...)`.
+- Template-instantiated helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
 - A VS Code extension scaffold now lives in `tools/vscode-ousia/`; it launches `oac lsp` and is configured via `ousia.server.path`, `ousia.server.args`, and `ousia.trace.server`.

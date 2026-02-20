@@ -44,8 +44,10 @@ Observed in parser/IR implementation:
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
 - Namespace bodies currently accept runtime `fun` declarations only (no `comptime` declarations inside `namespace` blocks).
 - Namespace calls are syntactic sugar for internal function names using `Namespace__function` lowering, while preserving existing enum constructor call syntax `Enum.Variant(...)`.
+- Namespace call lowering also applies to template-instantiated helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `std.oa` into split sibling files, then merged into one global scope before user type-checking.
+- The split stdlib now uses namespaced helper APIs for JSON and newstring helpers (`Json.*`, `NewString.print(...)`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - Struct invariants are optional per struct type and can be declared directly as `invariant "Human label" for (v: TypeName) { ... }` or `invariant identifier "Human label" for (...) { ... }`.
 - Invariant declarations synthesize internal functions named `__struct__<TypeName>__invariant` with signature `fun ...(v: <TypeName>) -> Bool`; legacy explicit functions using that exact name/signature are still accepted for compatibility.
 - Malformed legacy invariant functions are compile errors.

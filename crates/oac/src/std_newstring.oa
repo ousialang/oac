@@ -4,11 +4,13 @@ struct NewString {
 }
 
 
-fun print_newstring(s: NewString) -> I32 {
-	i = 0
-	// while i32_to_i64(i) < s.len {
-	// 	print_char(s.ptr + i)
-	// }
+namespace NewString {
+	fun print(s: NewString) -> I32 {
+		i = 0
+		// while i32_to_i64(i) < s.len {
+		// 	print_char(s.ptr + i)
+		// }
 
-	return 0
+		return 0
+	}
 }

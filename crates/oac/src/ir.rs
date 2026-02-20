@@ -2434,8 +2434,8 @@ fun main() -> I32 {
             "missing ParseErr type from split stdlib"
         );
         assert!(
-            resolved.function_sigs.contains_key("parse_json_document"),
-            "missing parse_json_document function from split stdlib"
+            resolved.function_sigs.contains_key("Json__parse_json_document"),
+            "missing Json__parse_json_document function from split stdlib"
         );
     }
 
@@ -2681,6 +2681,36 @@ fun main() -> I32 {
         assert!(resolved
             .function_definitions
             .contains_key("Option__is_some"));
+    }
+
+    #[test]
+    fn resolve_accepts_namespaced_calls_to_template_instantiated_helpers() {
+        let source = r#"
+template Identity[T] {
+	struct Identity {
+		value: T,
+	}
+
+	fun value(v: T) -> T {
+		return v
+	}
+}
+
+instantiate IntIdentity = Identity[I32]
+
+fun main() -> I32 {
+	return IntIdentity.value(7)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        assert!(resolved.function_sigs.contains_key("IntIdentity__value"));
+        assert!(resolved
+            .function_definitions
+            .contains_key("IntIdentity__value"));
     }
 
     #[test]

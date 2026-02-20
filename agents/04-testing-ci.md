@@ -69,6 +69,9 @@ Key tests:
   - `assert_fail.oa`
 - Execution fixtures also include namespace call coverage:
   - `namespace_basic.oa`
+- Stdlib namespacing coverage in execution fixtures:
+  - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
+  - Template stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa` and `template_hash_table_i32.oa`.
 
 Snapshots live in:
 - `crates/oac/src/snapshots/*.snap`

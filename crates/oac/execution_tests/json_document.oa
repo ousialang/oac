@@ -1,5 +1,5 @@
 fun print_doc_result(src: String) -> I32 {
-	match parse_json_document_result(src) {
+	match Json.parse_json_document_result(src) {
 		ParseResult.Ok(_end) => {
 			print(1)
 		}

@@ -14,24 +14,24 @@ fun print_lookup(v: IntTable__Lookup) -> I32 {
 }
 
 fun main() -> I32 {
-	table = IntTable__empty()
-	print(IntTable__size(table))
+	table = IntTable.empty()
+	print(IntTable.size(table))
 
-	table = IntTable__put(table, 1, 10)
-	table = IntTable__put(table, 9, 90)
-	table = IntTable__put(table, 2, 20)
-	print(IntTable__size(table))
+	table = IntTable.put(table, 1, 10)
+	table = IntTable.put(table, 9, 90)
+	table = IntTable.put(table, 2, 20)
+	print(IntTable.size(table))
 
-	print_lookup(IntTable__get(table, 1))
-	print_lookup(IntTable__get(table, 9))
-	print_lookup(IntTable__get(table, 42))
+	print_lookup(IntTable.get(table, 1))
+	print_lookup(IntTable.get(table, 9))
+	print_lookup(IntTable.get(table, 42))
 
-	table = IntTable__put(table, 1, 11)
-	print(IntTable__size(table))
-	print_lookup(IntTable__get(table, 1))
+	table = IntTable.put(table, 1, 11)
+	print(IntTable.size(table))
+	print_lookup(IntTable.get(table, 1))
 
-	print(IntTable__contains_key(table, 2))
-	print(IntTable__contains_key(table, 42))
+	print(IntTable.contains_key(table, 2))
+	print(IntTable.contains_key(table, 42))
 
 	return 0
 }

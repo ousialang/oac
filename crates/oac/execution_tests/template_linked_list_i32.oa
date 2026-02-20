@@ -1,22 +1,22 @@
 instantiate IntList = LinkedList[I32]
 
 fun main() -> I32 {
-	xs = IntList__empty()
-	xs = IntList__push_front(3, xs)
-	xs = IntList__push_front(2, xs)
-	xs = IntList__push_front(1, xs)
+	xs = IntList.empty()
+	xs = IntList.push_front(3, xs)
+	xs = IntList.push_front(2, xs)
+	xs = IntList.push_front(1, xs)
 
-	print(IntList__length(xs))
-	print(IntList__head_or(xs, 99))
+	print(IntList.length(xs))
+	print(IntList.head_or(xs, 99))
 
-	ys = IntList__tail_or(xs, IntList__empty())
-	print(IntList__head_or(ys, 99))
+	ys = IntList.tail_or(xs, IntList.empty())
+	print(IntList.head_or(ys, 99))
 
-	zs = IntList__tail_or(IntList__empty(), ys)
-	print(IntList__length(zs))
+	zs = IntList.tail_or(IntList.empty(), ys)
+	print(IntList.length(zs))
 
-	print(IntList__is_empty(IntList__empty()))
-	print(IntList__is_empty(xs))
+	print(IntList.is_empty(IntList.empty()))
+	print(IntList.is_empty(xs))
 
 	return 0
 }
