@@ -72,6 +72,7 @@ Important enforced invariants include:
 - namespace call lowering is also used for template-instantiated helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
 - stdlib split modules intentionally expose namespaced helper APIs for JSON/newstring (`Json.*`, `NewString.print(...)`) while keeping JSON enums as top-level types
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
+- stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
 - declaration-based stdlib invariants (for example `AsciiChar` code-range invariant) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`

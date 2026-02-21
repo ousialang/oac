@@ -1,0 +1,7 @@
+struct Null {}
+
+namespace Null {
+	fun value() -> Null {
+		return Null struct {}
+	}
+}

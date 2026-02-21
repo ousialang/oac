@@ -2439,12 +2439,20 @@ fun main() -> I32 {
             "missing AsciiChar type from split stdlib"
         );
         assert!(
+            resolved.type_definitions.contains_key("Null"),
+            "missing Null type from split stdlib"
+        );
+        assert!(
             resolved.function_sigs.contains_key("Json__parse_json_document"),
             "missing Json__parse_json_document function from split stdlib"
         );
         assert!(
             resolved.function_sigs.contains_key("AsciiChar__from_code"),
             "missing AsciiChar__from_code function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Null__value"),
+            "missing Null__value function from split stdlib"
         );
         assert!(
             resolved.struct_invariants.contains_key("AsciiChar"),
@@ -2747,6 +2755,28 @@ fun main() -> I32 {
 			return 0
 		}
 	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_accepts_std_null_api_usage() {
+        let source = r#"
+fun takes_null(v: Null) -> I32 {
+	if v == Null.value() {
+		return 1
+	}
+	return 0
+}
+
+fun main() -> I32 {
+	v = Null.value()
+	return takes_null(v)
 }
 "#
         .to_string();
