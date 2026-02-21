@@ -400,6 +400,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
             .extend(stdlib_ast.template_definitions);
         ast.template_instantiations
             .extend(stdlib_ast.template_instantiations);
+        ast.invariants.extend(stdlib_ast.invariants);
     }
     expand_templates(&mut ast)?;
 
@@ -2434,8 +2435,26 @@ fun main() -> I32 {
             "missing ParseErr type from split stdlib"
         );
         assert!(
+            resolved.type_definitions.contains_key("AsciiChar"),
+            "missing AsciiChar type from split stdlib"
+        );
+        assert!(
             resolved.function_sigs.contains_key("Json__parse_json_document"),
             "missing Json__parse_json_document function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("AsciiChar__from_code"),
+            "missing AsciiChar__from_code function from split stdlib"
+        );
+        assert!(
+            resolved.struct_invariants.contains_key("AsciiChar"),
+            "missing AsciiChar invariant metadata from split stdlib"
+        );
+        assert!(
+            resolved
+                .function_definitions
+                .contains_key("__struct__AsciiChar__invariant"),
+            "missing __struct__AsciiChar__invariant function from split stdlib"
         );
     }
 
@@ -2711,6 +2730,30 @@ fun main() -> I32 {
         assert!(resolved
             .function_definitions
             .contains_key("IntIdentity__value"));
+    }
+
+    #[test]
+    fn resolve_accepts_std_ascii_char_api_usage() {
+        let source = r#"
+fun main() -> I32 {
+	match AsciiChar.from_string_at("A", 0) {
+		AsciiCharResult.Ok(ch) => {
+			if AsciiChar.equals(ch, ch) && AsciiChar.is_whitespace(ch) == false {
+				return AsciiChar.code(ch)
+			}
+			return 0
+		}
+		AsciiCharResult.OutOfRange => {
+			return 0
+		}
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
     }
 
     #[test]

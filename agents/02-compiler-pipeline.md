@@ -53,7 +53,7 @@ Operator precedence is explicitly encoded in parser.
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules) using the same flat import resolver.
+- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules) using the same flat import resolver, including stdlib invariant declarations.
 - type definition graph creation
 - function signature collection
 - function body semantic checks
@@ -71,6 +71,8 @@ Important enforced invariants include:
 - namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
 - namespace call lowering is also used for template-instantiated helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
 - stdlib split modules intentionally expose namespaced helper APIs for JSON/newstring (`Json.*`, `NewString.print(...)`) while keeping JSON enums as top-level types
+- stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
+- declaration-based stdlib invariants (for example `AsciiChar` code-range invariant) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`
 - optional struct invariants are declared as `invariant ... for (v: TypeName) { ... }` (optionally named with an identifier); the compiler synthesizes `__struct__<TypeName>__invariant` and also validates legacy explicit invariant functions using that naming/signature pattern

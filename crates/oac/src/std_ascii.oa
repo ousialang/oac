@@ -1,0 +1,54 @@
+struct AsciiChar {
+	code: I32,
+}
+
+invariant code_in_ascii_range "ascii code must be in [0, 127]" for (v: AsciiChar) {
+	return v.code >= 0 && v.code <= 127
+}
+
+enum AsciiCharResult {
+	Ok(AsciiChar),
+	OutOfRange,
+}
+
+namespace AsciiChar {
+	fun from_code_in_range(code: I32) -> AsciiChar {
+		return AsciiChar struct {
+			code: code,
+		}
+	}
+
+	fun from_code(code: I32) -> AsciiCharResult {
+		if code < 0 || code > 127 {
+			return AsciiCharResult.OutOfRange
+		}
+
+		return AsciiCharResult.Ok(AsciiChar.from_code_in_range(code))
+	}
+
+	fun from_string_at(s: String, index: I32) -> AsciiCharResult {
+		if index < 0 || index >= string_len(s) {
+			return AsciiCharResult.OutOfRange
+		}
+
+		return AsciiChar.from_code(char_at(s, index))
+	}
+
+	fun code(ch: AsciiChar) -> I32 {
+		return ch.code
+	}
+
+	fun is_digit(ch: AsciiChar) -> Bool {
+		c = ch.code
+		return c >= 48 && c <= 57
+	}
+
+	fun is_whitespace(ch: AsciiChar) -> Bool {
+		c = ch.code
+		return c == 32 || c == 10 || c == 9 || c == 13
+	}
+
+	fun equals(a: AsciiChar, b: AsciiChar) -> Bool {
+		return a.code == b.code
+	}
+}
