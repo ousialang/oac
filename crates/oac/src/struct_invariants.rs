@@ -1807,6 +1807,8 @@ fn rename_value(value: &qbe::Value, temp_map: &HashMap<String, String>) -> qbe::
             }
         }
         qbe::Value::Const(value) => qbe::Value::Const(*value),
+        qbe::Value::SingleConst(value) => qbe::Value::SingleConst(value.clone()),
+        qbe::Value::DoubleConst(value) => qbe::Value::DoubleConst(value.clone()),
         qbe::Value::Global(name) => qbe::Value::Global(name.clone()),
     }
 }

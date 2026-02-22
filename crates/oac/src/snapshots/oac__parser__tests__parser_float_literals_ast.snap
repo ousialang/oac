@@ -1,0 +1,52 @@
+---
+source: crates/oac/src/parser.rs
+expression: ast
+snapshot_kind: text
+---
+{
+  "imports": [],
+  "type_definitions": [],
+  "top_level_functions": [
+    {
+      "name": "main",
+      "parameters": [],
+      "body": [
+        {
+          "Assign": {
+            "variable": "a",
+            "value": {
+              "Literal": {
+                "Float32": "1.25"
+              }
+            }
+          }
+        },
+        {
+          "Assign": {
+            "variable": "b",
+            "value": {
+              "Literal": {
+                "Float64": "2.5"
+              }
+            }
+          }
+        },
+        {
+          "Return": {
+            "expr": {
+              "Literal": {
+                "Int": 0
+              }
+            }
+          }
+        }
+      ],
+      "return_type": "I32",
+      "is_comptime": false
+    }
+  ],
+  "invariants": [],
+  "template_definitions": [],
+  "template_instantiations": [],
+  "comptime_applies": []
+}

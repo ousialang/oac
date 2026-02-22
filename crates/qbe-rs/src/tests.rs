@@ -360,6 +360,22 @@ fn comparison_types() {
     ));
     assert_eq!(format!("{unordered_cmp}"), "cuos %a, %b");
 
+    let ordered_lt_cmp = Statement::Volatile(Instr::Cmp(
+        Type::Single,
+        Cmp::Lt,
+        Value::Temporary("a".into()),
+        Value::Temporary("b".into()),
+    ));
+    assert_eq!(format!("{ordered_lt_cmp}"), "clts %a, %b");
+
+    let ordered_gt_cmp_double = Statement::Volatile(Instr::Cmp(
+        Type::Double,
+        Cmp::Gt,
+        Value::Temporary("a".into()),
+        Value::Temporary("b".into()),
+    ));
+    assert_eq!(format!("{ordered_gt_cmp_double}"), "cgtd %a, %b");
+
     // Test unsigned comparisons for integers
     let unsigned_lt = Statement::Volatile(Instr::Cmp(
         Type::Word,
@@ -392,6 +408,15 @@ fn comparison_types() {
         Value::Temporary("b".into()),
     ));
     assert_eq!(format!("{unsigned_ge}"), "cugel %a, %b");
+}
+
+#[test]
+fn single_precision_constants() {
+    let literal = Value::SingleConst("3.25".into());
+    assert_eq!(format!("{literal}"), "s_3.25");
+
+    let literal = Value::DoubleConst("3.25".into());
+    assert_eq!(format!("{literal}"), "d_3.25");
 }
 
 #[test]

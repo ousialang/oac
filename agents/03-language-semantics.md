@@ -7,6 +7,8 @@ This describes behavior implemented in current compiler code, not aspirational d
 From `crates/oac/src/builtins.rs`:
 - `I32`
 - `I64`
+- `FP32`
+- `FP64`
 - `String`
 - `Bool`
 
@@ -17,6 +19,7 @@ Observed in parser/IR implementation:
 - Variable assignment.
 - `return` statements.
 - Arithmetic/logical/comparison operators.
+- Decimal float literals with explicit width selection: unsuffixed `1.25` is `FP32`, and `1.25f64` is `FP64`.
 - Unary `!` for boolean negation.
 - `if` / `else` and `while`.
 - Struct definitions and struct literal construction.
@@ -41,6 +44,7 @@ Observed in parser/IR implementation:
 - Function return paths must not mix incompatible return types.
 - `main` must use one of two signatures: `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`.
 - Assignments bind variable type to expression type.
+- Numeric binary ops are strict and same-type only: `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
 - Namespace bodies currently accept runtime `fun` declarations only (no `comptime` declarations inside `namespace` blocks).
 - Namespace calls are syntactic sugar for internal function names using `Namespace__function` lowering, while preserving existing enum constructor call syntax `Enum.Variant(...)`.
@@ -66,6 +70,7 @@ Observed in parser/IR implementation:
 - Prove obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
 - Struct-invariant proof obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
+- `qbe-smt` currently rejects floating-point obligations fail-closed (including FP32/FP64 literals/comparisons) during prove/struct-invariant checking.
 - `qbe-smt` models `call $exit(code)` as a halting transition with `exit` state set from `code`.
 - `qbe-smt` models `phi` by threading predecessor-block identity through CHC state and guarding predecessor-dependent merges.
 - `qbe-smt` is parser-free: proving consumes direct `qbe::Function` IR, not re-parsed QBE text.

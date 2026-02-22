@@ -412,6 +412,10 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     ctx.qbe_types_by_name
         .insert("I64".to_string(), qbe::Type::Long);
     ctx.qbe_types_by_name
+        .insert("FP32".to_string(), qbe::Type::Single);
+    ctx.qbe_types_by_name
+        .insert("FP64".to_string(), qbe::Type::Double);
+    ctx.qbe_types_by_name
         .insert("String".to_string(), qbe::Type::Long);
 }
 
@@ -419,6 +423,8 @@ fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type {
     match ty {
         ir::TypeDef::BuiltIn(BuiltInType::Bool) => qbe::Type::Word,
         ir::TypeDef::BuiltIn(BuiltInType::I32) => qbe::Type::Word,
+        ir::TypeDef::BuiltIn(BuiltInType::FP32) => qbe::Type::Single,
+        ir::TypeDef::BuiltIn(BuiltInType::FP64) => qbe::Type::Double,
         ir::TypeDef::BuiltIn(BuiltInType::I64)
         | ir::TypeDef::BuiltIn(BuiltInType::String)
         | ir::TypeDef::Struct(_) => qbe::Type::Long, // pointer to struct
@@ -472,13 +478,13 @@ fn compile_type(ctx: &mut CodegenCtx, type_def: &ir::TypeDef) {
     }
 }
 
-fn is_word_sized_value_type(ctx: &CodegenCtx, type_name: &str) -> bool {
-    match ctx.resolved.type_definitions.get(type_name) {
-        Some(ir::TypeDef::BuiltIn(BuiltInType::Bool))
-        | Some(ir::TypeDef::BuiltIn(BuiltInType::I32)) => true,
-        Some(ir::TypeDef::Enum(enum_def)) => !enum_def.is_tagged_union,
-        _ => false,
-    }
+fn type_ref_to_qbe(ctx: &CodegenCtx, type_name: &str) -> qbe::Type {
+    let ty = ctx
+        .resolved
+        .type_definitions
+        .get(type_name)
+        .unwrap_or_else(|| panic!("Unknown type {}", type_name));
+    type_to_qbe(ty)
 }
 
 fn compile_match_subject(
@@ -550,24 +556,13 @@ fn bind_match_payload(
                 qbe::Value::Const(8),
             ),
         );
-        let payload_raw = new_id(&[label_root, "payload", "raw"]);
+        let payload_var = new_id(&[label_root, "payload"]);
+        let payload_qbe_ty = type_ref_to_qbe(ctx, &payload_ty);
         qbe_func.assign_instr(
-            qbe::Value::Temporary(payload_raw.clone()),
-            qbe::Type::Long,
-            qbe::Instr::Load(qbe::Type::Long, qbe::Value::Temporary(payload_addr)),
+            qbe::Value::Temporary(payload_var.clone()),
+            payload_qbe_ty.clone(),
+            qbe::Instr::Load(payload_qbe_ty, qbe::Value::Temporary(payload_addr)),
         );
-
-        let payload_var = if is_word_sized_value_type(ctx, &payload_ty) {
-            let payload_word = new_id(&[label_root, "payload", "word"]);
-            qbe_func.assign_instr(
-                qbe::Value::Temporary(payload_word.clone()),
-                qbe::Type::Word,
-                qbe::Instr::Copy(qbe::Value::Temporary(payload_raw)),
-            );
-            payload_word
-        } else {
-            payload_raw
-        };
         arm_variables.insert(binder, (payload_var, payload_ty));
     }
 }
@@ -909,6 +904,7 @@ fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
         Some(ty) => match ty {
             ir::TypeDef::BuiltIn(BuiltInType::Bool) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::I32) => 4,
+            ir::TypeDef::BuiltIn(BuiltInType::FP32) => 4,
             ir::TypeDef::Enum(enum_def) => {
                 if enum_def.is_tagged_union {
                     8
@@ -917,6 +913,7 @@ fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
                 }
             }
             ir::TypeDef::BuiltIn(BuiltInType::I64)
+            | ir::TypeDef::BuiltIn(BuiltInType::FP64)
             | ir::TypeDef::BuiltIn(BuiltInType::String)
             | ir::TypeDef::Struct(_) => 8,
         },
@@ -1221,21 +1218,11 @@ fn compile_expr(
                                 qbe::Value::Const(8),
                             ),
                         );
-                        let payload_value = if is_word_sized_value_type(ctx, &arg_ty) {
-                            let ext = new_id(&["enum", "payload", "ext"]);
-                            func.assign_instr(
-                                qbe::Value::Temporary(ext.clone()),
-                                qbe::Type::Long,
-                                qbe::Instr::Extsw(qbe::Value::Temporary(arg_var)),
-                            );
-                            qbe::Value::Temporary(ext)
-                        } else {
-                            qbe::Value::Temporary(arg_var)
-                        };
+                        let payload_qbe_ty = type_ref_to_qbe(ctx, &arg_ty);
                         func.add_instr(qbe::Instr::Store(
-                            qbe::Type::Long,
+                            payload_qbe_ty,
                             qbe::Value::Temporary(payload_addr),
-                            payload_value,
+                            qbe::Value::Temporary(arg_var),
                         ));
 
                         return (enum_ptr, enum_name);
@@ -1315,6 +1302,24 @@ fn compile_expr(
 
             (id, "I32".to_string())
         }
+        parser::Expression::Literal(parser::Literal::Float32(value)) => {
+            let id = new_id(&["literal", "fp32"]);
+            func.assign_instr(
+                Value::Temporary(id.clone()),
+                Type::Single,
+                qbe::Instr::Copy(qbe::Value::SingleConst(value.clone())),
+            );
+            (id, "FP32".to_string())
+        }
+        parser::Expression::Literal(parser::Literal::Float64(value)) => {
+            let id = new_id(&["literal", "fp64"]);
+            func.assign_instr(
+                Value::Temporary(id.clone()),
+                Type::Double,
+                qbe::Instr::Copy(qbe::Value::DoubleConst(value.clone())),
+            );
+            (id, "FP64".to_string())
+        }
         parser::Expression::Literal(parser::Literal::String(value)) => {
             let id = new_id(&["literal", "string"]);
             let const_name = new_id(&[]);
@@ -1374,77 +1379,103 @@ fn compile_expr(
         parser::Expression::BinOp(op, left, right) => {
             let id = new_id(&["bin_op"]);
             let (left_var, left_ty) = compile_expr(ctx, func, left, variables);
-            let (right_var, right_ty) = compile_expr(ctx, func, right, variables);
-            let cmp_ty = if left_ty == "I64" || right_ty == "I64" {
-                qbe::Type::Long
-            } else {
-                qbe::Type::Word
-            };
+            let (right_var, _right_ty) = compile_expr(ctx, func, right, variables);
+            let operand_qbe_ty = type_ref_to_qbe(ctx, &left_ty);
+            let use_ordered_float_cmp = matches!(operand_qbe_ty, qbe::Type::Single | qbe::Type::Double);
 
-            let instr = match op {
-                Op::Eq => qbe::Instr::Cmp(
-                    cmp_ty.clone(),
+            let instr = match (op, &operand_qbe_ty) {
+                (Op::Eq, _) => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
                     qbe::Cmp::Eq,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Neq => qbe::Instr::Cmp(
-                    cmp_ty.clone(),
+                (Op::Neq, _) => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
                     qbe::Cmp::Ne,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Lt => qbe::Instr::Cmp(
-                    cmp_ty.clone(),
+                (Op::Lt, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Lt,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Gt, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Gt,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Le, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Le,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Ge, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Ge,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Lt, _) => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
                     qbe::Cmp::Slt,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Gt => qbe::Instr::Cmp(
-                    cmp_ty.clone(),
+                (Op::Gt, _) => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
                     qbe::Cmp::Sgt,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Le => qbe::Instr::Cmp(
-                    cmp_ty.clone(),
+                (Op::Le, _) => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
                     qbe::Cmp::Sle,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Ge => qbe::Instr::Cmp(
-                    cmp_ty,
+                (Op::Ge, _) => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
                     qbe::Cmp::Sge,
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Add => qbe::Instr::Add(
+                (Op::Add, _) => qbe::Instr::Add(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Sub => qbe::Instr::Sub(
+                (Op::Sub, _) => qbe::Instr::Sub(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Mul => qbe::Instr::Mul(
+                (Op::Mul, _) => qbe::Instr::Mul(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Div => qbe::Instr::Div(
+                (Op::Div, _) => qbe::Instr::Div(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::And => qbe::Instr::And(
+                (Op::And, _) => qbe::Instr::And(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
-                Op::Or => qbe::Instr::Or(
+                (Op::Or, _) => qbe::Instr::Or(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
             };
 
-            func.assign_instr(qbe::Value::Temporary(id.clone()), qbe::Type::Word, instr);
+            let result_qbe_ty = match op {
+                Op::Eq | Op::Neq | Op::Lt | Op::Gt | Op::Le | Op::Ge => qbe::Type::Word,
+                Op::Add | Op::Sub | Op::Mul | Op::Div => operand_qbe_ty,
+                Op::And | Op::Or => qbe::Type::Word,
+            };
+            func.assign_instr(qbe::Value::Temporary(id.clone()), result_qbe_ty, instr);
 
             let out_ty = match op {
                 Op::And | Op::Or => "Bool".to_string(),
@@ -1562,6 +1593,74 @@ fun main() -> I32 {
         assert!(
             qbe_ir.contains("call $Option__is_some"),
             "expected namespaced function call in qbe output, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_supports_fp32_literals_and_compares() {
+        let source = r#"
+fun main() -> I32 {
+	a = 1.25
+	b = 2.5
+	c = a + b
+	if c > b {
+		return 1
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("s_1.25"),
+            "expected fp32 constant in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("=s add"),
+            "expected fp32 add assignment in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("cgts"),
+            "expected fp32 ordered comparison in qbe output, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_supports_fp64_literals_and_compares() {
+        let source = r#"
+fun main() -> I32 {
+	a = 1.25f64
+	b = 2.5f64
+	c = a + b
+	if c > b {
+		return 1
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("d_1.25"),
+            "expected fp64 constant in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("=d add"),
+            "expected fp64 add assignment in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("cgtd"),
+            "expected fp64 ordered comparison in qbe output, got:\n{qbe_ir}"
         );
     }
 

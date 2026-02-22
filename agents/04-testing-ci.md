@@ -42,14 +42,22 @@ When debugging extension startup, verify the server command is exactly `oac lsp`
 
 Key tests:
 - `crates/oac/src/tokenizer.rs` test loads `crates/oac/tokenizer_tests/*`.
+- `crates/oac/tokenizer_tests/float_literals.oa` snapshots tokenization for mixed float literals (`1.25`, `2.5f64`) via `tokenizer::tests::tokenize_files`.
+- `crates/oac/src/tokenizer.rs` also has a unit regression for FP32 decimal tokenization (`TokenData::Float`).
+- `crates/oac/src/tokenizer.rs` also covers `f64` suffix tokenization (`Float` token followed by `Word(\"f64\")`).
 - `crates/oac/src/parser.rs` tests assert template bracket syntax parsing, legacy `()` rejection, struct-invariant declaration syntax (`invariant ... for (...)`, with optional identifier, including inside templates), and optional trailing commas for struct declarations/literals.
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
+- `crates/oac/src/parser.rs` includes an AST snapshot regression (`parser_float_literals_ast`) for mixed FP32/FP64 literal parsing.
+- `crates/oac/src/parser.rs` also includes a regression for FP32 literal parsing (`Literal::Float32`).
+- `crates/oac/src/parser.rs` also includes a regression for FP64 literal parsing (`Literal::Float64` from `f64` suffix).
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `std.oa` imports.
 - That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), and null helper symbols (`Null`, `Null__value`).
 - The same regression also asserts stdlib `AsciiChar` invariant registration/synthesis (`struct_invariants["AsciiChar"]` and `__struct__AsciiChar__invariant` function definition).
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()` and `main(argc, argv)`).
 - `crates/oac/src/ir.rs` also validates namespace call resolution/type-checking by lowering to mangled function names (`TypeName__helper`).
+- `crates/oac/src/ir.rs` also includes FP32 resolve/type-check regression coverage (FP32 arithmetic + comparison in `main`).
+- `crates/oac/src/ir.rs` also includes FP64 resolve/type-check regression coverage (FP64 arithmetic + comparison in `main`).
 - `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, and strict rejection of unsupported operations.
 - `crates/qbe-smt/src/lib.rs` also validates `exit(code)` call modeling as halting transitions and rejects malformed exit calls (for example missing exit code argument).
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
@@ -63,6 +71,9 @@ Key tests:
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts QBE emission for namespaced calls contains mangled function call symbols.
+- `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP32 lowering emits single-precision constants/ops and ordered float comparisons.
+- `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP64 lowering emits double-precision constants/ops and ordered float comparisons.
+- `crates/qbe-rs/src/tests.rs` includes coverage for FP32/FP64 constant formatting (`s_<literal>`, `d_<literal>`) and ordered float compare formatting (`clts`, `cgtd`).
 - Execution fixtures now include dedicated prove/assert coverage:
   - `prove_pass.oa`
   - `prove_fail.oa`

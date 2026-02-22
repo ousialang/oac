@@ -20,6 +20,7 @@ pub enum TokenData {
     Newline,
     Parenthesis { opening: char, is_opening: bool },
     Number(u32),
+    Float(String),
     String(String),
     Word(String),
     Symbols(String),
@@ -131,13 +132,33 @@ pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
             }
             tokens.tokens.push(TokenData::Symbols(symbols));
         } else if c.is_ascii_digit() {
-            let mut number = c.to_digit(10).unwrap();
-            while chars.peek().is_some() && chars.peek().unwrap().is_digit(10) {
-                let c = chars.next().unwrap();
-                let digit = c.to_digit(10).unwrap();
-                number = number * 10 + digit;
+            let mut literal = String::new();
+            literal.push(c);
+            while chars.peek().is_some() && chars.peek().unwrap().is_ascii_digit() {
+                literal.push(chars.next().unwrap());
             }
-            tokens.tokens.push(TokenData::Number(number))
+
+            let is_float = if chars.peek() == Some(&'.') {
+                let mut lookahead = chars.clone();
+                lookahead.next();
+                lookahead.peek().is_some_and(|ch| ch.is_ascii_digit())
+            } else {
+                false
+            };
+
+            if is_float {
+                literal.push(chars.next().unwrap());
+                while chars.peek().is_some() && chars.peek().unwrap().is_ascii_digit() {
+                    literal.push(chars.next().unwrap());
+                }
+                tokens.tokens.push(TokenData::Float(literal));
+            } else {
+                let number = literal.parse::<u32>().map_err(|_| SyntaxError {
+                    message: format!("integer literal out of range for I32: {}", literal),
+                    position: position.clone(),
+                })?;
+                tokens.tokens.push(TokenData::Number(number));
+            }
         } else if c == '\n' {
             tokens.tokens.push(TokenData::Newline);
         } else if c.is_ascii_whitespace() {
@@ -167,6 +188,23 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    #[test]
+    fn tokenizes_fp32_literals() {
+        let tokens = tokenize("x = 1.25\n".to_string()).expect("tokenize source");
+        assert!(tokens
+            .tokens
+            .contains(&TokenData::Float("1.25".to_string())));
+    }
+
+    #[test]
+    fn tokenizes_fp64_suffix_as_following_word() {
+        let tokens = tokenize("x = 1.25f64\n".to_string()).expect("tokenize source");
+        assert!(tokens
+            .tokens
+            .contains(&TokenData::Float("1.25".to_string())));
+        assert!(tokens.tokens.contains(&TokenData::Word("f64".to_string())));
+    }
 
     #[test]
     fn tokenize_files() {

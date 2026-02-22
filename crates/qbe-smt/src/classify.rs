@@ -328,6 +328,8 @@ fn resolve_guard_operand(
 ) -> Option<GuardOperand> {
     match value {
         QbeValue::Const(value) => Some(GuardOperand::Const(*value)),
+        QbeValue::SingleConst(_) => None,
+        QbeValue::DoubleConst(_) => None,
         QbeValue::Global(_) => None,
         QbeValue::Temporary(name) => {
             if !visited.insert(name.clone()) {
@@ -379,6 +381,7 @@ fn invert_cmp_operands(kind: QbeCmp) -> Option<QbeCmp> {
     match kind {
         QbeCmp::Eq => Some(QbeCmp::Eq),
         QbeCmp::Ne => Some(QbeCmp::Ne),
+        QbeCmp::Lt | QbeCmp::Le | QbeCmp::Gt | QbeCmp::Ge => None,
         QbeCmp::Slt => Some(QbeCmp::Sgt),
         QbeCmp::Sle => Some(QbeCmp::Sge),
         QbeCmp::Sgt => Some(QbeCmp::Slt),
@@ -508,6 +511,8 @@ fn eval_identity_value(
             }
         }),
         QbeValue::Const(value) => IdentityExpr::Const(*value),
+        QbeValue::SingleConst(_) => IdentityExpr::Unknown,
+        QbeValue::DoubleConst(_) => IdentityExpr::Unknown,
         QbeValue::Global(_) => IdentityExpr::Unknown,
     }
 }
@@ -563,6 +568,8 @@ fn eval_constant_value(value: &QbeValue, env: &HashMap<String, Option<u64>>) -> 
     match value {
         QbeValue::Temporary(name) => env.get(name).copied().flatten(),
         QbeValue::Const(value) => Some(*value),
+        QbeValue::SingleConst(_) => None,
+        QbeValue::DoubleConst(_) => None,
         QbeValue::Global(_) => None,
     }
 }
@@ -576,6 +583,7 @@ fn eval_guard_with_const(guard: &LoopGuard, value: u64) -> Option<bool> {
     let result = match guard.kind {
         QbeCmp::Eq => lhs == rhs,
         QbeCmp::Ne => lhs != rhs,
+        QbeCmp::Lt | QbeCmp::Le | QbeCmp::Gt | QbeCmp::Ge => return None,
         QbeCmp::Slt => lhs_signed < rhs_signed,
         QbeCmp::Sle => lhs_signed <= rhs_signed,
         QbeCmp::Sgt => lhs_signed > rhs_signed,

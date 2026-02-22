@@ -16,6 +16,14 @@ mod tests;
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Copy)]
 pub enum Cmp {
+    /// Returns 1 if first value is less than second (ordered float compare)
+    Lt,
+    /// Returns 1 if first value is less than or equal to second (ordered float compare)
+    Le,
+    /// Returns 1 if first value is greater than second (ordered float compare)
+    Gt,
+    /// Returns 1 if first value is greater than or equal to second (ordered float compare)
+    Ge,
     /// Returns 1 if first value is less than second, respecting signedness
     Slt,
     /// Returns 1 if first value is less than or equal to second, respecting signedness
@@ -186,6 +194,10 @@ impl fmt::Display for Instr {
                     f,
                     "c{}{} {}, {}",
                     match cmp {
+                        Cmp::Lt => "lt",
+                        Cmp::Le => "le",
+                        Cmp::Gt => "gt",
+                        Cmp::Ge => "ge",
                         Cmp::Slt => "slt",
                         Cmp::Sle => "sle",
                         Cmp::Sgt => "sgt",
@@ -416,6 +428,10 @@ pub enum Value {
     Global(String),
     /// Constant
     Const(u64),
+    /// Single-precision floating-point constant literal
+    SingleConst(String),
+    /// Double-precision floating-point constant literal
+    DoubleConst(String),
 }
 
 impl fmt::Display for Value {
@@ -424,6 +440,8 @@ impl fmt::Display for Value {
             Self::Temporary(name) => write!(f, "%{name}"),
             Self::Global(name) => write!(f, "${name}"),
             Self::Const(value) => write!(f, "{value}"),
+            Self::SingleConst(value) => write!(f, "s_{value}"),
+            Self::DoubleConst(value) => write!(f, "d_{value}"),
         }
     }
 }

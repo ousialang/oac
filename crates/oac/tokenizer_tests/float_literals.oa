@@ -1,0 +1,5 @@
+fun main() -> I32 {
+	a = 1.25
+	b = 2.5f64
+	return 0
+}

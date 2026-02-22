@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub enum BuiltInType {
     I32,
     I64,
+    FP32,
+    FP64,
     String,
     Bool,
 }
@@ -17,6 +19,8 @@ impl FromStr for BuiltInType {
         match s {
             "I32" => Ok(BuiltInType::I32),
             "I64" => Ok(BuiltInType::I64),
+            "FP32" => Ok(BuiltInType::FP32),
+            "FP64" => Ok(BuiltInType::FP64),
             "String" => Ok(BuiltInType::String),
             "Bool" => Ok(BuiltInType::Bool),
             _ => Err(anyhow::anyhow!("unknown type {}", s)),

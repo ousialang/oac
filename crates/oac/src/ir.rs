@@ -441,6 +441,18 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         })?;
     program
         .type_definitions
+        .insert("FP32".to_string(), TypeDef::BuiltIn(BuiltInType::FP32))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert FP32 type definition"))
+        })?;
+    program
+        .type_definitions
+        .insert("FP64".to_string(), TypeDef::BuiltIn(BuiltInType::FP64))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert FP64 type definition"))
+        })?;
+    program
+        .type_definitions
         .insert("String".to_string(), TypeDef::BuiltIn(BuiltInType::String))
         .map_or(Ok(()), |_| {
             Err(anyhow::anyhow!("failed to insert String type definition"))
@@ -2028,6 +2040,8 @@ pub(crate) fn get_expression_type(
             }
         }
         Expression::Literal(Literal::Int(_)) => Ok("I32".to_string()),
+        Expression::Literal(Literal::Float32(_)) => Ok("FP32".to_string()),
+        Expression::Literal(Literal::Float64(_)) => Ok("FP64".to_string()),
         Expression::Literal(Literal::String(_)) => Ok("String".to_string()),
         Expression::Literal(Literal::Bool(_)) => Ok("Bool".to_string()),
         Expression::Variable(name) => var_types
@@ -2362,6 +2376,10 @@ pub(crate) fn get_expression_type(
                         Ok("I32".to_string())
                     } else if left_norm == "I64" && right_norm == "I64" {
                         Ok("I64".to_string())
+                    } else if left_norm == "FP32" && right_norm == "FP32" {
+                        Ok("FP32".to_string())
+                    } else if left_norm == "FP64" && right_norm == "FP64" {
+                        Ok("FP64".to_string())
                     } else {
                         Err(anyhow::anyhow!(
                             "expected both operands of {:?} to be numeric, but got {:?} and {:?}",
@@ -2395,6 +2413,8 @@ pub(crate) fn get_expression_type(
                 parser::Op::Lt | parser::Op::Gt | parser::Op::Le | parser::Op::Ge => {
                     if (left_norm == "I32" && right_norm == "I32")
                         || (left_norm == "I64" && right_norm == "I64")
+                        || (left_norm == "FP32" && right_norm == "FP32")
+                        || (left_norm == "FP64" && right_norm == "FP64")
                     {
                         Ok("Bool".to_string())
                     } else {
@@ -2777,6 +2797,46 @@ fun takes_null(v: Null) -> I32 {
 fun main() -> I32 {
 	v = Null.value()
 	return takes_null(v)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_accepts_fp32_arithmetic_and_comparison() {
+        let source = r#"
+fun main() -> I32 {
+	a = 1.25
+	b = 2.5
+	c = a + b
+	if c > b {
+		return 1
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_accepts_fp64_arithmetic_and_comparison() {
+        let source = r#"
+fun main() -> I32 {
+	a = 1.25f64
+	b = 2.5f64
+	c = a + b
+	if c > b {
+		return 1
+	}
+	return 0
 }
 "#
         .to_string();

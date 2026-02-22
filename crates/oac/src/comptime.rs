@@ -72,6 +72,8 @@ impl TypeCatalog {
             "Bool",
             "I32",
             "I64",
+            "FP32",
+            "FP64",
             "String",
             "Type",
             "DeclSet",
@@ -462,6 +464,14 @@ fn evaluate_expression(
                 Some(path.to_string()),
             ))
         }
+        Expression::Literal(Literal::Float32(value)) => Err(anyhow::anyhow!(
+            "FP32 literal {} is unsupported in comptime evaluator",
+            value
+        )),
+        Expression::Literal(Literal::Float64(value)) => Err(anyhow::anyhow!(
+            "FP64 literal {} is unsupported in comptime evaluator",
+            value
+        )),
         Expression::Literal(Literal::String(s)) => Ok(CtValueWithMeta::new(
             CtValue::String(s.clone()),
             Some(path.to_string()),

@@ -179,6 +179,8 @@ pub enum Expression {
 #[derive(Clone, Debug, Serialize)]
 pub enum Literal {
     Int(u32),
+    Float32(String),
+    Float64(String),
     String(String),
     Bool(bool),
 }
@@ -1292,6 +1294,19 @@ fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
             Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(rhs)))
         }
         TokenData::Number(n) => Ok(Expression::Literal(Literal::Int(n))),
+        TokenData::Float(value) => {
+            if let Some(TokenData::Word(suffix)) = tokens.first() {
+                if suffix == "f64" {
+                    tokens.remove(0);
+                    return Ok(Expression::Literal(Literal::Float64(value)));
+                }
+                if suffix == "f32" {
+                    tokens.remove(0);
+                    return Ok(Expression::Literal(Literal::Float32(value)));
+                }
+            }
+            Ok(Expression::Literal(Literal::Float32(value)))
+        }
         TokenData::String(s) => Ok(Expression::Literal(Literal::String(s))),
         TokenData::Word(s) => {
             if s == "match" {
@@ -1752,6 +1767,66 @@ fun main() -> I32 {
         assert!(!main.is_comptime);
         assert!(matches!(main.body[0], super::Statement::Prove { .. }));
         assert!(matches!(main.body[1], super::Statement::Assert { .. }));
+    }
+
+    #[test]
+    fn parses_fp32_literal_expression() {
+        let source = r#"
+fun main() -> I32 {
+	x = 1.25
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        let main = &ast.top_level_functions[0];
+        let super::Statement::Assign { value, .. } = &main.body[0] else {
+            panic!("expected assignment statement");
+        };
+        let super::Expression::Literal(super::Literal::Float32(value)) = value else {
+            panic!("expected FP32 literal");
+        };
+        assert_eq!(value, "1.25");
+    }
+
+    #[test]
+    fn parses_fp64_literal_expression() {
+        let source = r#"
+fun main() -> I32 {
+	x = 1.25f64
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        let main = &ast.top_level_functions[0];
+        let super::Statement::Assign { value, .. } = &main.body[0] else {
+            panic!("expected assignment statement");
+        };
+        let super::Expression::Literal(super::Literal::Float64(value)) = value else {
+            panic!("expected FP64 literal");
+        };
+        assert_eq!(value, "1.25");
+    }
+
+    #[test]
+    fn parses_float_literals_ast_snapshot() {
+        let source = r#"
+fun main() -> I32 {
+	a = 1.25
+	b = 2.5f64
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        insta::assert_json_snapshot!("parser_float_literals_ast", ast);
     }
 
     #[test]

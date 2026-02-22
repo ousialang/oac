@@ -34,7 +34,7 @@ Artifacts emitted during build:
 ### Tokenizer (`tokenizer.rs`)
 
 - Eager tokenization model (whole file first).
-- Token kinds include newline, parenthesis, number, string, word, symbol, comment.
+- Token kinds include newline, parenthesis, integer number, decimal float literal (`Float`), string, word, symbol, comment.
 - Supports escaped string chars (`\\`, `\"`, `\n`, `\t`, `\r`).
 - Produces `SyntaxError` with position metadata.
 
@@ -70,6 +70,8 @@ Important enforced invariants include:
 - user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
 - namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
 - namespace call lowering is also used for template-instantiated helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
+- built-in `FP32`/`FP64` exist alongside integer primitives; unsuffixed decimal literals type-check as `FP32`, and `f64`-suffixed decimal literals type-check as `FP64`
+- arithmetic/comparison on numerics requires matching widths/types (`I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - stdlib split modules intentionally expose namespaced helper APIs for JSON/newstring (`Json.*`, `NewString.print(...)`) while keeping JSON enums as top-level types
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
@@ -88,6 +90,7 @@ Important enforced invariants include:
 - Generates QBE module/functions/data.
 - Includes builtins and interop helpers (for example integer ops, print, string utilities).
 - Handles expression lowering and control-flow generation.
+- Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.
 - Produces snapshots in tests for codegen and runtime behavior.
 
 ## SMT Adjacent Paths
@@ -109,6 +112,7 @@ Important enforced invariants include:
 - Relation state also threads predecessor-block identity so branch-edge semantics for `phi` are explicit.
 - Property surface is fixed: query whether halt with `exit == 1` is reachable (`(query bad)`).
 - Unsupported constructs are fail-closed hard errors (no havoc fallback path).
+- Floating-point SMT reasoning is intentionally unsupported today; FP32/FP64 values/compares in obligations are rejected fail-closed.
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
 - Struct-invariant SAT failures include a compact checker CFG witness (block path + branch directions); for `main(argc, argv)` obligations, `oac` also extracts a concrete `argc` witness via additional CHC range queries.

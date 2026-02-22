@@ -612,7 +612,15 @@ fn validate_statement_supported(
                 }
                 QbeInstr::Cmp(cmp_ty, kind, ..) => {
                     let cmp_assign_ty = assign_type_from_qbe(cmp_ty);
-                    if matches!(kind, QbeCmp::O | QbeCmp::Uo)
+                    if matches!(
+                        kind,
+                        QbeCmp::O
+                            | QbeCmp::Uo
+                            | QbeCmp::Lt
+                            | QbeCmp::Le
+                            | QbeCmp::Gt
+                            | QbeCmp::Ge
+                    )
                         || matches!(assign_ty, AssignType::Single | AssignType::Double)
                         || matches!(cmp_assign_ty, AssignType::Single | AssignType::Double)
                     {
@@ -1100,6 +1108,9 @@ fn cmp_predicate(kind: QbeCmp, lhs: &str, rhs: &str) -> String {
     match kind {
         QbeCmp::Eq => format!("(= {lhs} {rhs})"),
         QbeCmp::Ne => format!("(distinct {lhs} {rhs})"),
+        QbeCmp::Lt | QbeCmp::Le | QbeCmp::Gt | QbeCmp::Ge => {
+            unreachable!("floating-point compares should be rejected")
+        }
         QbeCmp::Slt => format!("(bvslt {lhs} {rhs})"),
         QbeCmp::Sle => format!("(bvsle {lhs} {rhs})"),
         QbeCmp::Sgt => format!("(bvsgt {lhs} {rhs})"),
@@ -1393,6 +1404,12 @@ fn value_to_smt(
             bv_const_u64(addr, 64)
         }
         QbeValue::Const(value) => bv_const_u64(*value, 64),
+        QbeValue::SingleConst(_) => {
+            unreachable!("floating-point constants should be rejected")
+        }
+        QbeValue::DoubleConst(_) => {
+            unreachable!("floating-point constants should be rejected")
+        }
     }
 }
 
