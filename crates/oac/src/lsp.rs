@@ -831,6 +831,10 @@ fn parse_symbol_declaration(line: &str) -> Option<(String, String, u32)> {
         let name = parse_symbol_name(rest)?;
         return Some((name.clone(), format!("comptime fun {name}"), 12));
     }
+    if let Some(rest) = line.strip_prefix("extern fun ") {
+        let name = parse_symbol_name(rest)?;
+        return Some((name.clone(), format!("extern fun {name}"), 12));
+    }
     if let Some(rest) = line.strip_prefix("comptime apply ") {
         let name = parse_symbol_name(rest)?;
         return Some((name.clone(), format!("comptime apply {name}"), 5));

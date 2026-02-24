@@ -33,12 +33,15 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Templates use square brackets for type parameters and instantiation arguments: `template Option[T] { ... }`, `instantiate OptionI32 = Option[I32]`.
 - Top-level imports are flat and same-directory only: `import "helpers.oa"`. Imported declarations are merged into one global scope.
 - Namespaces are top-level and declaration-only: `namespace TypeName { fun helper(...) -> ... { ... } }`. Namespace functions are called via `TypeName.helper(...)` and are lowered to internal function names using `TypeName__helper`.
+- External declarations use `extern fun name(args...) -> Type` (no body). In v1, `extern fun` is top-level only.
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.
-- The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_newstring.oa`, `std_collections.oa`, `std_json.oa`).
+- The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_newstring.oa`, `std_collections.oa`, `std_json.oa`, `std_clib.oa`).
 - The split stdlib now exposes namespaced helper APIs where applicable: JSON parsing helpers are called via `Json.*` (for example `Json.json_kind`, `Json.parse_json_document_result`), and newstring printing via `NewString.print(...)`.
 - The stdlib also exposes `AsciiChar` and `AsciiCharResult` with namespaced helpers (`AsciiChar.from_code`, `AsciiChar.from_string_at`, `AsciiChar.code`, `AsciiChar.is_digit`, `AsciiChar.is_whitespace`, `AsciiChar.equals`); `AsciiChar` stores a wrapped `Char`.
 - The stdlib also exposes `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with namespaced helpers (`Char.from_code`, `Char.code`, `Char.equals`).
 - The stdlib now also exposes `Null` as an empty struct (`struct Null {}`) with namespaced constructor helper `Null.value()`.
+- C interop signatures are std-owned `extern fun` declarations in `std_clib.oa` (the compiler no longer injects a hardcoded libc JSON signature table).
+- Built-in `Void` is available for C-style procedure signatures; in v1 only `extern fun` may return `Void`, and `Void` is rejected as a parameter type.
 - The resolver also exposes `PtrInt` as a standard numeric alias hardcoded to `I64` (for pointer-sized integer use sites).
 - Character literals use single quotes and lower to `Char` construction (`'x'`, escapes like `'\n'` and `'\''`); parser lowers literals to `Char.from_code(...)`.
 - Identifier tokenization is EOF-safe: trailing words (including `_`) now lex as `Word` tokens instead of panicking, which keeps `oac lsp` stable on incomplete buffers.

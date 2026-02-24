@@ -69,6 +69,7 @@ Core AST includes:
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
 - Top-level test declarations (`test "Name" { ... }`).
 - Top-level namespaces (`namespace Name { fun ... }`) flattened into mangled function symbols (`Name__fn`).
+- Top-level external declarations (`extern fun name(...) -> Type`) with signature-only AST nodes.
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`Name.fn(args)` parses as postfix call and resolves either as enum constructor or namespace call)
 - Char literals are parsed from single quotes (for example `'x'`, `'\n'`) and lowered to a namespaced constructor call (`Char.from_code(<i32>)`).
@@ -78,7 +79,7 @@ Operator precedence is explicitly encoded in parser.
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules) using the same flat import resolver, including stdlib invariant declarations.
+- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules including `std_clib.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - type definition graph creation
 - function signature collection
 - function body semantic checks
@@ -101,7 +102,11 @@ Important enforced invariants include:
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
+- C interop signatures are no longer compiler-injected from JSON; they are declared in stdlib via `extern fun` in `std_clib.oa`
 - resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
+- resolver builtins also include `Void` for procedure-like extern signatures
+- `extern fun` declarations are signature-only (`extern` cannot be `comptime` and extern functions must not have bodies)
+- `Void` is restricted in v1: function parameters cannot be `Void`, and only `extern fun` may return `Void`
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`
@@ -115,8 +120,9 @@ Important enforced invariants include:
 ## Backend (`qbe_backend.rs`)
 
 - Generates QBE module/functions/data.
-- Includes builtins and interop helpers (for example integer ops, print, string utilities).
+- Includes builtins and interop helpers (for example integer ops, print, string utilities) plus user/std-declared extern call targets.
 - Handles expression lowering and control-flow generation.
+- Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
 - Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.
 - Produces snapshots in tests for codegen and runtime behavior.
 
@@ -150,6 +156,7 @@ Important enforced invariants include:
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
+- Symbol indexing includes `extern fun` declarations in document symbols.
 - Diagnostics are produced from tokenizer/parser/import-resolution/type-resolution, and published via `textDocument/publishDiagnostics`.
 
 ## Implementation Guidance

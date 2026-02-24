@@ -52,6 +52,7 @@ pub fn lower_tests_to_program(mut ast: Ast) -> anyhow::Result<LoweredTestProgram
             body,
             return_type: "I32".to_string(),
             is_comptime: false,
+            is_extern: false,
         });
         test_names.push(test.name);
     }
@@ -83,6 +84,7 @@ pub fn lower_tests_to_program(mut ast: Ast) -> anyhow::Result<LoweredTestProgram
         body: main_body,
         return_type: "I32".to_string(),
         is_comptime: false,
+        is_extern: false,
     });
 
     Ok(LoweredTestProgram { ast, test_names })

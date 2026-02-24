@@ -10,6 +10,7 @@ pub enum BuiltInType {
     FP64,
     String,
     Bool,
+    Void,
 }
 
 impl FromStr for BuiltInType {
@@ -23,26 +24,8 @@ impl FromStr for BuiltInType {
             "FP64" => Ok(BuiltInType::FP64),
             "String" => Ok(BuiltInType::String),
             "Bool" => Ok(BuiltInType::Bool),
+            "Void" => Ok(BuiltInType::Void),
             _ => Err(anyhow::anyhow!("unknown type {}", s)),
         }
     }
-}
-
-pub fn libc_type_signatures() -> Vec<LibcTypeSignature> {
-    let s = include_str!("libc_type_signatures.json");
-    serde_json::from_str(s).unwrap()
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LibcTypeSignature {
-    pub name: String,
-    pub return_type: String,
-    pub params: Vec<LibcTypeSignatureParam>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct LibcTypeSignatureParam {
-    pub name: String,
-    pub r#type: String,
 }

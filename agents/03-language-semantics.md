@@ -11,6 +11,7 @@ From `crates/oac/src/builtins.rs`:
 - `FP64`
 - `String`
 - `Bool`
+- `Void`
 
 Resolver-defined numeric aliases in `crates/oac/src/ir.rs`:
 - `Int` aliases to `I32`
@@ -33,6 +34,7 @@ Observed in parser/IR implementation:
 - Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
 - Top-level namespaces for helper functions: `namespace TypeName { fun helper(...) -> ... { ... } }`, callable as `TypeName.helper(...)`.
+- Top-level external function declarations: `extern fun name(args...) -> Type` (signature-only, no body).
 - Char literals with single quotes are supported (`'x'`, escape forms like `'\n'`) and lower to std `Char` values.
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
@@ -53,11 +55,17 @@ Observed in parser/IR implementation:
 - Assignments bind variable type to expression type.
 - Numeric binary ops are strict and same-type only: `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
-- Namespace bodies currently accept runtime `fun` declarations only (no `comptime` declarations inside `namespace` blocks).
+- Namespace bodies currently accept runtime `fun` declarations only (no `comptime` or `extern` declarations inside `namespace` blocks).
+- `extern fun` declarations are top-level-only in v1, cannot be marked `comptime`, and must not define a body.
+- `Void` cannot be used as a function parameter type.
+- In v1, only `extern fun` may return `Void`.
+- Assignment statements cannot bind variables to `Void`-typed expressions.
+- `Void`-return calls are statement-only (cannot be used as expression values).
 - Namespace calls are syntactic sugar for internal function names using `Namespace__function` lowering, while preserving existing enum constructor call syntax `Enum.Variant(...)`.
 - Namespace call lowering also applies to template-instantiated helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
-- The built-in stdlib is composed through flat imports from `std.oa` into split sibling files, then merged into one global scope before user type-checking (including stdlib invariant declarations).
+- The built-in stdlib is composed through flat imports from `std.oa` into split sibling files (including `std_clib.oa` extern bindings), then merged into one global scope before user type-checking (including stdlib invariant declarations).
+- C interop signatures are std-defined via `extern fun`; compiler-side hardcoded libc JSON signatures were removed.
 - The split stdlib now uses namespaced helper APIs for JSON and newstring helpers (`Json.*`, `NewString.print(...)`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs). `AsciiChar` wraps `Char` and has an invariant requiring `0 <= Char.code(ch) <= 127`.
 - The split stdlib also defines `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with helpers `Char.from_code(...)`, `Char.code(...)`, and `Char.equals(...)`.

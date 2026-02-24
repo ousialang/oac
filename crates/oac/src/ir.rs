@@ -6,7 +6,7 @@ use serde::Serialize;
 use tracing::trace;
 
 use crate::{
-    builtins::{libc_type_signatures, BuiltInType},
+    builtins::BuiltInType,
     flat_imports,
     parser::{self, Ast, Expression, Literal, StructDef, UnaryOp},
 };
@@ -336,6 +336,12 @@ impl ResolvedProgram {
                     &self.function_sigs,
                     &self.type_definitions,
                 )?;
+                if variable_type == "Void" {
+                    return Err(anyhow::anyhow!(
+                        "cannot assign expression of type Void to variable {}",
+                        variable
+                    ));
+                }
                 var_types.insert(variable.clone(), variable_type);
             }
             parser::Statement::Return { expr } => {
@@ -357,6 +363,12 @@ impl ResolvedProgram {
             }
             parser::Statement::Expression { expr } => {
                 trace!("Type-checking expression inside function body: {:#?}", expr);
+                let _ = get_expression_type(
+                    expr,
+                    &var_types,
+                    &self.function_sigs,
+                    &self.type_definitions,
+                )?;
             }
         }
 
@@ -463,6 +475,12 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         .map_or(Ok(()), |_| {
             Err(anyhow::anyhow!("failed to insert String type definition"))
         })?;
+    program
+        .type_definitions
+        .insert("Void".to_string(), TypeDef::BuiltIn(BuiltInType::Void))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert Void type definition"))
+        })?;
     for semantic_ty in SEMANTIC_BUILTIN_TYPES {
         program
             .type_definitions
@@ -479,29 +497,6 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     // Built-in functions
-
-    for signature in libc_type_signatures() {
-        let sig = FunctionSignature {
-            parameters: signature
-                .params
-                .iter()
-                .map(|param| FunctionParameter {
-                    name: param.name.clone(),
-                    ty: param.r#type.clone(),
-                })
-                .collect(),
-            return_type: signature.return_type.clone(),
-        };
-
-        // libc symbol as-is, e.g. `strcmp`.
-        program
-            .function_sigs
-            .insert(signature.name.clone(), sig.clone());
-        // Backward-compatible alias, e.g. `c_strcmp`.
-        program
-            .function_sigs
-            .insert(format!("c_{}", signature.name), sig);
-    }
 
     program
         .function_sigs
@@ -743,18 +738,66 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         }
     }
 
+    let user_extern_functions = ast
+        .top_level_functions
+        .iter()
+        .filter(|f| f.is_extern)
+        .cloned()
+        .collect::<Vec<_>>();
     let user_runtime_functions = ast
         .top_level_functions
         .iter()
-        .filter(|f| !f.is_comptime)
+        .filter(|f| !f.is_comptime && !f.is_extern)
         .cloned()
         .collect::<Vec<_>>();
     let user_comptime_functions = ast
         .top_level_functions
         .iter()
-        .filter(|f| f.is_comptime)
+        .filter(|f| f.is_comptime && !f.is_extern)
         .cloned()
         .collect::<Vec<_>>();
+
+    for function in &user_extern_functions {
+        if function.is_comptime {
+            return Err(anyhow::anyhow!(
+                "extern function {} cannot be comptime",
+                function.name
+            ));
+        }
+        if !function.body.is_empty() {
+            return Err(anyhow::anyhow!(
+                "extern function {} must not have a body",
+                function.name
+            ));
+        }
+        if RESERVED_BUILTIN_FUNCTION_NAMES.contains(&function.name.as_str()) {
+            return Err(anyhow::anyhow!(
+                "function name {} is reserved for builtin assertion semantics",
+                function.name
+            ));
+        }
+        let sig = FunctionSignature {
+            parameters: function
+                .parameters
+                .iter()
+                .map(|p| FunctionParameter {
+                    name: p.name.clone(),
+                    ty: p.ty.clone(),
+                })
+                .collect::<Vec<_>>(),
+            return_type: function.return_type.clone(),
+        };
+        validate_function_signature_types(&function.name, &sig, &program.type_definitions, true)?;
+        program
+            .function_sigs
+            .insert(function.name.clone(), sig)
+            .map_or(Ok(()), |_| {
+                Err(anyhow::anyhow!(
+                    "failed to insert function signature for {}",
+                    function.name
+                ))
+            })?;
+    }
 
     let mut all_functions = user_runtime_functions.clone();
     let synthesized_invariants = synthesize_invariant_functions(
@@ -790,6 +833,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 .collect::<anyhow::Result<Vec<_>>>()?,
             return_type: function.return_type.clone(),
         };
+        validate_function_signature_types(&function.name, &sig, &program.type_definitions, false)?;
 
         program
             .function_sigs
@@ -820,6 +864,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 .collect::<Vec<_>>(),
             return_type: function.return_type.clone(),
         };
+        validate_function_signature_types(&function.name, &sig, &program.type_definitions, false)?;
         program.function_sigs.insert(function.name.clone(), sig);
     }
 
@@ -903,6 +948,48 @@ fn type_def_name(type_def: &parser::TypeDefDecl) -> &str {
         parser::TypeDefDecl::Struct(s) => &s.name,
         parser::TypeDefDecl::Enum(e) => &e.name,
     }
+}
+
+fn validate_function_signature_types(
+    function_name: &str,
+    sig: &FunctionSignature,
+    type_definitions: &HashMap<String, TypeDef>,
+    allow_void_return: bool,
+) -> anyhow::Result<()> {
+    for param in &sig.parameters {
+        if !type_definitions.contains_key(&param.ty) {
+            return Err(anyhow::anyhow!(
+                "function {} has parameter {} with unknown type {}",
+                function_name,
+                param.name,
+                param.ty
+            ));
+        }
+        if param.ty == "Void" {
+            return Err(anyhow::anyhow!(
+                "function {} cannot use Void as parameter type ({})",
+                function_name,
+                param.name
+            ));
+        }
+    }
+
+    if !type_definitions.contains_key(&sig.return_type) {
+        return Err(anyhow::anyhow!(
+            "function {} has unknown return type {}",
+            function_name,
+            sig.return_type
+        ));
+    }
+
+    if sig.return_type == "Void" && !allow_void_return {
+        return Err(anyhow::anyhow!(
+            "function {} cannot return Void (only extern functions may return Void in v1)",
+            function_name
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_main_signature(program: &ResolvedProgram) -> anyhow::Result<()> {
@@ -1284,6 +1371,7 @@ fn synthesize_invariant_functions(
             body: invariant.body.clone(),
             return_type: "Bool".to_string(),
             is_comptime: false,
+            is_extern: false,
         });
     }
     Ok(out)
@@ -1739,6 +1827,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                     &local_type_name_map,
                 ),
                 is_comptime: function.is_comptime,
+                is_extern: function.is_extern,
             });
         }
 
@@ -2474,7 +2563,13 @@ fun main() -> I32 {
             "missing PtrInt type alias from standard definitions"
         );
         assert!(
-            resolved.function_sigs.contains_key("Json__parse_json_document"),
+            resolved.type_definitions.contains_key("Void"),
+            "missing Void type from standard definitions"
+        );
+        assert!(
+            resolved
+                .function_sigs
+                .contains_key("Json__parse_json_document"),
             "missing Json__parse_json_document function from split stdlib"
         );
         assert!(
@@ -2488,6 +2583,14 @@ fun main() -> I32 {
         assert!(
             resolved.function_sigs.contains_key("Null__value"),
             "missing Null__value function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("malloc"),
+            "missing malloc extern function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("free"),
+            "missing free extern function from split stdlib"
         );
         assert!(
             resolved.struct_invariants.contains_key("AsciiChar"),
@@ -2513,6 +2616,61 @@ fun main(argc: I32, argv: I64) -> I32 {
         let tokens = tokenizer::tokenize(source).expect("tokenize source");
         let ast = parser::parse(tokens).expect("parse source");
         resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_accepts_extern_void_function_and_statement_call() {
+        let source = r#"
+fun main() -> I32 {
+	free(i32_to_i64(0))
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_rejects_void_parameter_type() {
+        let source = r#"
+extern fun bad(v: Void) -> I32
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("Void parameter type should fail");
+        assert!(err
+            .to_string()
+            .contains("cannot use Void as parameter type"));
+    }
+
+    #[test]
+    fn resolve_rejects_non_extern_void_return() {
+        let source = r#"
+fun helper() -> Void {
+	return 0
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("non-extern Void return should fail");
+        assert!(err
+            .to_string()
+            .contains("only extern functions may return Void"));
     }
 
     #[test]

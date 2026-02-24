@@ -38,7 +38,11 @@ Act like a compiler engineer, not a text editor:
 
 ### Backend/runtime behavior change
 - Inspect generated QBE text and runtime output snapshots.
-- Check interop assumptions with libc signatures and helper functions.
+- Check interop assumptions with std-declared `extern fun` bindings (`std_clib.oa`) and helper functions.
+
+### Interop/bindings behavior change
+- Prefer stdlib declarations (`extern fun`) over compiler hardcoded signature tables.
+- Audit `Void` constraints end-to-end (signature validation, type-checking, and backend lowering in statement position).
 
 ## Pre-Commit Checklist
 

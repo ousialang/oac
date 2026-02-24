@@ -91,6 +91,7 @@ pub struct Function {
     pub body: Vec<Statement>,
     pub return_type: String,
     pub is_comptime: bool,
+    pub is_extern: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -957,6 +958,48 @@ fn parse_function_declaration(
         body,
         return_type,
         is_comptime,
+        is_extern: false,
+    })
+}
+
+fn parse_extern_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Function> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("extern".to_string()),
+        "expected 'extern' keyword"
+    );
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("fun".to_string()),
+        "expected 'fun' keyword after 'extern'"
+    );
+
+    let name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        _ => return Err(anyhow::anyhow!("expected function name")),
+    };
+
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true
+            },
+        "expected opening parenthesis"
+    );
+    let parameters = parse_function_args(tokens)?;
+
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Symbols("->".to_string()),
+        "expected '->' after function parameters"
+    );
+    let return_type = parse_type_reference(tokens)?;
+
+    Ok(Function {
+        name,
+        parameters,
+        body: vec![],
+        return_type,
+        is_comptime: false,
+        is_extern: true,
     })
 }
 
@@ -1193,6 +1236,10 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
             }
             TokenData::Word(name) if name == "fun" => {
                 let function = parse_function_declaration(&mut tokens.tokens, false)?;
+                ast.top_level_functions.push(function);
+            }
+            TokenData::Word(name) if name == "extern" => {
+                let function = parse_extern_function_declaration(&mut tokens.tokens)?;
                 ast.top_level_functions.push(function);
             }
             TokenData::Word(name) if name == "test" => {
@@ -1507,6 +1554,11 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
             Some(TokenData::Word(name)) if name == "fun" => {
                 let function = parse_function_declaration(tokens, false)?;
                 top_level_functions.push(function);
+            }
+            Some(TokenData::Word(name)) if name == "extern" => {
+                return Err(anyhow::anyhow!(
+                    "template body only supports `fun`, `comptime fun`, type declarations, and invariants in v1"
+                ));
             }
             Some(TokenData::Word(name)) if name == "comptime" => match tokens.get(1) {
                 Some(TokenData::Word(kind)) if kind == "fun" => {
@@ -1949,6 +2001,32 @@ comptime apply build_counter(Counter)
         assert_eq!(ast.comptime_applies.len(), 1);
         assert_eq!(ast.comptime_applies[0].function_name, "build_counter");
         assert_eq!(ast.comptime_applies[0].argument_type, "Counter");
+    }
+
+    #[test]
+    fn parses_extern_function_declaration() {
+        let source = r#"
+extern fun free(ptr: PtrInt) -> Void
+
+fun main() -> I32 {
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+
+        assert_eq!(ast.top_level_functions.len(), 2);
+        let free = &ast.top_level_functions[0];
+        assert_eq!(free.name, "free");
+        assert!(free.is_extern);
+        assert!(!free.is_comptime);
+        assert!(free.body.is_empty());
+        assert_eq!(free.parameters.len(), 1);
+        assert_eq!(free.parameters[0].name, "ptr");
+        assert_eq!(free.parameters[0].ty, "PtrInt");
+        assert_eq!(free.return_type, "Void");
     }
 
     #[test]

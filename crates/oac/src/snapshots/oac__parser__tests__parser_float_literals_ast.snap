@@ -1,5 +1,6 @@
 ---
 source: crates/oac/src/parser.rs
+assertion_line: 1921
 expression: ast
 snapshot_kind: text
 ---
@@ -42,7 +43,8 @@ snapshot_kind: text
         }
       ],
       "return_type": "I32",
-      "is_comptime": false
+      "is_comptime": false,
+      "is_extern": false
     }
   ],
   "tests": [],

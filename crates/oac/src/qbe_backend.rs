@@ -425,6 +425,9 @@ fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type {
         ir::TypeDef::BuiltIn(BuiltInType::I32) => qbe::Type::Word,
         ir::TypeDef::BuiltIn(BuiltInType::FP32) => qbe::Type::Single,
         ir::TypeDef::BuiltIn(BuiltInType::FP64) => qbe::Type::Double,
+        ir::TypeDef::BuiltIn(BuiltInType::Void) => {
+            panic!("Void cannot be lowered to a QBE value type")
+        }
         ir::TypeDef::BuiltIn(BuiltInType::I64)
         | ir::TypeDef::BuiltIn(BuiltInType::String)
         | ir::TypeDef::Struct(_) => qbe::Type::Long, // pointer to struct
@@ -771,6 +774,9 @@ fn compile_statement(
             qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
         }
         parser::Statement::Expression { expr } => {
+            if compile_void_call_statement(ctx, qbe_func, expr, variables) {
+                return;
+            }
             compile_expr(ctx, qbe_func, &expr, variables);
         }
         parser::Statement::Prove { condition } => {
@@ -905,6 +911,9 @@ fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
             ir::TypeDef::BuiltIn(BuiltInType::Bool) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::I32) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::FP32) => 4,
+            ir::TypeDef::BuiltIn(BuiltInType::Void) => {
+                panic!("Void cannot be used in value-layout positions")
+            }
             ir::TypeDef::Enum(enum_def) => {
                 if enum_def.is_tagged_union {
                     8
@@ -948,6 +957,67 @@ fn struct_size_bytes(ctx: &CodegenCtx, struct_def: &StructDef) -> u64 {
         .sum()
 }
 
+fn resolve_void_call_target<'a>(
+    ctx: &CodegenCtx,
+    expr: &'a parser::Expression,
+) -> Option<(String, &'a [parser::Expression])> {
+    match expr {
+        parser::Expression::Call(function_name, args) => {
+            let sig = ctx.resolved.function_sigs.get(function_name)?;
+            if sig.return_type == "Void" {
+                Some((function_name.clone(), args.as_slice()))
+            } else {
+                None
+            }
+        }
+        parser::Expression::PostfixCall { callee, args } => {
+            let parser::Expression::FieldAccess {
+                struct_variable,
+                field,
+            } = callee.as_ref()
+            else {
+                return None;
+            };
+            let namespaced_call = parser::qualify_namespace_function_name(struct_variable, field);
+            let sig = ctx.resolved.function_sigs.get(&namespaced_call)?;
+            if sig.return_type == "Void" {
+                Some((namespaced_call, args.as_slice()))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn compile_void_call_statement(
+    ctx: &mut CodegenCtx,
+    func: &mut qbe::Function,
+    expr: &parser::Expression,
+    variables: &mut Variables,
+) -> bool {
+    let Some((function_name, args)) = resolve_void_call_target(ctx, expr) else {
+        return false;
+    };
+
+    let mut lowered_args = vec![];
+    for arg in args {
+        let (arg_var, arg_ty) = compile_expr(ctx, func, arg, variables);
+        let arg_type_def = ctx
+            .resolved
+            .type_definitions
+            .get(&arg_ty)
+            .expect("call argument type should exist");
+        lowered_args.push((
+            type_to_qbe(arg_type_def),
+            qbe::Value::Temporary(arg_var.clone()),
+        ));
+    }
+
+    func.add_instr(qbe::Instr::Call(function_name, lowered_args, None));
+    true
+}
+
 fn compile_named_call(
     ctx: &mut CodegenCtx,
     func: &mut qbe::Function,
@@ -981,6 +1051,11 @@ fn compile_named_call(
         .get(function_name)
         .unwrap()
         .clone();
+    assert!(
+        sig.return_type != "Void",
+        "void-return call {} cannot be used as an expression value",
+        function_name
+    );
     let return_type_def = ctx
         .resolved
         .type_definitions
@@ -1381,7 +1456,8 @@ fn compile_expr(
             let (left_var, left_ty) = compile_expr(ctx, func, left, variables);
             let (right_var, _right_ty) = compile_expr(ctx, func, right, variables);
             let operand_qbe_ty = type_ref_to_qbe(ctx, &left_ty);
-            let use_ordered_float_cmp = matches!(operand_qbe_ty, qbe::Type::Single | qbe::Type::Double);
+            let use_ordered_float_cmp =
+                matches!(operand_qbe_ty, qbe::Type::Single | qbe::Type::Double);
 
             let instr = match (op, &operand_qbe_ty) {
                 (Op::Eq, _) => qbe::Instr::Cmp(
@@ -1614,6 +1690,27 @@ fun main() -> I32 {
         assert!(
             qbe_ir.contains("call $Char__from_code"),
             "expected Char literal lowering call in qbe output, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_supports_void_extern_call_statement() {
+        let source = r#"
+fun main() -> I32 {
+	free(i32_to_i64(0))
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("call $free"),
+            "expected void extern call in qbe output, got:\n{qbe_ir}"
         );
     }
 
