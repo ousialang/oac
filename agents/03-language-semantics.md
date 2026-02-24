@@ -37,6 +37,7 @@ Observed in parser/IR implementation:
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
+- Top-level test declarations: `test "Name" { ... }`.
 
 ## Semantic Rules You Must Preserve
 
@@ -71,6 +72,9 @@ Observed in parser/IR implementation:
 - Checker construction inlines reachable user-function calls into the site checker before CHC encoding, so loops/control-flow are reasoned about on QBE transitions.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
 - Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` or `(argc: I32, argv: PtrInt)` form.
+- `oac test <file.oa>` is fail-fast: each `test` block is lowered to a generated zero-arg `I32` function, and a generated `main` executes tests in declaration order. A failing runtime `assert` exits immediately with code `242`.
+- `oac test` requires at least one `test` declaration and rejects source files that already define `main` (because `main` is synthesized by the test runner).
+- `oac build` does not lower or execute `test` declarations; test lowering is isolated to the `oac test` command path.
 - Recursion cycles in the reachable user call graph are rejected fail-closed for struct invariant verification.
 - Unsupported proving constructs at QBE level fail closed through `qbe-smt` (hard `Unsupported` encoding errors).
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).

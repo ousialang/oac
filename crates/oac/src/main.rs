@@ -8,10 +8,11 @@ mod prove;
 mod qbe_backend;
 mod riscv_smt; // Add the new module
 mod struct_invariants;
+mod test_framework;
 mod tokenizer;
 
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use clap::Parser;
@@ -30,6 +31,10 @@ fn main() -> anyhow::Result<()> {
         OacSubcommand::Build(build) => {
             let current_dir = std::env::current_dir()?;
             compile(&current_dir, build)?;
+        }
+        OacSubcommand::Test(test) => {
+            let current_dir = std::env::current_dir()?;
+            run_tests(&current_dir, test)?;
         }
         OacSubcommand::Lsp(_) => {
             lsp::run()?;
@@ -92,13 +97,69 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     std::fs::write(&ast_path, serde_json::to_string_pretty(&ast)?)?;
     debug!(ast_path = %ast_path.display(), "Parsed source file");
 
-    let ir = ir::resolve(ast.clone())?;
+    compile_ast_to_executable(&target_dir, ast, build.arch.as_deref(), "app")?;
+
+    Ok(())
+}
+
+fn run_tests(current_dir: &Path, test: Test) -> anyhow::Result<()> {
+    let target_dir = current_dir.join("target").join("oac").join("test");
+    std::fs::create_dir_all(&target_dir)?;
+
+    let source_path = Path::new(&test.source);
+    let source = std::fs::read_to_string(source_path)?;
+    trace!(source_len = source.len(), "Read test source file");
+
+    let tokens = tokenizer::tokenize(source)?;
+    let tokens_path = target_dir.join("tokens.json");
+    std::fs::write(&tokens_path, serde_json::to_string_pretty(&tokens)?)?;
+    trace!(tokens_path = %tokens_path.display(), "Tokenized test source file");
+
+    let root_ast = parser::parse(tokens)?;
+    let mut ast = flat_imports::resolve_ast(root_ast, source_path)?;
+    comptime::execute_comptime_applies(&mut ast)?;
+
+    let lowered = test_framework::lower_tests_to_program(ast)?;
+    let test_count = lowered.test_names.len();
+    let lowered_ast = lowered.ast;
+    let ast_path = target_dir.join("ast.json");
+    std::fs::write(&ast_path, serde_json::to_string_pretty(&lowered_ast)?)?;
+    debug!(ast_path = %ast_path.display(), "Lowered test AST");
+
+    let executable_path = compile_ast_to_executable(&target_dir, lowered_ast, None, "app")?;
+
+    let output = std::process::Command::new(&executable_path).output()?;
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        let exit_code = output
+            .status
+            .code()
+            .map_or("signal".to_string(), |code| code.to_string());
+        return Err(anyhow::anyhow!(
+            "test run failed after launching {} test(s) (exit code: {})",
+            test_count,
+            exit_code
+        ));
+    }
+
+    println!("test run passed: {} test(s)", test_count);
+    Ok(())
+}
+
+fn compile_ast_to_executable(
+    target_dir: &Path,
+    ast: parser::Ast,
+    arch: Option<&str>,
+    executable_name: &str,
+) -> anyhow::Result<PathBuf> {
+    let ir = ir::resolve(ast)?;
     let ir_path = target_dir.join("ir.json");
     std::fs::write(&ir_path, serde_json::to_string_pretty(&ir)?)?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
     let qbe_ir = qbe_backend::compile(ir.clone());
-    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, &target_dir)?;
-    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, &target_dir)?;
+    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, target_dir)?;
+    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, target_dir)?;
     reject_proven_non_terminating_main(&qbe_ir)?;
     let qbe_ir_text = qbe_ir.to_string();
 
@@ -109,7 +170,7 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     let assembly_path = target_dir.join("assembly.s");
     let mut qbe_cmd = std::process::Command::new("qbe");
 
-    if let Some(arch) = build.arch.as_ref() {
+    if let Some(arch) = arch {
         qbe_cmd.arg("-t").arg(arch);
     }
 
@@ -128,12 +189,12 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
 
     debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
 
-    let executable_path = target_dir.join("app");
+    let executable_path = target_dir.join(executable_name);
 
     let mut cc_cmd = std::process::Command::new("zig");
     cc_cmd.arg("cc").arg("-g").arg("-o").arg(&executable_path);
-    if let Some(arch) = build.arch.as_ref() {
-        let cc_arch = match arch.as_str() {
+    if let Some(arch) = arch {
+        let cc_arch = match arch {
             "rv64" => "riscv64-linux-gnu",
             _ => panic!("invalid arch"),
         };
@@ -151,7 +212,7 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
 
     info!(executable_path = %executable_path.display(), "Assembly compiled to executable");
 
-    Ok(())
+    Ok(executable_path)
 }
 
 fn reject_proven_non_terminating_main(qbe_module: &qbe::Module) -> anyhow::Result<()> {
@@ -212,6 +273,7 @@ struct Oac {
 #[derive(clap::Subcommand)]
 enum OacSubcommand {
     Build(Build),
+    Test(Test),
     Lsp(LspOpts),
     RiscvSmt(RiscvSmtOpts),
 }
@@ -220,6 +282,11 @@ enum OacSubcommand {
 struct Build {
     source: String,
     arch: Option<String>,
+}
+
+#[derive(clap::Parser)]
+struct Test {
+    source: String,
 }
 
 #[derive(clap::Parser, Debug)]

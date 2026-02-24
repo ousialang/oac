@@ -71,6 +71,7 @@ fn resolve_ast_inner(
     merged
         .top_level_functions
         .extend(parsed_ast.top_level_functions);
+    merged.tests.extend(parsed_ast.tests);
     merged.invariants.extend(parsed_ast.invariants);
     merged
         .template_definitions
@@ -116,6 +117,7 @@ fn resolve_import_path(source_dir: &Path, import_path: &str) -> anyhow::Result<P
 fn merge_flat_ast(dst: &mut parser::Ast, mut src: parser::Ast) {
     dst.type_definitions.append(&mut src.type_definitions);
     dst.top_level_functions.append(&mut src.top_level_functions);
+    dst.tests.append(&mut src.tests);
     dst.invariants.append(&mut src.invariants);
     dst.template_definitions
         .append(&mut src.template_definitions);
@@ -143,6 +145,10 @@ mod tests {
             r#"
 fun helper() -> I32 {
 	return 7
+}
+
+test "helper test" {
+	assert(true)
 }
 "#,
         )
@@ -178,6 +184,8 @@ fun main() -> I32 {
             merged.top_level_functions.iter().any(|f| f.name == "main"),
             "missing root main function"
         );
+        assert_eq!(merged.tests.len(), 1);
+        assert_eq!(merged.tests[0].name, "helper test");
     }
 
     #[test]

@@ -45,6 +45,7 @@ snapshot_kind: text
       "is_comptime": false
     }
   ],
+  "tests": [],
   "invariants": [],
   "template_definitions": [],
   "template_instantiations": [],

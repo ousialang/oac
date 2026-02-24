@@ -29,6 +29,28 @@ Artifacts emitted during build:
 - `target/oac/assembly.s`
 - `target/oac/app`
 
+## End-to-End Test Flow
+
+Defined in `crates/oac/src/main.rs` (`run_tests` function):
+
+1. Read source file.
+2. Tokenize with `tokenizer::tokenize`.
+3. Parse with `parser::parse`.
+4. Resolve flat imports via `flat_imports` and execute comptime applies.
+5. Lower top-level `test "..." { ... }` declarations via `test_framework::lower_tests_to_program` into generated test functions plus a generated `main`.
+6. Resolve/type-check with `ir::resolve`.
+7. Lower to QBE, run prove/invariant checks, run non-termination classification, emit QBE/assembly, and link executable (same backend path as `oac build`).
+8. Execute `target/oac/test/app` and treat non-zero exit status as test failure.
+
+Artifacts emitted during test runs:
+- `target/oac/test/tokens.json`
+- `target/oac/test/ast.json`
+- `target/oac/test/ir.json`
+- `target/oac/test/ir.qbe`
+- `target/oac/test/assembly.s`
+- `target/oac/test/app`
+- prove/invariant debug artifacts under `target/oac/test/prove/` and `target/oac/test/struct_invariants/` when obligations exist
+
 ## Front-End Details
 
 ### Tokenizer (`tokenizer.rs`)
@@ -45,6 +67,7 @@ Core AST includes:
 - Type defs: `Struct`, `Enum`
 - Templates and template instantiations (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`)
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
+- Top-level test declarations (`test "Name" { ... }`).
 - Top-level namespaces (`namespace Name { fun ... }`) flattened into mangled function symbols (`Name__fn`).
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`Name.fn(args)` parses as postfix call and resolves either as enum constructor or namespace call)
@@ -124,6 +147,7 @@ Important enforced invariants include:
 
 ## LSP Path
 
+- `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
 - Diagnostics are produced from tokenizer/parser/import-resolution/type-resolution, and published via `textDocument/publishDiagnostics`.

@@ -48,12 +48,14 @@ Key tests:
 - `crates/oac/src/tokenizer.rs` also covers `f64` suffix tokenization (`Float` token followed by `Word(\"f64\")`).
 - `crates/oac/src/tokenizer.rs` includes EOF word-lexing regressions to prevent LSP crash loops on partial files (`tokenizes_identifier_at_eof_without_panicking`, `tokenizes_underscore_identifier_at_eof_without_panicking`).
 - `crates/oac/src/parser.rs` tests assert template bracket syntax parsing, legacy `()` rejection, struct-invariant declaration syntax (`invariant ... for (...)`, with optional identifier, including inside templates), and optional trailing commas for struct declarations/literals.
+- `crates/oac/src/parser.rs` also includes top-level test declaration parsing coverage (`test "..." { ... }`).
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
 - `crates/oac/src/parser.rs` includes an AST snapshot regression (`parser_float_literals_ast`) for mixed FP32/FP64 literal parsing.
 - `crates/oac/src/parser.rs` also includes a regression for FP32 literal parsing (`Literal::Float32`).
 - `crates/oac/src/parser.rs` also includes a regression for FP64 literal parsing (`Literal::Float64` from `f64` suffix).
 - `crates/oac/src/parser.rs` also includes a char-literal AST snapshot regression (`parser_char_literals_ast`) that locks lowering (`'x'` -> `Char__from_code` call).
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
+- `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `std.oa` imports.
 - That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), null helper symbols (`Null`, `Null__value`), and the `PtrInt` standard alias.
 - The same regression also asserts stdlib `AsciiChar` invariant registration/synthesis (`struct_invariants["AsciiChar"]` and `__struct__AsciiChar__invariant` function definition).
@@ -74,6 +76,7 @@ Key tests:
 - `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving (including no-op behavior when no prove sites exist).
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
+- `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts QBE emission for namespaced calls contains mangled function call symbols.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP32 lowering emits single-precision constants/ops and ordered float comparisons.
@@ -103,6 +106,8 @@ If behavior intentionally changes, update snapshots deliberately and review diff
 - `qbe`
 - `zig` (used as `zig cc`)
 - `z3` (required when struct invariant or prove obligations are present)
+
+`oac test` has the same backend dependencies as `oac build` (`qbe`, `zig`, and `z3` when obligations are present), and additionally executes the produced binary under `target/oac/test/app`.
 
 VS Code extension development under `tools/vscode-ousia` requires:
 - `node` and `npm`

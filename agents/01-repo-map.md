@@ -23,6 +23,7 @@ Editor tooling in this repository:
 - `tools/vscode-ousia/README.md`: extension runtime expectations (notably `oac lsp` launch semantics and settings behavior).
 - `crates/oac/src/tokenizer.rs`: eager tokenizer and syntax error model.
 - `crates/oac/src/parser.rs`: AST definitions and parser.
+- `crates/oac/src/test_framework.rs`: isolated lowering for `test "..." { ... }` declarations into runnable generated functions/main used by `oac test`.
 - `crates/oac/src/ir.rs`: type resolution, semantic checks, and resolved IR.
 - `crates/oac/src/qbe_backend.rs`: code generation to QBE IR and end-to-end execution tests.
 - `crates/oac/src/builtins.rs`: built-in types and libc signatures.

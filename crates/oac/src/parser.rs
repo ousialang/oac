@@ -60,6 +60,12 @@ pub struct ComptimeApply {
     pub argument_type: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct TestDecl {
+    pub name: String,
+    pub body: Vec<Statement>,
+}
+
 pub const NAMESPACE_FUNCTION_SEPARATOR: &str = "__";
 
 pub fn qualify_namespace_function_name(namespace: &str, function_name: &str) -> String {
@@ -71,6 +77,7 @@ pub struct Ast {
     pub imports: Vec<ImportDecl>,
     pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
+    pub tests: Vec<TestDecl>,
     pub invariants: Vec<StructInvariantDecl>,
     pub template_definitions: Vec<TemplateDef>,
     pub template_instantiations: Vec<TemplateInstantiation>,
@@ -953,6 +960,30 @@ fn parse_function_declaration(
     })
 }
 
+fn parse_test_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TestDecl> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("test".to_string()),
+        "expected 'test' keyword"
+    );
+
+    let name = match tokens.remove(0) {
+        TokenData::String(name) => name,
+        token => {
+            return Err(anyhow::anyhow!(
+                "expected test name as string literal, got {:?}",
+                token
+            ));
+        }
+    };
+
+    while tokens.first() == Some(&TokenData::Newline) {
+        tokens.remove(0);
+    }
+
+    let body = parse_braced_block(tokens)?;
+    Ok(TestDecl { name, body })
+}
+
 fn parse_namespace_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Function>> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("namespace".to_string()),
@@ -1141,6 +1172,7 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         imports: vec![],
         type_definitions: vec![],
         top_level_functions: vec![],
+        tests: vec![],
         invariants: vec![],
         template_definitions: vec![],
         template_instantiations: vec![],
@@ -1162,6 +1194,10 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
             TokenData::Word(name) if name == "fun" => {
                 let function = parse_function_declaration(&mut tokens.tokens, false)?;
                 ast.top_level_functions.push(function);
+            }
+            TokenData::Word(name) if name == "test" => {
+                let test = parse_test_declaration(&mut tokens.tokens)?;
+                ast.tests.push(test);
             }
             TokenData::Word(name) if name == "comptime" => match tokens.tokens.get(1) {
                 Some(TokenData::Word(kind)) if kind == "fun" => {
@@ -1959,6 +1995,28 @@ fun main() -> I32 {
         assert_eq!(struct_variable, "Option");
         assert_eq!(field, "is_some");
         assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn parses_test_declaration() {
+        let source = r#"
+test "A hashtable MUST have size 0 when created" {
+	assert(true)
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        assert_eq!(ast.tests.len(), 1);
+        assert_eq!(
+            ast.tests[0].name,
+            "A hashtable MUST have size 0 when created"
+        );
+        assert!(matches!(
+            ast.tests[0].body[0],
+            super::Statement::Assert { .. }
+        ));
     }
 
     #[test]
