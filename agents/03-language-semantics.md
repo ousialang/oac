@@ -12,6 +12,10 @@ From `crates/oac/src/builtins.rs`:
 - `String`
 - `Bool`
 
+Resolver-defined numeric aliases in `crates/oac/src/ir.rs`:
+- `Int` aliases to `I32`
+- `PtrInt` aliases to `I64`
+
 ## Core Language Constructs
 
 Observed in parser/IR implementation:
@@ -30,6 +34,7 @@ Observed in parser/IR implementation:
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
 - Top-level namespaces for helper functions: `namespace TypeName { fun helper(...) -> ... { ... } }`, callable as `TypeName.helper(...)`.
 - Char literals with single quotes are supported (`'x'`, escape forms like `'\n'`) and lower to std `Char` values.
+- Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
 
@@ -43,7 +48,7 @@ Observed in parser/IR implementation:
 - `prove(...)` and `assert(...)` conditions must type-check to `Bool`.
 - `prove(...)` and `assert(...)` cannot be used as expressions.
 - Function return paths must not mix incompatible return types.
-- `main` must use one of two signatures: `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`.
+- `main` must use one of these signatures: `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`.
 - Assignments bind variable type to expression type.
 - Numeric binary ops are strict and same-type only: `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
@@ -65,7 +70,7 @@ Observed in parser/IR implementation:
 - `prove(...)` checker synthesis instruments QBE marker assignments (`.oac_prove_site_*`) and rewrites checker return to `1` when the proved condition is false at the targeted site.
 - Checker construction inlines reachable user-function calls into the site checker before CHC encoding, so loops/control-flow are reasoned about on QBE transitions.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
-- Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` form.
+- Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` or `(argc: I32, argv: PtrInt)` form.
 - Recursion cycles in the reachable user call graph are rejected fail-closed for struct invariant verification.
 - Unsupported proving constructs at QBE level fail closed through `qbe-smt` (hard `Unsupported` encoding errors).
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).

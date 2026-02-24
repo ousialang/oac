@@ -222,3 +222,7 @@ template HashTable[T] {
 	}
 }
 
+test "A hashtable MUST have size 0 when created" {
+	table = HashTable.empty()
+	assert(HashTable.size(table) == 0)
+}

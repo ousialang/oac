@@ -206,8 +206,9 @@ pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
         } else if c.is_ascii_alphabetic() || c == '_' {
             let mut word = String::new();
             word.push(c);
-            while chars.peek().is_some() && chars.peek().unwrap().is_ascii_alphanumeric()
-                || *chars.peek().unwrap() == '_'
+            while chars
+                .peek()
+                .is_some_and(|next| next.is_ascii_alphanumeric() || *next == '_')
             {
                 let c = chars.next().unwrap();
                 word.push(c);
@@ -251,6 +252,21 @@ mod tests {
     fn tokenizes_char_literals() {
         let tokens = tokenize("x = 'x'\n".to_string()).expect("tokenize source");
         assert!(tokens.tokens.contains(&TokenData::Char('x')));
+    }
+
+    #[test]
+    fn tokenizes_identifier_at_eof_without_panicking() {
+        let tokens = tokenize("identifier".to_string()).expect("tokenize source");
+        assert_eq!(
+            tokens.tokens,
+            vec![TokenData::Word("identifier".to_string())]
+        );
+    }
+
+    #[test]
+    fn tokenizes_underscore_identifier_at_eof_without_panicking() {
+        let tokens = tokenize("_".to_string()).expect("tokenize source");
+        assert_eq!(tokens.tokens, vec![TokenData::Word("_".to_string())]);
     }
 
     #[test]

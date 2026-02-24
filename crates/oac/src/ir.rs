@@ -43,6 +43,14 @@ const SEMANTIC_INTROSPECTION_BUILTINS: [&str; 13] = [
     "concat",
 ];
 
+fn normalize_numeric_alias(ty: &str) -> &str {
+    match ty {
+        "Int" => "I32",
+        "PtrInt" => "I64",
+        _ => ty,
+    }
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub enum TypeDef {
     Struct(StructDef),
@@ -102,14 +110,6 @@ pub struct StructInvariantDefinition {
 
 impl ResolvedProgram {
     fn type_check(&self, func_def: &FunctionDefinition) -> anyhow::Result<()> {
-        fn normalize_numeric_alias(ty: &str) -> &str {
-            if ty == "Int" {
-                "I32"
-            } else {
-                ty
-            }
-        }
-
         let mut var_types: HashMap<String, TypeRef> = HashMap::new();
         for param in &func_def.sig.parameters {
             var_types.insert(param.name.clone(), param.ty.clone());
@@ -420,6 +420,12 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         .insert("Int".to_string(), TypeDef::BuiltIn(BuiltInType::I32))
         .map_or(Ok(()), |_| {
             Err(anyhow::anyhow!("failed to insert Int type definition"))
+        })?;
+    program
+        .type_definitions
+        .insert("PtrInt".to_string(), TypeDef::BuiltIn(BuiltInType::I64))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert PtrInt type definition"))
         })?;
     program
         .type_definitions
@@ -914,9 +920,13 @@ fn validate_main_signature(program: &ResolvedProgram) -> anyhow::Result<()> {
 
     match main.sig.parameters.as_slice() {
         [] => Ok(()),
-        [argc, argv] if argc.ty == "I32" && argv.ty == "I64" => Ok(()),
+        [argc, argv]
+            if argc.ty == "I32" && normalize_numeric_alias(&argv.ty) == "I64" =>
+        {
+            Ok(())
+        }
         _ => Err(anyhow::anyhow!(
-            "unsupported main signature: expected `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`"
+            "unsupported main signature: expected `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`"
         )),
     }
 }
@@ -1768,14 +1778,6 @@ pub(crate) fn get_expression_type(
     fns: &HashMap<String, FunctionSignature>,
     type_definitions: &HashMap<String, TypeDef>,
 ) -> anyhow::Result<TypeRef> {
-    fn normalize_numeric_alias(ty: &str) -> &str {
-        if ty == "Int" {
-            "I32"
-        } else {
-            ty
-        }
-    }
-
     match expr {
         Expression::Match { subject, arms } => {
             let subject_type = get_expression_type(subject, var_types, fns, type_definitions)?;
@@ -2324,9 +2326,10 @@ pub(crate) fn get_expression_type(
             for (param, arg) in func.parameters.iter().zip(arguments) {
                 let param_type = &param.ty;
                 let arg_type = get_expression_type(arg, var_types, fns, type_definitions)?;
-                let compatible = param_type == &arg_type
+                let compatible = normalize_numeric_alias(param_type)
+                    == normalize_numeric_alias(&arg_type)
                     // C interop convenience: permit String where pointer-sized I64 is expected.
-                    || (param_type == "I64" && arg_type == "String");
+                    || (normalize_numeric_alias(param_type) == "I64" && arg_type == "String");
                 if !compatible {
                     return Err(anyhow::anyhow!(
                         "mismatched types: expected {:?}, but got {:?}",
@@ -2433,9 +2436,9 @@ pub(crate) fn get_expression_type(
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser, tokenizer};
+    use crate::{builtins::BuiltInType, parser, tokenizer};
 
-    use super::resolve;
+    use super::{resolve, TypeDef};
 
     #[test]
     fn resolve_loads_split_stdlib_files() {
@@ -2465,6 +2468,10 @@ fun main() -> I32 {
         assert!(
             resolved.type_definitions.contains_key("Null"),
             "missing Null type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("PtrInt"),
+            "missing PtrInt type alias from standard definitions"
         );
         assert!(
             resolved.function_sigs.contains_key("Json__parse_json_document"),
@@ -2521,6 +2528,38 @@ fun main(argc: I64, argv: I64) -> I32 {
         let ast = parser::parse(tokens).expect("parse source");
         let err = resolve(ast).expect_err("resolve should fail");
         assert!(err.to_string().contains("unsupported main signature"));
+    }
+
+    #[test]
+    fn resolve_accepts_ptr_int_alias_for_i64_positions() {
+        let source = r#"
+fun take_i64(v: I64) -> I64 {
+	return v
+}
+
+fun take_ptr(v: PtrInt) -> PtrInt {
+	return v
+}
+
+fun main(argc: I32, argv: PtrInt) -> I32 {
+	v = take_i64(argv)
+	w = take_ptr(v)
+	if w == argv {
+		return argc
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        assert!(matches!(
+            resolved.type_definitions.get("PtrInt"),
+            Some(TypeDef::BuiltIn(BuiltInType::I64))
+        ));
     }
 
     #[test]

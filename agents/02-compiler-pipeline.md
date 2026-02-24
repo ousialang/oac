@@ -36,6 +36,7 @@ Artifacts emitted during build:
 - Eager tokenization model (whole file first).
 - Token kinds include newline, parenthesis, integer number, decimal float literal (`Float`), char literal (`Char`), string, word, symbol, comment.
 - Supports escaped string chars (`\\`, `\"`, `\n`, `\t`, `\r`).
+- Word tokenization follows `[A-Za-z_][A-Za-z0-9_]*` and is EOF-safe (for example a file ending in `identifier` or `_` no longer panics during lexing).
 - Produces `SyntaxError` with position metadata.
 
 ### Parser (`parser.rs`)
@@ -77,9 +78,10 @@ Important enforced invariants include:
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
+- resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
-- `main` must be either `fun main() -> I32` or `fun main(argc: I32, argv: I64) -> I32`
+- `main` must be either `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`
 - optional struct invariants are declared as `invariant ... for (v: TypeName) { ... }` (optionally named with an identifier); the compiler synthesizes `__struct__<TypeName>__invariant` and also validates legacy explicit invariant functions using that naming/signature pattern
 - `prove(...)` sites reachable from `main` are verified by checker QBE synthesis: the site condition is marked in QBE, checker returns `1` when the proof condition is false at the site, and proving asks reachability of exit code `1` (`unsat` = proven, `sat` = compile failure)
 - reachable user-call return sites for struct-typed values are verified with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
