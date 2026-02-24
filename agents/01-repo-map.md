@@ -43,7 +43,7 @@ Editor tooling in this repository:
 - `stdlib/` and `examples/`: Ousia sample/library programs.
 - `docs/`: language notes/spec drafts (some are historical/incomplete).
 - `tools/vscode-ousia/`: editor integration package for local development and packaging (`.vsix`).
-- `tools/selfie/`: external project/reference material; treat as separate domain.
+- `tools/vscode-ousia/`: VS Code extension workspace and packaging assets.
 
 ## Source of Truth Order (When Docs Disagree)
 
