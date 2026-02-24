@@ -26,7 +26,7 @@ Do this autonomously. Do not defer it to “later docs cleanup”.
 
 ## Scope Note
 
-This repository currently contains both the Ousia compiler workspace (`crates/*`) and vendored/reference material under `tools/selfie/`. Prefer touching compiler code only unless explicitly requested.
+This repository contains the Ousia compiler workspace (`crates/*`) plus editor tooling under `tools/vscode-ousia/`. Prefer touching compiler code only unless explicitly requested.
 
 ## Current Syntax Notes
 
