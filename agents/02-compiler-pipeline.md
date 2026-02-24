@@ -34,7 +34,7 @@ Artifacts emitted during build:
 ### Tokenizer (`tokenizer.rs`)
 
 - Eager tokenization model (whole file first).
-- Token kinds include newline, parenthesis, integer number, decimal float literal (`Float`), string, word, symbol, comment.
+- Token kinds include newline, parenthesis, integer number, decimal float literal (`Float`), char literal (`Char`), string, word, symbol, comment.
 - Supports escaped string chars (`\\`, `\"`, `\n`, `\t`, `\r`).
 - Produces `SyntaxError` with position metadata.
 
@@ -47,6 +47,7 @@ Core AST includes:
 - Top-level namespaces (`namespace Name { fun ... }`) flattened into mangled function symbols (`Name__fn`).
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`Name.fn(args)` parses as postfix call and resolves either as enum constructor or namespace call)
+- Char literals are parsed from single quotes (for example `'x'`, `'\n'`) and lowered to a namespaced constructor call (`Char.from_code(<i32>)`).
 
 Operator precedence is explicitly encoded in parser.
 
@@ -74,6 +75,7 @@ Important enforced invariants include:
 - arithmetic/comparison on numerics requires matching widths/types (`I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - stdlib split modules intentionally expose namespaced helper APIs for JSON/newstring (`Json.*`, `NewString.print(...)`) while keeping JSON enums as top-level types
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
+- stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
 - declaration-based stdlib invariants (for example `AsciiChar` code-range invariant) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function

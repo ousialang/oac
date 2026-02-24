@@ -1,0 +1,19 @@
+struct Char {
+	code: I32,
+}
+
+namespace Char {
+	fun from_code(code: I32) -> Char {
+		return Char struct {
+			code: code,
+		}
+	}
+
+	fun code(ch: Char) -> I32 {
+		return ch.code
+	}
+
+	fun equals(a: Char, b: Char) -> Bool {
+		return a.code == b.code
+	}
+}

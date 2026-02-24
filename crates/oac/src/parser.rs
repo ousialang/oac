@@ -1307,6 +1307,10 @@ fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
             }
             Ok(Expression::Literal(Literal::Float32(value)))
         }
+        TokenData::Char(value) => Ok(Expression::Call(
+            qualify_namespace_function_name("Char", "from_code"),
+            vec![Expression::Literal(Literal::Int(value as u32))],
+        )),
         TokenData::String(s) => Ok(Expression::Literal(Literal::String(s))),
         TokenData::Word(s) => {
             if s == "match" {
@@ -1827,6 +1831,49 @@ fun main() -> I32 {
         let tokens = tokenize(source).expect("tokenize source");
         let ast = parse(tokens).expect("parse source");
         insta::assert_json_snapshot!("parser_float_literals_ast", ast);
+    }
+
+    #[test]
+    fn parses_char_literal_expression() {
+        let source = r#"
+fun main() -> I32 {
+	x = 'x'
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        let main = &ast.top_level_functions[0];
+        let super::Statement::Assign { value, .. } = &main.body[0] else {
+            panic!("expected assignment statement");
+        };
+        let super::Expression::Call(name, args) = value else {
+            panic!("expected Char constructor call");
+        };
+        assert_eq!(name, "Char__from_code");
+        assert_eq!(args.len(), 1);
+        let super::Expression::Literal(super::Literal::Int(code)) = &args[0] else {
+            panic!("expected integer literal argument");
+        };
+        assert_eq!(*code, 'x' as u32);
+    }
+
+    #[test]
+    fn parses_char_literals_ast_snapshot() {
+        let source = r#"
+fun main() -> I32 {
+	ch = 'x'
+	nl = '\n'
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        insta::assert_json_snapshot!("parser_char_literals_ast", ast);
     }
 
     #[test]

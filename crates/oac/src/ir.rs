@@ -2459,6 +2459,10 @@ fun main() -> I32 {
             "missing AsciiChar type from split stdlib"
         );
         assert!(
+            resolved.type_definitions.contains_key("Char"),
+            "missing Char type from split stdlib"
+        );
+        assert!(
             resolved.type_definitions.contains_key("Null"),
             "missing Null type from split stdlib"
         );
@@ -2469,6 +2473,10 @@ fun main() -> I32 {
         assert!(
             resolved.function_sigs.contains_key("AsciiChar__from_code"),
             "missing AsciiChar__from_code function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Char__from_code"),
+            "missing Char__from_code function from split stdlib"
         );
         assert!(
             resolved.function_sigs.contains_key("Null__value"),
@@ -2797,6 +2805,24 @@ fun takes_null(v: Null) -> I32 {
 fun main() -> I32 {
 	v = Null.value()
 	return takes_null(v)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_accepts_std_char_api_usage_and_char_literals() {
+        let source = r#"
+fun main() -> I32 {
+	ch = 'x'
+	if Char.equals(ch, Char.from_code(120)) {
+		return Char.code(ch)
+	}
+	return 0
 }
 "#
         .to_string();

@@ -1,3 +1,0 @@
-let quicksort | Seq: $Iter[$Sort] = $Seq match (
-	_ :: $x => $Seq partition (_ <= $x) map 'quicksort patch (1, $x) flat,
-	_ => $Seq, )

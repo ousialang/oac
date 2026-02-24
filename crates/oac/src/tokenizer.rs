@@ -21,6 +21,7 @@ pub enum TokenData {
     Parenthesis { opening: char, is_opening: bool },
     Number(u32),
     Float(String),
+    Char(char),
     String(String),
     Word(String),
     Symbols(String),
@@ -87,6 +88,46 @@ pub fn tokenize(s: String) -> Result<TokenList, SyntaxError> {
                 comment.push(chars.next().unwrap());
             }
             tokens.tokens.push(TokenData::Comment(comment));
+        } else if c == '\'' {
+            let next = chars.next().ok_or(SyntaxError {
+                message: "unterminated char literal".to_string(),
+                position: position.clone(),
+            })?;
+            let decoded = if next == '\\' {
+                let escaped = chars.next().ok_or(SyntaxError {
+                    message: "unterminated escape sequence in char literal".to_string(),
+                    position: position.clone(),
+                })?;
+                match escaped {
+                    '\\' => '\\',
+                    '\'' => '\'',
+                    '"' => '"',
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    other => {
+                        return Err(SyntaxError {
+                            message: format!("unsupported escape sequence '\\{}'", other),
+                            position: position.clone(),
+                        })
+                    }
+                }
+            } else {
+                next
+            };
+
+            let closing = chars.next().ok_or(SyntaxError {
+                message: "unterminated char literal".to_string(),
+                position: position.clone(),
+            })?;
+            if closing != '\'' {
+                return Err(SyntaxError {
+                    message: "char literal must contain exactly one character".to_string(),
+                    position: position.clone(),
+                });
+            }
+
+            tokens.tokens.push(TokenData::Char(decoded));
         } else if c == '"' {
             let mut string = String::new();
             while chars.peek().is_some() && *chars.peek().unwrap() != '"' {
@@ -204,6 +245,12 @@ mod tests {
             .tokens
             .contains(&TokenData::Float("1.25".to_string())));
         assert!(tokens.tokens.contains(&TokenData::Word("f64".to_string())));
+    }
+
+    #[test]
+    fn tokenizes_char_literals() {
+        let tokens = tokenize("x = 'x'\n".to_string()).expect("tokenize source");
+        assert!(tokens.tokens.contains(&TokenData::Char('x')));
     }
 
     #[test]

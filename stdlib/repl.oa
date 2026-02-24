@@ -1,6 +1,0 @@
-use oa.repl.REPL
-
-$REPL import 'cpu-num
-$REPL optimization-level = 3
-
-$REPL highlight = $0

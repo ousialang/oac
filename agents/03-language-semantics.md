@@ -29,6 +29,7 @@ Observed in parser/IR implementation:
 - Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
 - Top-level namespaces for helper functions: `namespace TypeName { fun helper(...) -> ... { ... } }`, callable as `TypeName.helper(...)`.
+- Char literals with single quotes are supported (`'x'`, escape forms like `'\n'`) and lower to std `Char` values.
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
 
@@ -53,6 +54,7 @@ Observed in parser/IR implementation:
 - The built-in stdlib is composed through flat imports from `std.oa` into split sibling files, then merged into one global scope before user type-checking (including stdlib invariant declarations).
 - The split stdlib now uses namespaced helper APIs for JSON and newstring helpers (`Json.*`, `NewString.print(...)`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs), and `AsciiChar` itself has an invariant requiring `0 <= code <= 127`.
+- The split stdlib also defines `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with helpers `Char.from_code(...)`, `Char.code(...)`, and `Char.equals(...)`.
 - The split stdlib now also defines `Null` as an empty struct (`struct Null {}`), with a namespaced constructor helper `Null.value() -> Null`.
 - Struct invariants are optional per struct type and can be declared directly as `invariant "Human label" for (v: TypeName) { ... }` or `invariant identifier "Human label" for (...) { ... }`.
 - Invariant declarations synthesize internal functions named `__struct__<TypeName>__invariant` with signature `fun ...(v: <TypeName>) -> Bool`; legacy explicit functions using that exact name/signature are still accepted for compatibility.

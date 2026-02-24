@@ -1,0 +1,5 @@
+fun main() -> I32 {
+	ch = 'x'
+	nl = '\n'
+	return 0
+}

@@ -1597,6 +1597,27 @@ fun main() -> I32 {
     }
 
     #[test]
+    fn qbe_codegen_supports_char_literals() {
+        let source = r#"
+fun main() -> I32 {
+	ch = 'x'
+	return Char.code(ch)
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("call $Char__from_code"),
+            "expected Char literal lowering call in qbe output, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
     fn qbe_codegen_supports_fp32_literals_and_compares() {
         let source = r#"
 fun main() -> I32 {

@@ -1,3 +1,0 @@
-mod Application.Main {
-  io.println "Hello, world!"
-}

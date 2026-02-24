@@ -1,4 +1,0 @@
-trait Cst | src: String {
-}
-
-trait Syntax: $Language =

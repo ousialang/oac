@@ -1,3 +1,0 @@
-use Spam
-use Foo.Bar
-use Spam => Foo.Fish

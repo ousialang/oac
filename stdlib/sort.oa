@@ -1,6 +1,0 @@
-use oa.Iter
-use oa.Order
-
-trait Sort: $Iter[$Order] {
-	$List branch (_ map (x => x.first-name ++ x.last-name)) sort merge
-}

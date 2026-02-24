@@ -1,3 +1,0 @@
-let solve | a: $Num, b: $Num, c: $Num = {
-	(-$b ± ($b^2 - 4*$a*$c) sqrt) / (2*$a)
-}

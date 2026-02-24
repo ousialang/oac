@@ -1,4 +1,0 @@
-use oa.math.Order
-
-let is-sorted | list: $Iter[$Order] = {
-	$list slide (2,1) map (_<=_) reduce 'and }

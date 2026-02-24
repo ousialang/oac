@@ -1,0 +1,76 @@
+---
+source: crates/oac/src/tokenizer.rs
+expression: result
+snapshot_kind: text
+---
+{
+  "Ok": {
+    "tokens": [
+      {
+        "Word": "fun"
+      },
+      {
+        "Word": "main"
+      },
+      {
+        "Parenthesis": {
+          "opening": "(",
+          "is_opening": true
+        }
+      },
+      {
+        "Parenthesis": {
+          "opening": ")",
+          "is_opening": false
+        }
+      },
+      {
+        "Symbols": "->"
+      },
+      {
+        "Word": "I32"
+      },
+      {
+        "Parenthesis": {
+          "opening": "{",
+          "is_opening": true
+        }
+      },
+      "Newline",
+      {
+        "Word": "ch"
+      },
+      {
+        "Symbols": "="
+      },
+      {
+        "Char": "x"
+      },
+      "Newline",
+      {
+        "Word": "nl"
+      },
+      {
+        "Symbols": "="
+      },
+      {
+        "Char": "\n"
+      },
+      "Newline",
+      {
+        "Word": "return"
+      },
+      {
+        "Number": 0
+      },
+      "Newline",
+      {
+        "Parenthesis": {
+          "opening": "}",
+          "is_opening": false
+        }
+      },
+      "Newline"
+    ]
+  }
+}
