@@ -1,9 +1,10 @@
 struct AsciiChar {
-	code: I32,
+	ch: Char,
 }
 
 invariant code_in_ascii_range "ascii code must be in [0, 127]" for (v: AsciiChar) {
-	return v.code >= 0 && v.code <= 127
+	c = Char.code(v.ch)
+	return c >= 0 && c <= 127
 }
 
 enum AsciiCharResult {
@@ -14,7 +15,7 @@ enum AsciiCharResult {
 namespace AsciiChar {
 	fun from_code_in_range(code: I32) -> AsciiChar {
 		return AsciiChar struct {
-			code: code,
+			ch: Char.from_code(code),
 		}
 	}
 
@@ -35,20 +36,20 @@ namespace AsciiChar {
 	}
 
 	fun code(ch: AsciiChar) -> I32 {
-		return ch.code
+		return Char.code(ch.ch)
 	}
 
 	fun is_digit(ch: AsciiChar) -> Bool {
-		c = ch.code
+		c = AsciiChar.code(ch)
 		return c >= 48 && c <= 57
 	}
 
 	fun is_whitespace(ch: AsciiChar) -> Bool {
-		c = ch.code
+		c = AsciiChar.code(ch)
 		return c == 32 || c == 10 || c == 9 || c == 13
 	}
 
 	fun equals(a: AsciiChar, b: AsciiChar) -> Bool {
-		return a.code == b.code
+		return Char.equals(a.ch, b.ch)
 	}
 }
