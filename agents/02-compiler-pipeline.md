@@ -99,7 +99,7 @@ Important enforced invariants include:
 - built-in `U8`/`FP32`/`FP64` exist alongside integer primitives; unsuffixed decimal literals type-check as `FP32`, and `f64`-suffixed decimal literals type-check as `FP64`
 - arithmetic/comparison on numerics requires matching widths/types (`U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - `U8` comparisons/codegen are unsigned (`ult/ule/ugt/uge`), and `U8` division lowers to unsigned division (`udiv`)
-- stdlib split modules intentionally expose namespaced helper APIs for JSON/newstring (`Json.*`, `NewString.print(...)`) while keeping JSON enums as top-level types
+- stdlib split modules intentionally expose namespaced helper APIs for JSON (`Json.*`) while keeping JSON enums as top-level types
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
