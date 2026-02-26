@@ -79,7 +79,7 @@ Operator precedence is explicitly encoded in parser.
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules including `std_clib.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules including `std_clib.oa` and `std_string.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - type definition graph creation
 - function signature collection
 - function body semantic checks
@@ -103,6 +103,7 @@ Important enforced invariants include:
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
+- stdlib split modules now also include `Bytes` + `String` in `std_string.oa`; `String` is std-defined as a tagged enum (`Literal(Bytes)`, `Heap(Bytes)`) and is no longer a resolver primitive
 - C interop signatures are no longer compiler-injected from JSON; they are declared in stdlib via `extern fun` in `std_clib.oa`
 - resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
 - resolver builtins also include `Void` for procedure-like extern signatures
@@ -126,6 +127,8 @@ Important enforced invariants include:
 - Handles expression lowering and control-flow generation.
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
 - Lowers `load_u8`/`store_u8` builtins to `loadub`/`storeb` QBE operations.
+- Lowers string literals to std-owned `String.Literal(Bytes{ptr,len})` heap objects (compiler allocates `Bytes` payload and tagged-union `String` wrapper).
+- String helper builtins (`char_at`, `string_len`, `slice`, `print_str`) operate over std `String`/`Bytes` layout rather than raw C-string pointers.
 - Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.
 - Maps `U8` to QBE word temporaries with unsigned compare/div lowering for `U8` arithmetic relations.
 - Produces snapshots in tests for codegen and runtime behavior.

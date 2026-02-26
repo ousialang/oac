@@ -10,9 +10,9 @@ From `crates/oac/src/builtins.rs`:
 - `I64`
 - `FP32`
 - `FP64`
-- `String`
 - `Bool`
 - `Void`
+- `Semantic` (internal-only marker for comptime semantic pseudo-types, not user-addressable)
 
 Resolver-defined numeric aliases in `crates/oac/src/ir.rs`:
 - `Int` aliases to `I32`
@@ -69,6 +69,7 @@ Observed in parser/IR implementation:
 - Namespace call lowering also applies to template-instantiated helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `std.oa` into split sibling files (including `std_clib.oa` extern bindings), then merged into one global scope before user type-checking (including stdlib invariant declarations).
+- `String` is std-defined (in `std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive.
 - C interop signatures are std-defined via `extern fun`; compiler-side hardcoded libc JSON signatures were removed.
 - The split stdlib now uses namespaced helper APIs for JSON and newstring helpers (`Json.*`, `NewString.print(...)`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs). `AsciiChar` wraps `Char` and has an invariant requiring `0 <= Char.code(ch) <= 127`.
@@ -83,6 +84,7 @@ Observed in parser/IR implementation:
 - `prove(...)` checker synthesis instruments QBE marker assignments (`.oac_prove_site_*`) and rewrites checker return to `1` when the proved condition is false at the targeted site.
 - Checker construction inlines reachable user-function calls into the site checker before CHC encoding, so loops/control-flow are reasoned about on QBE transitions.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
+- String literals lower to std `String.Literal` values by allocating `Bytes` + tagged union wrapper in codegen; runtime string helpers (`char_at`, `string_len`, `slice`, `print_str`) read `Bytes.ptr`/`Bytes.len` from that layout.
 - Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` or `(argc: I32, argv: PtrInt)` form.
 - `oac test <file.oa>` is fail-fast: each `test` block is lowered to a generated zero-arg `I32` function, and a generated `main` executes tests in declaration order. A failing runtime `assert` exits immediately with code `242`.
 - `oac test` requires at least one `test` declaration and rejects source files that already define `main` (because `main` is synthesized by the test runner).

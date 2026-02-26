@@ -75,7 +75,6 @@ impl TypeCatalog {
             "I64",
             "FP32",
             "FP64",
-            "String",
             "Type",
             "DeclSet",
             "SemanticExpr",

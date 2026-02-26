@@ -477,12 +477,6 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         })?;
     program
         .type_definitions
-        .insert("String".to_string(), TypeDef::BuiltIn(BuiltInType::String))
-        .map_or(Ok(()), |_| {
-            Err(anyhow::anyhow!("failed to insert String type definition"))
-        })?;
-    program
-        .type_definitions
         .insert("Void".to_string(), TypeDef::BuiltIn(BuiltInType::Void))
         .map_or(Ok(()), |_| {
             Err(anyhow::anyhow!("failed to insert Void type definition"))
@@ -492,7 +486,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
             .type_definitions
             .insert(
                 semantic_ty.to_string(),
-                TypeDef::BuiltIn(BuiltInType::String),
+                TypeDef::BuiltIn(BuiltInType::Semantic),
             )
             .map_or(Ok(()), |_| {
                 Err(anyhow::anyhow!(
@@ -2447,10 +2441,8 @@ pub(crate) fn get_expression_type(
             for (param, arg) in func.parameters.iter().zip(arguments) {
                 let param_type = &param.ty;
                 let arg_type = get_expression_type(arg, var_types, fns, type_definitions)?;
-                let compatible = normalize_numeric_alias(param_type)
-                    == normalize_numeric_alias(&arg_type)
-                    // C interop convenience: permit String where pointer-sized I64 is expected.
-                    || (normalize_numeric_alias(param_type) == "I64" && arg_type == "String");
+                let compatible =
+                    normalize_numeric_alias(param_type) == normalize_numeric_alias(&arg_type);
                 if !compatible {
                     return Err(anyhow::anyhow!(
                         "mismatched types: expected {:?}, but got {:?}",
@@ -2594,6 +2586,18 @@ fun main() -> I32 {
             "missing Null type from split stdlib"
         );
         assert!(
+            resolved.type_definitions.contains_key("Bytes"),
+            "missing Bytes type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("String"),
+            "missing String type from split stdlib"
+        );
+        assert!(
+            matches!(resolved.type_definitions.get("String"), Some(TypeDef::Enum(_))),
+            "String should be a std-defined enum"
+        );
+        assert!(
             resolved.type_definitions.contains_key("PtrInt"),
             "missing PtrInt type alias from standard definitions"
         );
@@ -2622,6 +2626,14 @@ fun main() -> I32 {
         assert!(
             resolved.function_sigs.contains_key("Null__value"),
             "missing Null__value function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("String__from_literal_parts"),
+            "missing String__from_literal_parts function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("String__from_heap_parts"),
+            "missing String__from_heap_parts function from split stdlib"
         );
         assert!(
             resolved.function_sigs.contains_key("malloc"),

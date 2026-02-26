@@ -13,6 +13,8 @@ type QbeAssignName = String;
 type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
 pub(crate) const PROVE_MARKER_PREFIX: &str = ".oac_prove_site_";
 const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
+const TAGGED_UNION_PAYLOAD_OFFSET_BYTES: u64 = 8;
+const TAGGED_UNION_SIZE_BYTES: u64 = 16;
 
 struct CodegenCtx {
     module: qbe::Module,
@@ -181,50 +183,6 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     {
         let mut f = Function::new(
             Linkage::public(),
-            "char_at".to_string(),
-            vec![
-                (qbe::Type::Long, qbe::Value::Temporary("s".to_string())),
-                (qbe::Type::Word, qbe::Value::Temporary("index".to_string())),
-            ],
-            Some(Type::Word),
-        );
-        f.add_block("start".to_string());
-
-        let index_i64 = new_id(&["index", "i64"]);
-        f.assign_instr(
-            Value::Temporary(index_i64.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "i32_to_i64".to_string(),
-                vec![(qbe::Type::Word, qbe::Value::Temporary("index".to_string()))],
-                None,
-            ),
-        );
-
-        let address = new_id(&["char", "address"]);
-        f.assign_instr(
-            Value::Temporary(address.clone()),
-            qbe::Type::Long,
-            Instr::Add(
-                Value::Temporary("s".to_string()),
-                Value::Temporary(index_i64),
-            ),
-        );
-
-        let ch = new_id(&["char"]);
-        f.assign_instr(
-            Value::Temporary(ch.clone()),
-            qbe::Type::Word,
-            Instr::Load(Type::UnsignedByte, Value::Temporary(address)),
-        );
-        f.add_instr(Instr::Ret(Some(Value::Temporary(ch))));
-
-        ctx.module.add_function(f);
-    }
-
-    {
-        let mut f = Function::new(
-            Linkage::public(),
             "load_u8".to_string(),
             vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
             Some(Type::Word),
@@ -261,57 +219,188 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     }
 
     {
-        let mut f = Function::new(
+        let mut payload_fn = Function::new(
             Linkage::private(),
-            "i64_to_i32".to_string(),
-            vec![(qbe::Type::Long, qbe::Value::Temporary("a".to_string()))],
-            Some(Type::Word),
+            "__string_payload".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+            Some(Type::Long),
         );
-        f.add_block("start".to_string());
-        let word = new_id(&["word"]);
-        f.assign_instr(
-            Value::Temporary(word.clone()),
-            qbe::Type::Word,
-            Instr::Copy(Value::Temporary("a".to_string())),
+        payload_fn.add_block("start".to_string());
+        let payload_addr = new_id(&["string", "payload", "addr"]);
+        payload_fn.assign_instr(
+            Value::Temporary(payload_addr.clone()),
+            qbe::Type::Long,
+            Instr::Add(
+                Value::Temporary("s".to_string()),
+                Value::Const(TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
+            ),
         );
-        f.add_instr(Instr::Ret(Some(Value::Temporary(word))));
-        ctx.module.add_function(f);
+        let payload = new_id(&["string", "payload"]);
+        payload_fn.assign_instr(
+            Value::Temporary(payload.clone()),
+            qbe::Type::Long,
+            Instr::Load(qbe::Type::Long, Value::Temporary(payload_addr)),
+        );
+        payload_fn.add_instr(Instr::Ret(Some(Value::Temporary(payload))));
+        ctx.module.add_function(payload_fn);
     }
 
     {
-        let mut f = Function::new(
+        let bytes_struct = std_bytes_struct(ctx);
+        let bytes_ptr_offset = calculate_struct_field_offset(ctx, &bytes_struct, "ptr");
+
+        let mut ptr_fn = Function::new(
+            Linkage::private(),
+            "__string_data_ptr".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+            Some(Type::Long),
+        );
+        ptr_fn.add_block("start".to_string());
+        let bytes_ptr = new_id(&["string", "bytes", "ptr"]);
+        ptr_fn.assign_instr(
+            Value::Temporary(bytes_ptr.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "__string_payload".to_string(),
+                vec![(qbe::Type::Long, Value::Temporary("s".to_string()))],
+                None,
+            ),
+        );
+        let data_ptr = new_id(&["string", "data", "ptr"]);
+        ptr_fn.assign_instr(
+            Value::Temporary(data_ptr.clone()),
+            qbe::Type::Long,
+            Instr::Add(Value::Temporary(bytes_ptr), Value::Const(bytes_ptr_offset)),
+        );
+        let data_ptr_value = new_id(&["string", "data", "ptr", "value"]);
+        ptr_fn.assign_instr(
+            Value::Temporary(data_ptr_value.clone()),
+            qbe::Type::Long,
+            Instr::Load(qbe::Type::Long, Value::Temporary(data_ptr)),
+        );
+        ptr_fn.add_instr(Instr::Ret(Some(Value::Temporary(data_ptr_value))));
+        ctx.module.add_function(ptr_fn);
+    }
+
+    {
+        let bytes_struct = std_bytes_struct(ctx);
+        let bytes_len_offset = calculate_struct_field_offset(ctx, &bytes_struct, "len");
+
+        let mut len_fn = Function::new(
+            Linkage::private(),
+            "__string_data_len".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+            Some(Type::Word),
+        );
+        len_fn.add_block("start".to_string());
+        let bytes_ptr = new_id(&["bytes", "ptr"]);
+        len_fn.assign_instr(
+            Value::Temporary(bytes_ptr.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "__string_payload".to_string(),
+                vec![(qbe::Type::Long, Value::Temporary("s".to_string()))],
+                None,
+            ),
+        );
+        let len_addr = new_id(&["bytes", "len", "addr"]);
+        len_fn.assign_instr(
+            Value::Temporary(len_addr.clone()),
+            qbe::Type::Long,
+            Instr::Add(Value::Temporary(bytes_ptr), Value::Const(bytes_len_offset)),
+        );
+        let len = new_id(&["string", "len"]);
+        len_fn.assign_instr(
+            Value::Temporary(len.clone()),
+            qbe::Type::Word,
+            Instr::Load(qbe::Type::Word, Value::Temporary(len_addr)),
+        );
+        len_fn.add_instr(Instr::Ret(Some(Value::Temporary(len))));
+        ctx.module.add_function(len_fn);
+    }
+
+    {
+        let mut char_at = Function::new(
+            Linkage::public(),
+            "char_at".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary("s".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("index".to_string())),
+            ],
+            Some(Type::Word),
+        );
+        char_at.add_block("start".to_string());
+
+        let base_ptr = new_id(&["string", "base"]);
+        char_at.assign_instr(
+            Value::Temporary(base_ptr.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "__string_data_ptr".to_string(),
+                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+                None,
+            ),
+        );
+
+        let index_i64 = new_id(&["index", "i64"]);
+        char_at.assign_instr(
+            Value::Temporary(index_i64.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "i32_to_i64".to_string(),
+                vec![(qbe::Type::Word, qbe::Value::Temporary("index".to_string()))],
+                None,
+            ),
+        );
+
+        let address = new_id(&["char", "address"]);
+        char_at.assign_instr(
+            Value::Temporary(address.clone()),
+            qbe::Type::Long,
+            Instr::Add(Value::Temporary(base_ptr), Value::Temporary(index_i64)),
+        );
+
+        let ch = new_id(&["char"]);
+        char_at.assign_instr(
+            Value::Temporary(ch.clone()),
+            qbe::Type::Word,
+            Instr::Load(Type::UnsignedByte, Value::Temporary(address)),
+        );
+        char_at.add_instr(Instr::Ret(Some(Value::Temporary(ch))));
+
+        ctx.module.add_function(char_at);
+    }
+
+    {
+        let mut string_len = Function::new(
             Linkage::public(),
             "string_len".to_string(),
             vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
             Some(Type::Word),
         );
-        f.add_block("start".to_string());
-        let len_i64 = new_id(&["len", "i64"]);
-        f.assign_instr(
-            Value::Temporary(len_i64.clone()),
-            qbe::Type::Long,
+        string_len.add_block("start".to_string());
+        let len = new_id(&["string", "len"]);
+        string_len.assign_instr(
+            Value::Temporary(len.clone()),
+            qbe::Type::Word,
             Instr::Call(
-                "strlen".to_string(),
+                "__string_data_len".to_string(),
                 vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
                 None,
             ),
         );
-        let len_i32 = new_id(&["len", "i32"]);
-        f.assign_instr(
-            Value::Temporary(len_i32.clone()),
-            qbe::Type::Word,
-            Instr::Call(
-                "i64_to_i32".to_string(),
-                vec![(qbe::Type::Long, qbe::Value::Temporary(len_i64))],
-                None,
-            ),
-        );
-        f.add_instr(Instr::Ret(Some(Value::Temporary(len_i32))));
-        ctx.module.add_function(f);
+        string_len.add_instr(Instr::Ret(Some(Value::Temporary(len))));
+        ctx.module.add_function(string_len);
     }
 
     {
-        let mut f = Function::new(
+        let bytes_struct = std_bytes_struct(ctx);
+        let bytes_len_offset = calculate_struct_field_offset(ctx, &bytes_struct, "len");
+        let bytes_size = struct_size_bytes(ctx, &bytes_struct);
+        let string_enum = std_string_enum(ctx);
+        let string_heap_tag = enum_variant_tag(&string_enum, "Heap");
+
+        let mut slice = Function::new(
             Linkage::public(),
             "slice".to_string(),
             vec![
@@ -321,17 +410,27 @@ fn add_builtins(ctx: &mut CodegenCtx) {
             ],
             Some(Type::Long),
         );
-        f.add_block("start".to_string());
+        slice.add_block("start".to_string());
+
+        let src_base = new_id(&["slice", "src", "base"]);
+        slice.assign_instr(
+            Value::Temporary(src_base.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "__string_data_ptr".to_string(),
+                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+                None,
+            ),
+        );
 
         let len_plus_one = new_id(&["len", "plus", "one"]);
-        f.assign_instr(
+        slice.assign_instr(
             Value::Temporary(len_plus_one.clone()),
             qbe::Type::Word,
             Instr::Add(Value::Temporary("len".to_string()), Value::Const(1)),
         );
-
         let alloc_size_i64 = new_id(&["alloc", "size", "i64"]);
-        f.assign_instr(
+        slice.assign_instr(
             Value::Temporary(alloc_size_i64.clone()),
             qbe::Type::Long,
             Instr::Call(
@@ -342,7 +441,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
         );
 
         let dst = new_id(&["slice", "dst"]);
-        f.assign_instr(
+        slice.assign_instr(
             Value::Temporary(dst.clone()),
             qbe::Type::Long,
             Instr::Call(
@@ -353,7 +452,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
         );
 
         let start_i64 = new_id(&["start", "i64"]);
-        f.assign_instr(
+        slice.assign_instr(
             Value::Temporary(start_i64.clone()),
             qbe::Type::Long,
             Instr::Call(
@@ -363,17 +462,14 @@ fn add_builtins(ctx: &mut CodegenCtx) {
             ),
         );
         let src = new_id(&["slice", "src"]);
-        f.assign_instr(
+        slice.assign_instr(
             Value::Temporary(src.clone()),
             qbe::Type::Long,
-            Instr::Add(
-                Value::Temporary("s".to_string()),
-                Value::Temporary(start_i64),
-            ),
+            Instr::Add(Value::Temporary(src_base), Value::Temporary(start_i64)),
         );
 
         let copy_n_i64 = new_id(&["copy", "n", "i64"]);
-        f.assign_instr(
+        slice.assign_instr(
             Value::Temporary(copy_n_i64.clone()),
             qbe::Type::Long,
             Instr::Call(
@@ -382,8 +478,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
                 None,
             ),
         );
-
-        f.add_instr(Instr::Call(
+        slice.add_instr(Instr::Call(
             "memcpy".to_string(),
             vec![
                 (qbe::Type::Long, qbe::Value::Temporary(dst.clone())),
@@ -394,50 +489,128 @@ fn add_builtins(ctx: &mut CodegenCtx) {
         ));
 
         let nul_addr = new_id(&["nul", "addr"]);
-        f.assign_instr(
+        slice.assign_instr(
             Value::Temporary(nul_addr.clone()),
             qbe::Type::Long,
             Instr::Add(Value::Temporary(dst.clone()), Value::Temporary(copy_n_i64)),
         );
-        f.add_instr(Instr::Store(
+        slice.add_instr(Instr::Store(
             Type::Byte,
             Value::Temporary(nul_addr),
             Value::Const(0),
         ));
 
-        f.add_instr(Instr::Ret(Some(Value::Temporary(dst))));
-        ctx.module.add_function(f);
+        let bytes_ptr = new_id(&["slice", "bytes", "alloc"]);
+        slice.assign_instr(
+            Value::Temporary(bytes_ptr.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "malloc".to_string(),
+                vec![(qbe::Type::Long, Value::Const(bytes_size))],
+                None,
+            ),
+        );
+        slice.add_instr(Instr::Store(
+            qbe::Type::Long,
+            Value::Temporary(bytes_ptr.clone()),
+            Value::Temporary(dst),
+        ));
+        let bytes_len_addr = new_id(&["slice", "bytes", "len", "addr"]);
+        slice.assign_instr(
+            Value::Temporary(bytes_len_addr.clone()),
+            qbe::Type::Long,
+            Instr::Add(
+                Value::Temporary(bytes_ptr.clone()),
+                Value::Const(bytes_len_offset),
+            ),
+        );
+        slice.add_instr(Instr::Store(
+            qbe::Type::Word,
+            Value::Temporary(bytes_len_addr),
+            Value::Temporary("len".to_string()),
+        ));
+
+        let string_ptr = new_id(&["slice", "string", "alloc"]);
+        slice.assign_instr(
+            Value::Temporary(string_ptr.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "malloc".to_string(),
+                vec![(qbe::Type::Long, Value::Const(TAGGED_UNION_SIZE_BYTES))],
+                None,
+            ),
+        );
+        slice.add_instr(Instr::Store(
+            qbe::Type::Word,
+            Value::Temporary(string_ptr.clone()),
+            Value::Const(string_heap_tag as u64),
+        ));
+        let payload_addr = new_id(&["slice", "string", "payload", "addr"]);
+        slice.assign_instr(
+            Value::Temporary(payload_addr.clone()),
+            qbe::Type::Long,
+            Instr::Add(
+                Value::Temporary(string_ptr.clone()),
+                Value::Const(TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
+            ),
+        );
+        slice.add_instr(Instr::Store(
+            qbe::Type::Long,
+            Value::Temporary(payload_addr),
+            Value::Temporary(bytes_ptr),
+        ));
+        slice.add_instr(Instr::Ret(Some(Value::Temporary(string_ptr))));
+        ctx.module.add_function(slice);
     }
 
     {
-        ctx.module.add_data(qbe::DataDef::new(
-            Linkage::private(),
-            "string_fmt".to_string(),
-            None,
-            vec![
-                (qbe::Type::Byte, DataItem::Str("%s\n".to_string())),
-                (qbe::Type::Byte, DataItem::Const(0)),
-            ],
-        ));
-
         let mut print_str = Function::new(
             qbe::Linkage::public(),
             "print_str".to_string(),
-            vec![(Type::Long, Value::Temporary("a".to_string()))],
+            vec![(Type::Long, Value::Temporary("s".to_string()))],
             Some(Type::Word),
         );
-
         print_str.add_block("start".to_string());
+        let ptr = new_id(&["print_str", "ptr"]);
+        print_str.assign_instr(
+            Value::Temporary(ptr.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "__string_data_ptr".to_string(),
+                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+                None,
+            ),
+        );
+        let len = new_id(&["print_str", "len"]);
+        print_str.assign_instr(
+            Value::Temporary(len.clone()),
+            qbe::Type::Word,
+            Instr::Call(
+                "__string_data_len".to_string(),
+                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
+                None,
+            ),
+        );
+        let len_i64 = new_id(&["print_str", "len", "i64"]);
+        print_str.assign_instr(
+            Value::Temporary(len_i64.clone()),
+            qbe::Type::Long,
+            Instr::Call(
+                "i32_to_i64".to_string(),
+                vec![(qbe::Type::Word, qbe::Value::Temporary(len))],
+                None,
+            ),
+        );
         print_str.add_instr(Instr::Call(
-            "printf".to_string(),
+            "write".to_string(),
             vec![
-                (qbe::Type::Long, qbe::Value::Global("string_fmt".into())),
-                (qbe::Type::Long, qbe::Value::Temporary("a".to_string())),
+                (qbe::Type::Word, Value::Const(1)),
+                (qbe::Type::Long, Value::Temporary(ptr)),
+                (qbe::Type::Long, Value::Temporary(len_i64)),
             ],
-            Some(1),
+            None,
         ));
         print_str.add_instr(Instr::Ret(Some(Value::Const(0))));
-
         ctx.module.add_function(print_str);
     }
 
@@ -457,8 +630,6 @@ fn add_builtins(ctx: &mut CodegenCtx) {
         .insert("FP32".to_string(), qbe::Type::Single);
     ctx.qbe_types_by_name
         .insert("FP64".to_string(), qbe::Type::Double);
-    ctx.qbe_types_by_name
-        .insert("String".to_string(), qbe::Type::Long);
 }
 
 fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type {
@@ -471,9 +642,10 @@ fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type {
         ir::TypeDef::BuiltIn(BuiltInType::Void) => {
             panic!("Void cannot be lowered to a QBE value type")
         }
-        ir::TypeDef::BuiltIn(BuiltInType::I64)
-        | ir::TypeDef::BuiltIn(BuiltInType::String)
-        | ir::TypeDef::Struct(_) => qbe::Type::Long, // pointer to struct
+        ir::TypeDef::BuiltIn(BuiltInType::Semantic) => {
+            panic!("semantic-only builtin types cannot be lowered to QBE")
+        }
+        ir::TypeDef::BuiltIn(BuiltInType::I64) | ir::TypeDef::Struct(_) => qbe::Type::Long, // pointer to struct
         ir::TypeDef::Enum(enum_def) => {
             if enum_def.is_tagged_union {
                 qbe::Type::Long
@@ -958,6 +1130,9 @@ fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
             ir::TypeDef::BuiltIn(BuiltInType::Void) => {
                 panic!("Void cannot be used in value-layout positions")
             }
+            ir::TypeDef::BuiltIn(BuiltInType::Semantic) => {
+                panic!("semantic-only builtin types cannot be used in value-layout positions")
+            }
             ir::TypeDef::Enum(enum_def) => {
                 if enum_def.is_tagged_union {
                     8
@@ -967,7 +1142,6 @@ fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
             }
             ir::TypeDef::BuiltIn(BuiltInType::I64)
             | ir::TypeDef::BuiltIn(BuiltInType::FP64)
-            | ir::TypeDef::BuiltIn(BuiltInType::String)
             | ir::TypeDef::Struct(_) => 8,
         },
         None => panic!("Unknown type {}", ty),
@@ -999,6 +1173,30 @@ fn struct_size_bytes(ctx: &CodegenCtx, struct_def: &StructDef) -> u64 {
         .iter()
         .map(|field| type_offset(ctx, &field.ty))
         .sum()
+}
+
+fn std_bytes_struct(ctx: &CodegenCtx) -> StructDef {
+    match ctx.resolved.type_definitions.get("Bytes") {
+        Some(ir::TypeDef::Struct(def)) => def.clone(),
+        _ => panic!("std Bytes struct is required for String lowering"),
+    }
+}
+
+fn std_string_enum(ctx: &CodegenCtx) -> ir::EnumTypeDef {
+    match ctx.resolved.type_definitions.get("String") {
+        Some(ir::TypeDef::Enum(def)) if def.is_tagged_union => def.clone(),
+        Some(ir::TypeDef::Enum(_)) => panic!("std String must be a tagged-union enum"),
+        _ => panic!("std String enum is required for String lowering"),
+    }
+}
+
+fn enum_variant_tag(enum_def: &ir::EnumTypeDef, variant_name: &str) -> u32 {
+    enum_def
+        .variants
+        .iter()
+        .find(|variant| variant.name == variant_name)
+        .unwrap_or_else(|| panic!("missing variant {variant_name} on enum {}", enum_def.name))
+        .tag
 }
 
 fn resolve_void_call_target<'a>(
@@ -1440,7 +1638,7 @@ fn compile_expr(
             (id, "FP64".to_string())
         }
         parser::Expression::Literal(parser::Literal::String(value)) => {
-            let id = new_id(&["literal", "string"]);
+            let literal_ptr = new_id(&["literal", "string", "ptr"]);
             let const_name = new_id(&[]);
             ctx.module.add_data(qbe::DataDef::new(
                 Linkage::private(),
@@ -1452,12 +1650,98 @@ fn compile_expr(
                 ],
             ));
             func.assign_instr(
-                Value::Temporary(id.clone()),
+                Value::Temporary(literal_ptr.clone()),
                 Type::Long,
                 qbe::Instr::Copy(qbe::Value::Global(const_name)),
             );
+            let literal_len = new_id(&["literal", "string", "len"]);
+            func.assign_instr(
+                Value::Temporary(literal_len.clone()),
+                Type::Word,
+                qbe::Instr::Copy(qbe::Value::Const(value.len() as u64)),
+            );
 
-            (id, "String".to_string())
+            let bytes_struct = std_bytes_struct(ctx);
+            let bytes_ptr_offset = calculate_struct_field_offset(ctx, &bytes_struct, "ptr");
+            let bytes_len_offset = calculate_struct_field_offset(ctx, &bytes_struct, "len");
+            let bytes_ptr = new_id(&["literal", "string", "bytes", "alloc"]);
+            func.assign_instr(
+                Value::Temporary(bytes_ptr.clone()),
+                qbe::Type::Long,
+                qbe::Instr::Call(
+                    "malloc".to_string(),
+                    vec![(
+                        qbe::Type::Long,
+                        qbe::Value::Const(struct_size_bytes(ctx, &bytes_struct)),
+                    )],
+                    None,
+                ),
+            );
+
+            let bytes_ptr_addr = new_id(&["literal", "string", "bytes", "ptr", "addr"]);
+            func.assign_instr(
+                Value::Temporary(bytes_ptr_addr.clone()),
+                qbe::Type::Long,
+                qbe::Instr::Add(
+                    qbe::Value::Temporary(bytes_ptr.clone()),
+                    qbe::Value::Const(bytes_ptr_offset),
+                ),
+            );
+            func.add_instr(qbe::Instr::Store(
+                qbe::Type::Long,
+                qbe::Value::Temporary(bytes_ptr_addr),
+                qbe::Value::Temporary(literal_ptr),
+            ));
+
+            let bytes_len_addr = new_id(&["literal", "string", "bytes", "len", "addr"]);
+            func.assign_instr(
+                qbe::Value::Temporary(bytes_len_addr.clone()),
+                qbe::Type::Long,
+                qbe::Instr::Add(
+                    qbe::Value::Temporary(bytes_ptr.clone()),
+                    qbe::Value::Const(bytes_len_offset),
+                ),
+            );
+            func.add_instr(qbe::Instr::Store(
+                qbe::Type::Word,
+                qbe::Value::Temporary(bytes_len_addr),
+                qbe::Value::Temporary(literal_len),
+            ));
+
+            let string_enum = std_string_enum(ctx);
+            let literal_variant_tag = enum_variant_tag(&string_enum, "Literal");
+            let string_ptr = new_id(&["literal", "string", "enum", "alloc"]);
+            func.assign_instr(
+                qbe::Value::Temporary(string_ptr.clone()),
+                qbe::Type::Long,
+                qbe::Instr::Call(
+                    "malloc".to_string(),
+                    vec![(qbe::Type::Long, qbe::Value::Const(TAGGED_UNION_SIZE_BYTES))],
+                    None,
+                ),
+            );
+            func.add_instr(qbe::Instr::Store(
+                qbe::Type::Word,
+                qbe::Value::Temporary(string_ptr.clone()),
+                qbe::Value::Const(literal_variant_tag as u64),
+            ));
+
+            let payload_addr = new_id(&["literal", "string", "enum", "payload", "addr"]);
+            func.assign_instr(
+                qbe::Value::Temporary(payload_addr.clone()),
+                qbe::Type::Long,
+                qbe::Instr::Add(
+                    qbe::Value::Temporary(string_ptr.clone()),
+                    qbe::Value::Const(TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
+                ),
+            );
+            func.add_instr(qbe::Instr::Store(
+                qbe::Type::Long,
+                qbe::Value::Temporary(payload_addr),
+                qbe::Value::Temporary(bytes_ptr),
+            ));
+
+            (string_ptr, "String".to_string())
         }
         parser::Expression::Literal(parser::Literal::Bool(value)) => {
             let id = new_id(&["literal", "bool"]);

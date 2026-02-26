@@ -1,0 +1,44 @@
+struct Bytes {
+	ptr: PtrInt,
+	len: I32,
+}
+
+enum String {
+	Literal(Bytes),
+	Heap(Bytes),
+}
+
+namespace String {
+	fun bytes(s: String) -> Bytes {
+		return match s {
+			String.Literal(b) => b
+			String.Heap(b) => b
+		}
+	}
+
+	fun ptr(s: String) -> PtrInt {
+		b = String.bytes(s)
+		return b.ptr
+	}
+
+	fun len(s: String) -> I32 {
+		b = String.bytes(s)
+		return b.len
+	}
+
+	fun from_literal_parts(ptr: PtrInt, len: I32) -> String {
+		b = Bytes struct {
+			ptr: ptr,
+			len: len,
+		}
+		return String.Literal(b)
+	}
+
+	fun from_heap_parts(ptr: PtrInt, len: I32) -> String {
+		b = Bytes struct {
+			ptr: ptr,
+			len: len,
+		}
+		return String.Heap(b)
+	}
+}
