@@ -191,8 +191,15 @@ fn compile_ast_to_executable(
 
     let executable_path = target_dir.join(executable_name);
 
+    let zig_global_cache_dir = target_dir.join("zig-global-cache");
+    let zig_local_cache_dir = target_dir.join("zig-local-cache");
+    std::fs::create_dir_all(&zig_global_cache_dir)?;
+    std::fs::create_dir_all(&zig_local_cache_dir)?;
+
     let mut cc_cmd = std::process::Command::new("zig");
     cc_cmd.arg("cc").arg("-g").arg("-o").arg(&executable_path);
+    cc_cmd.env("ZIG_GLOBAL_CACHE_DIR", &zig_global_cache_dir);
+    cc_cmd.env("ZIG_LOCAL_CACHE_DIR", &zig_local_cache_dir);
     if let Some(arch) = arch {
         let cc_arch = match arch {
             "rv64" => "riscv64-linux-gnu",
@@ -209,6 +216,12 @@ fn compile_ast_to_executable(
 
     let cc_output = cc_cmd.output()?;
     println!("{}", String::from_utf8_lossy(&cc_output.stderr));
+    if !cc_output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Compilation of assembly to executable failed: {}",
+            String::from_utf8_lossy(&cc_output.stderr)
+        ));
+    }
 
     info!(executable_path = %executable_path.display(), "Assembly compiled to executable");
 

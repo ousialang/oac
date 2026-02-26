@@ -15,8 +15,16 @@ fun main() -> I32 {
 	zs = IntList.tail_or(IntList.empty(), ys)
 	print(IntList.length(zs))
 
-	print(IntList.is_empty(IntList.empty()))
-	print(IntList.is_empty(xs))
+	if IntList.is_empty(IntList.empty()) {
+		print(1)
+	} else {
+		print(0)
+	}
+	if IntList.is_empty(xs) {
+		print(1)
+	} else {
+		print(0)
+	}
 
 	return 0
 }

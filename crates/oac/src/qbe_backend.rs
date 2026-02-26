@@ -1053,7 +1053,12 @@ fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
         .parameters
         .iter()
         .map(|param| {
-            let ty = ctx.qbe_types_by_name.get(&param.ty).unwrap().clone();
+            let type_def = ctx
+                .resolved
+                .type_definitions
+                .get(&param.ty)
+                .unwrap_or_else(|| panic!("unknown parameter type {}", param.ty));
+            let ty = type_to_qbe(type_def);
             (ty, qbe::Value::Temporary(param.name.clone()))
         })
         .collect::<Vec<_>>();

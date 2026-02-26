@@ -114,6 +114,8 @@ If behavior intentionally changes, update snapshots deliberately and review diff
 - `zig` (used as `zig cc`)
 - `z3` (required when struct invariant or prove obligations are present)
 
+`oac` configures `zig cc` with writable cache directories under the active target dir (`zig-global-cache` and `zig-local-cache`) and treats non-zero Zig exit status as a compilation error.
+
 `oac test` has the same backend dependencies as `oac build` (`qbe`, `zig`, and `z3` when obligations are present), and additionally executes the produced binary under `target/oac/test/app`.
 
 VS Code extension development under `tools/vscode-ousia` requires:

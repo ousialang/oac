@@ -30,8 +30,16 @@ fun main() -> I32 {
 	print(IntTable.size(table))
 	print_lookup(IntTable.get(table, 1))
 
-	print(IntTable.contains_key(table, 2))
-	print(IntTable.contains_key(table, 42))
+	if IntTable.contains_key(table, 2) {
+		print(1)
+	} else {
+		print(0)
+	}
+	if IntTable.contains_key(table, 42) {
+		print(1)
+	} else {
+		print(0)
+	}
 
 	return 0
 }
