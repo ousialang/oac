@@ -67,6 +67,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also includes FP32 resolve/type-check regression coverage (FP32 arithmetic + comparison in `main`).
 - `crates/oac/src/ir.rs` also includes FP64 resolve/type-check regression coverage (FP64 arithmetic + comparison in `main`).
 - `crates/oac/src/ir.rs` also includes `U8` coverage for accepted same-type arithmetic/comparison and rejection of mixed `U8`/`I32` arithmetic.
+- `crates/oac/src/ir.rs` also includes resolve coverage for builtin byte-memory helpers (`load_u8`, `store_u8`) with `PtrInt` addresses.
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
 - `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, and strict rejection of unsupported operations.
 - `crates/qbe-smt/src/lib.rs` also validates `exit(code)` call modeling as halting transitions and rejects malformed exit calls (for example missing exit code argument).
@@ -86,6 +87,7 @@ Key tests:
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP32 lowering emits single-precision constants/ops and ordered float comparisons.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP64 lowering emits double-precision constants/ops and ordered float comparisons.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `U8` lowers with unsigned comparison/division ops (`cultw`, `udiv`).
+- `crates/oac/src/qbe_backend.rs` also has a unit test that asserts byte-memory builtins lower to byte-addressed ops (`loadub`, `storeb`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts char literals lower through `call $Char__from_code`.
 - `crates/qbe-rs/src/tests.rs` includes coverage for FP32/FP64 constant formatting (`s_<literal>`, `d_<literal>`) and ordered float compare formatting (`clts`, `cgtd`).
 - Execution fixtures now include dedicated prove/assert coverage:

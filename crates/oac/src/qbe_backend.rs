@@ -224,6 +224,44 @@ fn add_builtins(ctx: &mut CodegenCtx) {
 
     {
         let mut f = Function::new(
+            Linkage::public(),
+            "load_u8".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+        let value = new_id(&["load", "u8"]);
+        f.assign_instr(
+            Value::Temporary(value.clone()),
+            qbe::Type::Word,
+            Instr::Load(Type::UnsignedByte, Value::Temporary("addr".to_string())),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(value))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "store_u8".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary("addr".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("value".to_string())),
+            ],
+            None,
+        );
+        f.add_block("start".to_string());
+        f.add_instr(Instr::Store(
+            Type::Byte,
+            Value::Temporary("addr".to_string()),
+            Value::Temporary("value".to_string()),
+        ));
+        f.add_instr(Instr::Ret(None));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
             Linkage::private(),
             "i64_to_i32".to_string(),
             vec![(qbe::Type::Long, qbe::Value::Temporary("a".to_string()))],
@@ -405,6 +443,8 @@ fn add_builtins(ctx: &mut CodegenCtx) {
 
     ctx.qbe_types_by_name
         .insert("Int".to_string(), qbe::Type::Word);
+    ctx.qbe_types_by_name
+        .insert("PtrInt".to_string(), qbe::Type::Long);
     ctx.qbe_types_by_name
         .insert("Bool".to_string(), qbe::Type::Word);
     ctx.qbe_types_by_name
@@ -1844,6 +1884,48 @@ fun main() -> I32 {
         assert!(
             qbe_ir.contains("udiv"),
             "expected unsigned U8 division in qbe output, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_supports_load_store_u8_builtins() {
+        let source = r#"
+fun main(argc: I32, argv: PtrInt) -> I32 {
+	b = load_u8(argv)
+	store_u8(argv, b)
+	return argc
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("function w $load_u8"),
+            "expected load_u8 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("function $store_u8"),
+            "expected store_u8 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $load_u8"),
+            "expected call to load_u8 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $store_u8"),
+            "expected call to store_u8 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("loadub %addr"),
+            "expected load_u8 lowering to loadub in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("storeb %value, %addr"),
+            "expected store_u8 lowering to storeb in qbe output, got:\n{qbe_ir}"
         );
     }
 

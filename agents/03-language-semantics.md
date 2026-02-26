@@ -40,6 +40,7 @@ Observed in parser/IR implementation:
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
+- Runtime byte-memory builtins: `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`.
 - Top-level test declarations: `test "Name" { ... }`.
 
 ## Semantic Rules You Must Preserve

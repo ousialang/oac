@@ -106,6 +106,7 @@ Important enforced invariants include:
 - C interop signatures are no longer compiler-injected from JSON; they are declared in stdlib via `extern fun` in `std_clib.oa`
 - resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
 - resolver builtins also include `Void` for procedure-like extern signatures
+- resolver builtins also include byte-memory helpers `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`
 - `extern fun` declarations are signature-only (`extern` cannot be `comptime` and extern functions must not have bodies)
 - `Void` is restricted in v1: function parameters cannot be `Void`, and only `extern fun` may return `Void`
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
@@ -124,6 +125,7 @@ Important enforced invariants include:
 - Includes builtins and interop helpers (for example integer ops, print, string utilities) plus user/std-declared extern call targets.
 - Handles expression lowering and control-flow generation.
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
+- Lowers `load_u8`/`store_u8` builtins to `loadub`/`storeb` QBE operations.
 - Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.
 - Maps `U8` to QBE word temporaries with unsigned compare/div lowering for `U8` arithmetic relations.
 - Produces snapshots in tests for codegen and runtime behavior.

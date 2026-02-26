@@ -619,6 +619,32 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         },
     );
     program.function_sigs.insert(
+        "load_u8".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "addr".to_string(),
+                ty: "PtrInt".to_string(),
+            }],
+            return_type: "U8".to_string(),
+        },
+    );
+    program.function_sigs.insert(
+        "store_u8".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "addr".to_string(),
+                    ty: "PtrInt".to_string(),
+                },
+                FunctionParameter {
+                    name: "value".to_string(),
+                    ty: "U8".to_string(),
+                },
+            ],
+            return_type: "Void".to_string(),
+        },
+    );
+    program.function_sigs.insert(
         "string_len".to_string(),
         FunctionSignature {
             parameters: vec![FunctionParameter {
@@ -2606,6 +2632,14 @@ fun main() -> I32 {
             "missing free extern function from split stdlib"
         );
         assert!(
+            resolved.function_sigs.contains_key("load_u8"),
+            "missing load_u8 builtin signature"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("store_u8"),
+            "missing store_u8 builtin signature"
+        );
+        assert!(
             resolved.struct_invariants.contains_key("AsciiChar"),
             "missing AsciiChar invariant metadata from split stdlib"
         );
@@ -3094,6 +3128,25 @@ fun add_u8(a: U8, b: U8) -> U8 {
 }
 
 fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_accepts_load_u8_and_store_u8_builtins() {
+        let source = r#"
+fun main(argc: I32, argv: PtrInt) -> I32 {
+	b = load_u8(argv)
+	store_u8(argv, b)
+	if b == b {
+		return argc
+	}
 	return 0
 }
 "#
