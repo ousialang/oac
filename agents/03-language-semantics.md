@@ -34,8 +34,8 @@ Observed in parser/IR implementation:
 - Pattern matching on enums (`match`) as statement and expression.
 - Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
-- Top-level namespaces for helper functions: `namespace TypeName { fun helper(...) -> ... { ... } }`, callable as `TypeName.helper(...)`.
-- Top-level external function declarations: `extern fun name(args...) -> Type` (signature-only, no body).
+- Top-level namespaces for helper/interop declarations: `namespace TypeName { fun helper(...) -> ... { ... } }` and `namespace TypeName { extern fun symbol(...) -> ... }`, callable as `TypeName.helper(...)`.
+- External function declarations are signature-only (`extern fun name(args...) -> Type`, no body) and may appear at top-level or inside namespace blocks.
 - Char literals with single quotes are supported (`'x'`, escape forms like `'\n'`) and lower to std `Char` values.
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
@@ -59,8 +59,8 @@ Observed in parser/IR implementation:
 - `U8` relational operators (`<`, `>`, `<=`, `>=`) use unsigned comparisons in codegen.
 - `U8` division lowers to unsigned integer division in codegen.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
-- Namespace bodies currently accept runtime `fun` declarations only (no `comptime` or `extern` declarations inside `namespace` blocks).
-- `extern fun` declarations are top-level-only in v1, cannot be marked `comptime`, and must not define a body.
+- Namespace bodies accept `fun` and `extern fun` declarations; `comptime` declarations inside namespace blocks are rejected.
+- `extern fun` declarations cannot be marked `comptime` and must not define a body.
 - `Void` cannot be used as a function parameter type.
 - In v1, only `extern fun` may return `Void`.
 - Assignment statements cannot bind variables to `Void`-typed expressions.
@@ -70,7 +70,7 @@ Observed in parser/IR implementation:
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `std.oa` into split sibling files (including `std_clib.oa` extern bindings), then merged into one global scope before user type-checking (including stdlib invariant declarations).
 - `String` is std-defined (in `std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive.
-- C interop signatures are std-defined via `extern fun`; compiler-side hardcoded libc JSON signatures were removed.
+- C interop signatures are std-defined in `std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs). `AsciiChar` wraps `Char` and has an invariant requiring `0 <= Char.code(ch) <= 127`.
 - The split stdlib also defines `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with helpers `Char.from_code(...)`, `Char.code(...)`, and `Char.equals(...)`.

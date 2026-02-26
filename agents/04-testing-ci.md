@@ -65,7 +65,7 @@ Key tests:
 - `crates/oac/src/parser.rs` tests assert template bracket syntax parsing, legacy `()` rejection, struct-invariant declaration syntax (`invariant ... for (...)`, with optional identifier, including inside templates), and optional trailing commas for struct declarations/literals.
 - `crates/oac/src/parser.rs` also includes top-level test declaration parsing coverage (`test "..." { ... }`).
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
-- `crates/oac/src/parser.rs` also covers top-level `extern fun` declaration parsing (signature-only, `is_extern` metadata).
+- `crates/oac/src/parser.rs` also covers top-level `extern fun` parsing plus namespace-scoped extern parsing (`namespace Name { extern fun ... }`) including internal-name mangling and preserved extern symbol names.
 - `crates/oac/src/parser.rs` includes an AST snapshot regression (`parser_float_literals_ast`) for mixed FP32/FP64 literal parsing.
 - `crates/oac/src/parser.rs` also includes a regression for FP32 literal parsing (`Literal::Float32`).
 - `crates/oac/src/parser.rs` also includes a regression for FP64 literal parsing (`Literal::Float64` from `f64` suffix).
@@ -73,7 +73,7 @@ Key tests:
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `std.oa` imports.
-- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), C externs (`malloc`, `free`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
+- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), C externs (`Clib__malloc`, `Clib__free`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
 - The same regression also asserts stdlib `AsciiChar` invariant registration/synthesis (`struct_invariants["AsciiChar"]` and `__struct__AsciiChar__invariant` function definition).
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()`, `main(argc: I32, argv: I64)`, and `main(argc: I32, argv: PtrInt)`).
 - `crates/oac/src/ir.rs` includes alias coverage for `PtrInt` behaving as `I64` in function calls/equality and type-definition mapping.

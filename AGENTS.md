@@ -37,8 +37,8 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 
 - Templates use square brackets for type parameters and instantiation arguments: `template Option[T] { ... }`, `instantiate OptionI32 = Option[I32]`.
 - Top-level imports are flat and same-directory only: `import "helpers.oa"`. Imported declarations are merged into one global scope.
-- Namespaces are top-level and declaration-only: `namespace TypeName { fun helper(...) -> ... { ... } }`. Namespace functions are called via `TypeName.helper(...)` and are lowered to internal function names using `TypeName__helper`.
-- External declarations use `extern fun name(args...) -> Type` (no body). In v1, `extern fun` is top-level only.
+- Namespaces are top-level and declaration-only: `namespace TypeName { fun helper(...) -> ... { ... } }` and `namespace TypeName { extern fun symbol(...) -> ... }`. Namespace calls use `TypeName.helper(...)` syntax and lower to internal lookup names using `TypeName__helper`.
+- External declarations use `extern fun name(args...) -> Type` (no body). In v1 they may appear at top level and inside `namespace` blocks (no bodies, no `comptime`).
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.
 - The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_string.oa`, `std_collections.oa`, `std_json.oa`, `std_clib.oa`).
 - The split stdlib now exposes namespaced helper APIs where applicable: JSON parsing helpers are called via `Json.*` (for example `Json.json_kind`, `Json.parse_json_document_result`).
@@ -46,7 +46,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - The stdlib also exposes `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with namespaced helpers (`Char.from_code`, `Char.code`, `Char.equals`).
 - The stdlib now also exposes `Null` as an empty struct (`struct Null {}`) with namespaced constructor helper `Null.value()`.
 - The stdlib now also defines `Bytes` (`struct Bytes { ptr: PtrInt, len: I32 }`) and `String` as a tagged enum (`Literal(Bytes)` / `Heap(Bytes)`) in `std_string.oa`; `String` is no longer a compiler-primitive type.
-- C interop signatures are std-owned `extern fun` declarations in `std_clib.oa` (the compiler no longer injects a hardcoded libc JSON signature table).
+- C interop in std is exposed through namespaced calls (`Clib.*`) and declared in `std_clib.oa` as `namespace Clib { extern fun ... }`; resolver keeps namespaced internal keys (`Clib__name`) while codegen emits declared extern symbol names for linking (for example `malloc`).
 - Built-in `Void` is available for C-style procedure signatures; in v1 only `extern fun` may return `Void`, and `Void` is rejected as a parameter type.
 - Built-in `U8` is available as an unsigned byte-like numeric type (`U8/U8` arithmetic and comparisons are allowed with no implicit coercions).
 - The resolver also exposes `PtrInt` as a standard numeric alias hardcoded to `I64` (for pointer-sized integer use sites).

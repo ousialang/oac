@@ -36,7 +36,7 @@ Editor tooling in this repository:
 - `crates/oac/src/std.oa`: stdlib import entrypoint injected during resolution.
 - `crates/oac/src/std_*.oa`: split stdlib modules imported by `std.oa`.
 - `crates/oac/src/std_string.oa`: std-owned `Bytes` + `String` representation (`String` enum with literal/heap variants).
-- `crates/oac/src/std_clib.oa`: std-owned C interop declarations via `extern fun` (replaces compiler hardcoded libc signature JSON).
+- `crates/oac/src/std_clib.oa`: std-owned C interop declarations for `Clib.*` namespaced API via `namespace Clib { extern fun ... }` (resolver keys remain `Clib__*`; replaces compiler hardcoded libc signature JSON).
 - `crates/oac/execution_tests/*.oa`: language behavior fixtures (positive + negative).
 - `crates/oac/src/snapshots/*.snap`: canonical snapshots for tests.
 - `.github/workflows/ci.yml`: CI checks (`cargo check`, `cargo test`).

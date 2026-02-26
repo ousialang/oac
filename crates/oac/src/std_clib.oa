@@ -1,18 +1,20 @@
-extern fun malloc(size: PtrInt) -> PtrInt
-extern fun free(ptr: PtrInt) -> Void
-extern fun calloc(nmemb: PtrInt, size: PtrInt) -> PtrInt
-extern fun realloc(ptr: PtrInt, size: PtrInt) -> PtrInt
-extern fun memcpy(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
-extern fun memset(s: PtrInt, c: Int, n: PtrInt) -> PtrInt
-extern fun memmove(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
-extern fun strlen(s: PtrInt) -> PtrInt
-extern fun strcmp(s1: PtrInt, s2: PtrInt) -> Int
-extern fun strcpy(dest: PtrInt, src: PtrInt) -> PtrInt
-extern fun strncpy(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
+namespace Clib {
+	extern fun malloc(size: PtrInt) -> PtrInt
+	extern fun free(ptr: PtrInt) -> Void
+	extern fun calloc(nmemb: PtrInt, size: PtrInt) -> PtrInt
+	extern fun realloc(ptr: PtrInt, size: PtrInt) -> PtrInt
+	extern fun memcpy(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
+	extern fun memset(s: PtrInt, c: Int, n: PtrInt) -> PtrInt
+	extern fun memmove(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
+	extern fun strlen(s: PtrInt) -> PtrInt
+	extern fun strcmp(s1: PtrInt, s2: PtrInt) -> Int
+	extern fun strcpy(dest: PtrInt, src: PtrInt) -> PtrInt
+	extern fun strncpy(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
 
-extern fun open(pathname: PtrInt, flags: Int, mode: PtrInt) -> Int
-extern fun read(fd: Int, buf: PtrInt, count: PtrInt) -> PtrInt
-extern fun write(fd: Int, buf: PtrInt, count: PtrInt) -> PtrInt
-extern fun close(fd: Int) -> Int
+	extern fun open(pathname: PtrInt, flags: Int, mode: PtrInt) -> Int
+	extern fun read(fd: Int, buf: PtrInt, count: PtrInt) -> PtrInt
+	extern fun write(fd: Int, buf: PtrInt, count: PtrInt) -> PtrInt
+	extern fun close(fd: Int) -> Int
 
-extern fun exit(code: Int) -> Void
+	extern fun exit(code: Int) -> Void
+}

@@ -68,8 +68,8 @@ Core AST includes:
 - Templates and template instantiations (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`)
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
 - Top-level test declarations (`test "Name" { ... }`).
-- Top-level namespaces (`namespace Name { fun ... }`) flattened into mangled function symbols (`Name__fn`).
-- Top-level external declarations (`extern fun name(...) -> Type`) with signature-only AST nodes.
+- Top-level namespaces (`namespace Name { ... }`) support `fun` and `extern fun`; declarations are flattened to mangled internal function keys (`Name__fn`).
+- External declarations (`extern fun name(...) -> Type`) are signature-only AST nodes and may appear at top-level or inside namespace blocks.
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`Name.fn(args)` parses as postfix call and resolves either as enum constructor or namespace call)
 - Char literals are parsed from single quotes (for example `'x'`, `'\n'`) and lowered to a namespaced constructor call (`Char.from_code(<i32>)`).
@@ -104,7 +104,7 @@ Important enforced invariants include:
 - stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
 - stdlib split modules now also include `Bytes` + `String` in `std_string.oa`; `String` is std-defined as a tagged enum (`Literal(Bytes)`, `Heap(Bytes)`) and is no longer a resolver primitive
-- C interop signatures are no longer compiler-injected from JSON; they are declared in stdlib via `extern fun` in `std_clib.oa`
+- C interop signatures are no longer compiler-injected from JSON; stdlib exposes them via `namespace Clib { extern fun ... }` in `std_clib.oa` (resolver keys are still mangled as `Clib__*` for namespaced-call lookup)
 - resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
 - resolver builtins also include `Void` for procedure-like extern signatures
 - resolver builtins also include byte-memory helpers `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`
@@ -124,6 +124,7 @@ Important enforced invariants include:
 
 - Generates QBE module/functions/data.
 - Includes builtins and interop helpers (for example integer ops, print, string utilities) plus user/std-declared extern call targets.
+- Extern calls emit symbol names from signature metadata; namespace externs (for example `Clib.malloc`) therefore call raw declared extern symbols (for example `malloc`) while keeping namespaced lookup keys internal.
 - Handles expression lowering and control-flow generation.
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
 - Lowers `load_u8`/`store_u8` builtins to `loadub`/`storeb` QBE operations.
