@@ -87,6 +87,8 @@ pub struct Ast {
 #[derive(Clone, Debug, Serialize)]
 pub struct Function {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extern_symbol_name: Option<String>,
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
     pub return_type: String,
@@ -954,6 +956,7 @@ fn parse_function_declaration(
 
     Ok(Function {
         name,
+        extern_symbol_name: None,
         parameters,
         body,
         return_type,
@@ -995,6 +998,7 @@ fn parse_extern_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Res
 
     Ok(Function {
         name,
+        extern_symbol_name: None,
         parameters,
         body: vec![],
         return_type,
@@ -1070,9 +1074,16 @@ fn parse_namespace_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Ve
                 function.name = qualify_namespace_function_name(&namespace, &function.name);
                 functions.push(function);
             }
+            Some(TokenData::Word(name)) if name == "extern" => {
+                let mut function = parse_extern_function_declaration(tokens)?;
+                let symbol_name = function.name.clone();
+                function.name = qualify_namespace_function_name(&namespace, &symbol_name);
+                function.extern_symbol_name = Some(symbol_name);
+                functions.push(function);
+            }
             Some(TokenData::Word(name)) if name == "comptime" => {
                 return Err(anyhow::anyhow!(
-                    "namespace {} only supports runtime `fun` declarations in v1",
+                    "namespace {} only supports `fun` and `extern fun` declarations in v1",
                     namespace
                 ));
             }
@@ -2020,6 +2031,7 @@ fun main() -> I32 {
         assert_eq!(ast.top_level_functions.len(), 2);
         let free = &ast.top_level_functions[0];
         assert_eq!(free.name, "free");
+        assert_eq!(free.extern_symbol_name, None);
         assert!(free.is_extern);
         assert!(!free.is_comptime);
         assert!(free.body.is_empty());
@@ -2055,6 +2067,7 @@ fun main() -> I32 {
 
         assert_eq!(ast.top_level_functions.len(), 2);
         assert_eq!(ast.top_level_functions[0].name, "Option__is_some");
+        assert_eq!(ast.top_level_functions[0].extern_symbol_name, None);
 
         let main = &ast.top_level_functions[1];
         let super::Statement::Expression { expr } = &main.body[1] else {
@@ -2098,6 +2111,30 @@ test "A hashtable MUST have size 0 when created" {
     }
 
     #[test]
+    fn parses_namespace_extern_function_and_mangles_only_internal_name() {
+        let source = r#"
+namespace Clib {
+	extern fun free(ptr: PtrInt) -> Void
+}
+
+fun main() -> I32 {
+	Clib.free(i32_to_i64(0))
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+
+        assert_eq!(ast.top_level_functions.len(), 2);
+        let free = &ast.top_level_functions[0];
+        assert_eq!(free.name, "Clib__free");
+        assert_eq!(free.extern_symbol_name.as_deref(), Some("free"));
+        assert!(free.is_extern);
+    }
+
+    #[test]
     fn rejects_comptime_function_inside_namespace() {
         let source = r#"
 namespace Option {
@@ -2112,7 +2149,7 @@ namespace Option {
         let err = parse(tokens).expect_err("namespace comptime function must fail");
         assert!(
             err.to_string()
-                .contains("only supports runtime `fun` declarations"),
+                .contains("only supports `fun` and `extern fun` declarations"),
             "unexpected error: {err}"
         );
     }

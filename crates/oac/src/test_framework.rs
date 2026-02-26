@@ -48,6 +48,7 @@ pub fn lower_tests_to_program(mut ast: Ast) -> anyhow::Result<LoweredTestProgram
 
         ast.top_level_functions.push(Function {
             name: function_name,
+            extern_symbol_name: None,
             parameters: vec![],
             body,
             return_type: "I32".to_string(),
@@ -80,6 +81,7 @@ pub fn lower_tests_to_program(mut ast: Ast) -> anyhow::Result<LoweredTestProgram
 
     ast.top_level_functions.push(Function {
         name: "main".to_string(),
+        extern_symbol_name: None,
         parameters: vec![],
         body: main_body,
         return_type: "I32".to_string(),

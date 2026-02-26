@@ -386,6 +386,8 @@ pub struct FunctionParameter {
 pub struct FunctionSignature {
     pub parameters: Vec<FunctionParameter>,
     pub return_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extern_symbol_name: Option<String>,
 }
 
 pub type TypeRef = String;
@@ -514,6 +516,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                     },
                 ],
                 return_type: "I32".to_string(),
+                extern_symbol_name: None,
             },
         )
         .map_or(Ok(()), |_| {
@@ -536,6 +539,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                     },
                 ],
                 return_type: "Bool".to_string(),
+                extern_symbol_name: None,
             },
         )
         .map_or(Ok(()), |_| {
@@ -558,6 +562,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                     },
                 ],
                 return_type: "I32".to_string(),
+                extern_symbol_name: None,
             },
         )
         .map_or(Ok(()), |_| {
@@ -580,6 +585,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                     },
                 ],
                 return_type: "Bool".to_string(),
+                extern_symbol_name: None,
             },
         )
         .map_or(Ok(()), |_| {
@@ -594,6 +600,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 ty: "I32".to_string(),
             }],
             return_type: "I32".to_string(),
+            extern_symbol_name: None,
         },
     );
     program.function_sigs.insert(
@@ -610,6 +617,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 },
             ],
             return_type: "I32".to_string(),
+            extern_symbol_name: None,
         },
     );
     program.function_sigs.insert(
@@ -620,6 +628,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 ty: "PtrInt".to_string(),
             }],
             return_type: "U8".to_string(),
+            extern_symbol_name: None,
         },
     );
     program.function_sigs.insert(
@@ -636,6 +645,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 },
             ],
             return_type: "Void".to_string(),
+            extern_symbol_name: None,
         },
     );
     program.function_sigs.insert(
@@ -646,6 +656,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 ty: "String".to_string(),
             }],
             return_type: "I32".to_string(),
+            extern_symbol_name: None,
         },
     );
     program.function_sigs.insert(
@@ -666,6 +677,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 },
             ],
             return_type: "String".to_string(),
+            extern_symbol_name: None,
         },
     );
 
@@ -677,6 +689,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 ty: "I32".to_string(),
             }],
             return_type: "I64".to_string(),
+            extern_symbol_name: None,
         },
     );
 
@@ -690,6 +703,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                     ty: "String".to_string(),
                 }],
                 return_type: "I32".to_string(),
+                extern_symbol_name: None,
             },
         )
         .map_or(Ok(()), |_| {
@@ -812,6 +826,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 })
                 .collect::<Vec<_>>(),
             return_type: function.return_type.clone(),
+            extern_symbol_name: function.extern_symbol_name.clone(),
         };
         validate_function_signature_types(&function.name, &sig, &program.type_definitions, true)?;
         program
@@ -858,6 +873,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?,
             return_type: function.return_type.clone(),
+            extern_symbol_name: None,
         };
         validate_function_signature_types(&function.name, &sig, &program.type_definitions, false)?;
 
@@ -889,6 +905,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 })
                 .collect::<Vec<_>>(),
             return_type: function.return_type.clone(),
+            extern_symbol_name: None,
         };
         validate_function_signature_types(&function.name, &sig, &program.type_definitions, false)?;
         program.function_sigs.insert(function.name.clone(), sig);
@@ -929,6 +946,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
                 })
                 .collect::<Vec<_>>(),
             return_type: function.return_type.clone(),
+            extern_symbol_name: None,
         };
         let definition = FunctionDefinition {
             name: function.name.clone(),
@@ -1393,6 +1411,7 @@ fn synthesize_invariant_functions(
 
         out.push(parser::Function {
             name: function_name,
+            extern_symbol_name: None,
             parameters: vec![invariant.parameter.clone()],
             body: invariant.body.clone(),
             return_type: "Bool".to_string(),
@@ -1826,6 +1845,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                     .get(&function.name)
                     .cloned()
                     .unwrap_or_else(|| function.name.clone()),
+                extern_symbol_name: function.extern_symbol_name.clone(),
                 parameters: function
                     .parameters
                     .iter()
@@ -2594,7 +2614,10 @@ fun main() -> I32 {
             "missing String type from split stdlib"
         );
         assert!(
-            matches!(resolved.type_definitions.get("String"), Some(TypeDef::Enum(_))),
+            matches!(
+                resolved.type_definitions.get("String"),
+                Some(TypeDef::Enum(_))
+            ),
             "String should be a std-defined enum"
         );
         assert!(
@@ -2628,20 +2651,32 @@ fun main() -> I32 {
             "missing Null__value function from split stdlib"
         );
         assert!(
-            resolved.function_sigs.contains_key("String__from_literal_parts"),
+            resolved
+                .function_sigs
+                .contains_key("String__from_literal_parts"),
             "missing String__from_literal_parts function from split stdlib"
         );
         assert!(
-            resolved.function_sigs.contains_key("String__from_heap_parts"),
+            resolved
+                .function_sigs
+                .contains_key("String__from_heap_parts"),
             "missing String__from_heap_parts function from split stdlib"
         );
         assert!(
-            resolved.function_sigs.contains_key("malloc"),
-            "missing malloc extern function from split stdlib"
+            resolved.function_sigs.contains_key("Clib__malloc"),
+            "missing Clib__malloc extern function from split stdlib"
         );
         assert!(
-            resolved.function_sigs.contains_key("free"),
-            "missing free extern function from split stdlib"
+            resolved.function_sigs.contains_key("Clib__free"),
+            "missing Clib__free extern function from split stdlib"
+        );
+        assert_eq!(
+            resolved
+                .function_sigs
+                .get("Clib__free")
+                .and_then(|sig| sig.extern_symbol_name.as_deref()),
+            Some("free"),
+            "missing extern link symbol metadata for Clib__free"
         );
         assert!(
             resolved.function_sigs.contains_key("load_u8"),
@@ -2681,7 +2716,7 @@ fun main(argc: I32, argv: I64) -> I32 {
     fn resolve_accepts_extern_void_function_and_statement_call() {
         let source = r#"
 fun main() -> I32 {
-	free(i32_to_i64(0))
+	Clib.free(i32_to_i64(0))
 	return 0
 }
 "#

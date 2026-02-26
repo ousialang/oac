@@ -1261,8 +1261,23 @@ fn compile_void_call_statement(
         ));
     }
 
-    func.add_instr(qbe::Instr::Call(function_name, lowered_args, None));
+    let sig = ctx
+        .resolved
+        .function_sigs
+        .get(&function_name)
+        .expect("void call target signature should exist");
+    func.add_instr(qbe::Instr::Call(
+        call_target_symbol(&function_name, sig),
+        lowered_args,
+        None,
+    ));
     true
+}
+
+fn call_target_symbol(function_name: &str, sig: &ir::FunctionSignature) -> String {
+    sig.extern_symbol_name
+        .clone()
+        .unwrap_or_else(|| function_name.to_string())
 }
 
 fn compile_named_call(
@@ -1279,8 +1294,15 @@ fn compile_named_call(
         arg_vars.push(arg_var);
     }
 
+    let sig = ctx
+        .resolved
+        .function_sigs
+        .get(function_name)
+        .unwrap()
+        .clone();
+
     let instr = qbe::Instr::Call(
-        function_name.to_string(),
+        call_target_symbol(function_name, &sig),
         arg_vars
             .iter()
             .map(|v| {
@@ -1292,12 +1314,6 @@ fn compile_named_call(
         None,
     );
 
-    let sig = ctx
-        .resolved
-        .function_sigs
-        .get(function_name)
-        .unwrap()
-        .clone();
     assert!(
         sig.return_type != "Void",
         "void-return call {} cannot be used as an expression value",
@@ -2059,7 +2075,7 @@ fun main() -> I32 {
     fn qbe_codegen_supports_void_extern_call_statement() {
         let source = r#"
 fun main() -> I32 {
-	free(i32_to_i64(0))
+	Clib.free(i32_to_i64(0))
 	return 0
 }
 "#
@@ -2073,6 +2089,10 @@ fun main() -> I32 {
         assert!(
             qbe_ir.contains("call $free"),
             "expected void extern call in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            !qbe_ir.contains("call $Clib__free"),
+            "namespaced std clib calls should lower to libc symbol names, got:\n{qbe_ir}"
         );
     }
 
