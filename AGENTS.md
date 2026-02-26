@@ -104,6 +104,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `oac build` now runs a best-effort non-termination classifier on the generated QBE `main` function; when it proves a canonical while-loop is non-terminating, compilation fails early with the loop header label and proof reason.
 - Build/test Zig linking now uses per-target writable cache directories (`target/oac/zig-global-cache`, `target/oac/zig-local-cache` or test equivalents) and fails closed on non-zero `zig cc` status.
 - Execution fixture snapshots in `qbe_backend` are based on program stdout even when the process exits with a non-zero code; runtime errors are reserved for spawn failures, timeouts, invalid UTF-8, or signal termination.
+- GitHub Actions CI now provisions backend test/build dependencies before Rust checks (`z3`, `qbe`, and Zig via `goto-bus-stop/setup-zig@v2`, pinned to `0.13.0` in `.github/workflows/ci.yml`).
 
 ## Hard-Cut Migration Cheatsheet
 

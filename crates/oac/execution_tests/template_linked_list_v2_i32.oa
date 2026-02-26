@@ -1,4 +1,4 @@
-instantiate IntList = LinkedList[I32]
+specialize IntList = LinkedList[I32]
 
 fun print_front(v: IntList__FrontResult) -> I32 {
 	match v {
