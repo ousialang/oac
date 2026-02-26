@@ -241,7 +241,7 @@ pub(crate) fn encode_function(
             }
             QbeStatement::Assign(_, _, QbeInstr::Call(function, _, _))
             | QbeStatement::Volatile(QbeInstr::Call(function, _, _))
-                if is_exit_call(function) =>
+                if call_is_exit(function) =>
             {
                 emit_transition_rule(
                     &mut smt,
@@ -291,6 +291,7 @@ const REG_STATE_SORT: &str = "(Array (_ BitVec 32) (_ BitVec 64))";
 const MEM_STATE_SORT: &str = "(Array (_ BitVec 64) (_ BitVec 8))";
 const BV64_SORT: &str = "(_ BitVec 64)";
 const BV32_SORT: &str = "(_ BitVec 32)";
+const CLIB_CALL_INLINE_LIMIT: u64 = 16;
 
 struct FlattenedFunction {
     statements: Vec<QbeStatement>,
@@ -423,6 +424,85 @@ impl AssignType {
 #[derive(Debug)]
 struct FunctionArg {
     name: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExternCallModel {
+    Malloc,
+    Free,
+    Calloc,
+    Realloc,
+    Memcpy,
+    Memset,
+    Memmove,
+    Strlen,
+    Strcmp,
+    Strcpy,
+    Strncpy,
+    Open,
+    Read,
+    Write,
+    Close,
+    Exit,
+    Printf,
+}
+
+impl ExternCallModel {
+    fn min_arity(self) -> usize {
+        match self {
+            ExternCallModel::Printf => 1,
+            _ => self.exact_arity().expect("non-variadic arity exists"),
+        }
+    }
+
+    fn exact_arity(self) -> Option<usize> {
+        match self {
+            ExternCallModel::Malloc => Some(1),
+            ExternCallModel::Free => Some(1),
+            ExternCallModel::Calloc => Some(2),
+            ExternCallModel::Realloc => Some(2),
+            ExternCallModel::Memcpy => Some(3),
+            ExternCallModel::Memset => Some(3),
+            ExternCallModel::Memmove => Some(3),
+            ExternCallModel::Strlen => Some(1),
+            ExternCallModel::Strcmp => Some(2),
+            ExternCallModel::Strcpy => Some(2),
+            ExternCallModel::Strncpy => Some(3),
+            ExternCallModel::Open => Some(3),
+            ExternCallModel::Read => Some(3),
+            ExternCallModel::Write => Some(3),
+            ExternCallModel::Close => Some(1),
+            ExternCallModel::Exit => Some(1),
+            ExternCallModel::Printf => None,
+        }
+    }
+}
+
+fn extern_call_model(function: &str) -> Option<ExternCallModel> {
+    match function {
+        "malloc" => Some(ExternCallModel::Malloc),
+        "free" => Some(ExternCallModel::Free),
+        "calloc" => Some(ExternCallModel::Calloc),
+        "realloc" => Some(ExternCallModel::Realloc),
+        "memcpy" => Some(ExternCallModel::Memcpy),
+        "memset" => Some(ExternCallModel::Memset),
+        "memmove" => Some(ExternCallModel::Memmove),
+        "strlen" => Some(ExternCallModel::Strlen),
+        "strcmp" => Some(ExternCallModel::Strcmp),
+        "strcpy" => Some(ExternCallModel::Strcpy),
+        "strncpy" => Some(ExternCallModel::Strncpy),
+        "open" => Some(ExternCallModel::Open),
+        "read" => Some(ExternCallModel::Read),
+        "write" => Some(ExternCallModel::Write),
+        "close" => Some(ExternCallModel::Close),
+        "exit" => Some(ExternCallModel::Exit),
+        "printf" => Some(ExternCallModel::Printf),
+        _ => None,
+    }
+}
+
+fn call_is_exit(function: &str) -> bool {
+    extern_call_model(function) == Some(ExternCallModel::Exit)
 }
 
 struct TransitionExprs {
@@ -614,14 +694,8 @@ fn validate_statement_supported(
                     let cmp_assign_ty = assign_type_from_qbe(cmp_ty);
                     if matches!(
                         kind,
-                        QbeCmp::O
-                            | QbeCmp::Uo
-                            | QbeCmp::Lt
-                            | QbeCmp::Le
-                            | QbeCmp::Gt
-                            | QbeCmp::Ge
-                    )
-                        || matches!(assign_ty, AssignType::Single | AssignType::Double)
+                        QbeCmp::O | QbeCmp::Uo | QbeCmp::Lt | QbeCmp::Le | QbeCmp::Gt | QbeCmp::Ge
+                    ) || matches!(assign_ty, AssignType::Single | AssignType::Double)
                         || matches!(cmp_assign_ty, AssignType::Single | AssignType::Double)
                     {
                         return Err(QbeSmtError::Unsupported {
@@ -708,30 +782,7 @@ fn validate_statement_supported(
                     }
                 }
                 QbeInstr::Call(function, args, variadic_index) => {
-                    if variadic_index.is_some() {
-                        return Err(QbeSmtError::Unsupported {
-                            message: format!(
-                                "pc {pc}: variadic call target ${function} is unsupported"
-                            ),
-                        });
-                    }
-                    if !is_malloc_call(function) && !is_exit_call(function) {
-                        return Err(QbeSmtError::Unsupported {
-                            message: format!("pc {pc}: unsupported call target ${function}"),
-                        });
-                    }
-                    if is_exit_call(function) && args.is_empty() {
-                        return Err(QbeSmtError::Unsupported {
-                            message: format!("pc {pc}: call target $exit requires one argument"),
-                        });
-                    }
-                    if is_exit_call(function) {
-                        return Err(QbeSmtError::Unsupported {
-                            message: format!(
-                                "pc {pc}: call target $exit is unsupported in assignments"
-                            ),
-                        });
-                    }
+                    validate_call_supported(function, args, *variadic_index, pc, true)?;
                 }
                 QbeInstr::Phi(label_left, _, label_right, _) => {
                     if matches!(assign_ty, AssignType::Single | AssignType::Double) {
@@ -782,23 +833,7 @@ fn validate_statement_supported(
                 }
             }
             QbeInstr::Call(function, args, variadic_index) => {
-                if variadic_index.is_some() {
-                    return Err(QbeSmtError::Unsupported {
-                        message: format!(
-                            "pc {pc}: variadic call target ${function} is unsupported"
-                        ),
-                    });
-                }
-                if !is_malloc_call(function) && !is_exit_call(function) {
-                    return Err(QbeSmtError::Unsupported {
-                        message: format!("pc {pc}: unsupported call target ${function}"),
-                    });
-                }
-                if is_exit_call(function) && args.is_empty() {
-                    return Err(QbeSmtError::Unsupported {
-                        message: format!("pc {pc}: call target $exit requires one argument"),
-                    });
-                }
+                validate_call_supported(function, args, *variadic_index, pc, false)?;
             }
             _ => {
                 return Err(QbeSmtError::Unsupported {
@@ -809,6 +844,71 @@ fn validate_statement_supported(
     }
 
     Ok(())
+}
+
+fn validate_call_supported(
+    function: &str,
+    args: &[(QbeType, QbeValue)],
+    variadic_index: Option<u64>,
+    pc: usize,
+    in_assignment: bool,
+) -> Result<ExternCallModel, QbeSmtError> {
+    let Some(model) = extern_call_model(function) else {
+        return Err(QbeSmtError::Unsupported {
+            message: format!("pc {pc}: unsupported call target ${function}"),
+        });
+    };
+
+    if model == ExternCallModel::Printf {
+        if variadic_index.is_none() {
+            return Err(QbeSmtError::Unsupported {
+                message: format!("pc {pc}: call target $printf must be variadic"),
+            });
+        }
+        if args.is_empty() {
+            return Err(QbeSmtError::Unsupported {
+                message: format!("pc {pc}: call target $printf requires at least one argument"),
+            });
+        }
+    } else if variadic_index.is_some() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!("pc {pc}: variadic call target ${function} is unsupported"),
+        });
+    }
+
+    if model == ExternCallModel::Exit && args.is_empty() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!("pc {pc}: call target $exit requires one argument"),
+        });
+    }
+
+    if args.len() < model.min_arity() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "pc {pc}: call target ${function} requires at least {} argument(s), got {}",
+                model.min_arity(),
+                args.len()
+            ),
+        });
+    }
+    if let Some(exact) = model.exact_arity() {
+        if args.len() != exact {
+            return Err(QbeSmtError::Unsupported {
+                message: format!(
+                    "pc {pc}: call target ${function} requires exactly {exact} argument(s), got {}",
+                    args.len()
+                ),
+            });
+        }
+    }
+
+    if model == ExternCallModel::Exit && in_assignment {
+        return Err(QbeSmtError::Unsupported {
+            message: format!("pc {pc}: call target $exit is unsupported in assignments"),
+        });
+    }
+
+    Ok(model)
 }
 
 fn regs_update_expr(
@@ -908,15 +1008,16 @@ fn regs_update_expr(
         QbeInstr::Alloc4(..) | QbeInstr::Alloc8(..) | QbeInstr::Alloc16(..) => {
             normalize_to_assign_type(heap_curr, assign_ty)
         }
-        QbeInstr::Call(function, ..) => {
-            if is_malloc_call(function) {
-                normalize_to_assign_type(heap_curr, assign_ty)
-            } else if is_exit_call(function) {
-                normalize_to_assign_type(&bv_const_u64(0, 64), assign_ty)
-            } else {
-                unreachable!("unsupported calls should be rejected")
-            }
-        }
+        QbeInstr::Call(function, args, _) => call_assign_result_expr(
+            extern_call_model(function).expect("call model should be validated"),
+            args,
+            assign_ty,
+            slot,
+            regs_curr,
+            heap_curr,
+            reg_slots,
+            global_map,
+        ),
         QbeInstr::Phi(label_left, left_value, label_right, right_value) => {
             let left_expr = normalize_to_assign_type(
                 &value_to_smt(left_value, regs_curr, reg_slots, global_map),
@@ -947,6 +1048,66 @@ fn regs_update_expr(
     format!("(store {regs_curr} {} {value_expr})", reg_slot_const(slot))
 }
 
+fn call_assign_result_expr(
+    model: ExternCallModel,
+    args: &[(QbeType, QbeValue)],
+    assign_ty: AssignType,
+    dest_slot: u32,
+    regs_curr: &str,
+    heap_curr: &str,
+    reg_slots: &HashMap<String, u32>,
+    global_map: &HashMap<String, u64>,
+) -> String {
+    let unknown_result = unconstrained_assign_value_expr(assign_ty, dest_slot, "regs_next");
+
+    match model {
+        ExternCallModel::Malloc | ExternCallModel::Calloc => {
+            normalize_to_assign_type(heap_curr, assign_ty)
+        }
+        ExternCallModel::Realloc => {
+            let ptr_expr = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                .unwrap_or_else(|| bv_const_u64(0, 64));
+            let malloc_like_result = normalize_to_assign_type(heap_curr, assign_ty);
+            format!(
+                "(ite (= {ptr_expr} {}) {malloc_like_result} {unknown_result})",
+                bv_const_u64(0, 64),
+            )
+        }
+        ExternCallModel::Memcpy
+        | ExternCallModel::Memmove
+        | ExternCallModel::Memset
+        | ExternCallModel::Strcpy
+        | ExternCallModel::Strncpy => call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+            .map(|dest| normalize_to_assign_type(&dest, assign_ty))
+            .unwrap_or(unknown_result),
+        ExternCallModel::Exit
+        | ExternCallModel::Free
+        | ExternCallModel::Strlen
+        | ExternCallModel::Strcmp
+        | ExternCallModel::Open
+        | ExternCallModel::Read
+        | ExternCallModel::Write
+        | ExternCallModel::Close
+        | ExternCallModel::Printf => unknown_result,
+    }
+}
+
+fn unconstrained_assign_value_expr(assign_ty: AssignType, slot: u32, regs_next: &str) -> String {
+    let self_ref = format!("(select {regs_next} {})", reg_slot_const(slot));
+    normalize_to_assign_type(&self_ref, assign_ty)
+}
+
+fn call_arg_expr(
+    args: &[(QbeType, QbeValue)],
+    index: usize,
+    regs_curr: &str,
+    reg_slots: &HashMap<String, u32>,
+    global_map: &HashMap<String, u64>,
+) -> Option<String> {
+    args.get(index)
+        .map(|(_, value)| value_to_smt(value, regs_curr, reg_slots, global_map))
+}
+
 fn memory_update_expr(
     statement: &QbeStatement,
     mem_curr: &str,
@@ -967,6 +1128,127 @@ fn memory_update_expr(
             let src_expr = value_to_smt(src, regs_curr, reg_slots, global_map);
             let dst_expr = value_to_smt(dst, regs_curr, reg_slots, global_map);
             inline_blit_expr(mem_curr, &src_expr, &dst_expr, *len)
+        }
+        QbeStatement::Assign(_, _, QbeInstr::Call(function, args, _))
+        | QbeStatement::Volatile(QbeInstr::Call(function, args, _)) => {
+            match extern_call_model(function).expect("call model should be validated") {
+                ExternCallModel::Memcpy | ExternCallModel::Memmove => {
+                    let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(src_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(len_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    bounded_copy_with_fallback_expr(
+                        mem_curr,
+                        &src_expr,
+                        &dst_expr,
+                        &len_expr,
+                        CLIB_CALL_INLINE_LIMIT,
+                        "mem_next",
+                    )
+                }
+                ExternCallModel::Memset => {
+                    let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(fill_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(len_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let byte_expr = extract_low_bits(&fill_expr, 8);
+                    bounded_set_with_fallback_expr(
+                        mem_curr,
+                        &dst_expr,
+                        &len_expr,
+                        &byte_expr,
+                        CLIB_CALL_INLINE_LIMIT,
+                        "mem_next",
+                    )
+                }
+                ExternCallModel::Calloc => {
+                    let Some(nmemb_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(size_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let total_expr = format!("(bvmul {nmemb_expr} {size_expr})");
+                    bounded_set_with_fallback_expr(
+                        mem_curr,
+                        "heap",
+                        &total_expr,
+                        &bv_const_u64(0, 8),
+                        CLIB_CALL_INLINE_LIMIT,
+                        "mem_next",
+                    )
+                }
+                ExternCallModel::Realloc => {
+                    let ptr_expr = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                        .unwrap_or_else(|| bv_const_u64(0, 64));
+                    format!(
+                        "(ite (= {ptr_expr} {}) {mem_curr} mem_next)",
+                        bv_const_u64(0, 64)
+                    )
+                }
+                ExternCallModel::Read => {
+                    let Some(buf_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(count_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    bounded_havoc_with_fallback_expr(
+                        mem_curr,
+                        &buf_expr,
+                        &count_expr,
+                        CLIB_CALL_INLINE_LIMIT,
+                        "mem_next",
+                    )
+                }
+                ExternCallModel::Strncpy => {
+                    let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(count_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    bounded_havoc_with_fallback_expr(
+                        mem_curr,
+                        &dst_expr,
+                        &count_expr,
+                        CLIB_CALL_INLINE_LIMIT,
+                        "mem_next",
+                    )
+                }
+                ExternCallModel::Strcpy => "mem_next".to_string(),
+                ExternCallModel::Malloc
+                | ExternCallModel::Free
+                | ExternCallModel::Strlen
+                | ExternCallModel::Strcmp
+                | ExternCallModel::Open
+                | ExternCallModel::Write
+                | ExternCallModel::Close
+                | ExternCallModel::Exit
+                | ExternCallModel::Printf => mem_curr.to_string(),
+            }
         }
         _ => mem_curr.to_string(),
     }
@@ -993,22 +1275,47 @@ fn heap_update_expr(
         ),
         QbeStatement::Assign(_, _, QbeInstr::Call(function, args, _))
         | QbeStatement::Volatile(QbeInstr::Call(function, args, _)) => {
-            if is_malloc_call(function) {
-                if let Some((_, size_arg)) = args.first() {
-                    let size_expr = value_to_smt(size_arg, regs_curr, reg_slots, global_map);
-                    let non_zero_size = format!(
-                        "(ite (= {size_expr} {}) {} {size_expr})",
-                        bv_const_u64(0, 64),
-                        bv_const_u64(1, 64)
-                    );
-                    return format!("(bvadd {heap_curr} {non_zero_size})");
+            match extern_call_model(function).expect("call model should be validated") {
+                ExternCallModel::Malloc => {
+                    let size_expr = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                        .unwrap_or_else(|| bv_const_u64(8, 64));
+                    format!("(bvadd {heap_curr} {})", non_zero_size_expr(&size_expr))
                 }
-                return format!("(bvadd {heap_curr} {})", bv_const_u64(8, 64));
+                ExternCallModel::Calloc => {
+                    let nmemb_expr = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                        .unwrap_or_else(|| bv_const_u64(0, 64));
+                    let size_expr = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
+                        .unwrap_or_else(|| bv_const_u64(0, 64));
+                    let total_expr = format!("(bvmul {nmemb_expr} {size_expr})");
+                    format!("(bvadd {heap_curr} {})", non_zero_size_expr(&total_expr))
+                }
+                ExternCallModel::Realloc => {
+                    let ptr_expr = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                        .unwrap_or_else(|| bv_const_u64(0, 64));
+                    let size_expr = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
+                        .unwrap_or_else(|| bv_const_u64(8, 64));
+                    let realloc_malloc =
+                        format!("(bvadd {heap_curr} {})", non_zero_size_expr(&size_expr));
+                    format!(
+                        "(ite (= {ptr_expr} {}) {realloc_malloc} heap_next)",
+                        bv_const_u64(0, 64)
+                    )
+                }
+                ExternCallModel::Exit
+                | ExternCallModel::Free
+                | ExternCallModel::Memcpy
+                | ExternCallModel::Memmove
+                | ExternCallModel::Memset
+                | ExternCallModel::Strlen
+                | ExternCallModel::Strcmp
+                | ExternCallModel::Strcpy
+                | ExternCallModel::Strncpy
+                | ExternCallModel::Open
+                | ExternCallModel::Read
+                | ExternCallModel::Write
+                | ExternCallModel::Close
+                | ExternCallModel::Printf => heap_curr.to_string(),
             }
-            if is_exit_call(function) {
-                return heap_curr.to_string();
-            }
-            unreachable!("unsupported calls should be rejected")
         }
         _ => heap_curr.to_string(),
     }
@@ -1041,17 +1348,128 @@ fn exit_update_expr(
         }
         QbeStatement::Volatile(QbeInstr::Ret(None)) => bv_const_u64(0, 64),
         QbeStatement::Assign(_, _, QbeInstr::Call(function, args, _))
-        | QbeStatement::Volatile(QbeInstr::Call(function, args, _))
-            if is_exit_call(function) =>
-        {
-            if let Some((_, code)) = args.first() {
-                value_to_smt(code, regs_curr, reg_slots, global_map)
+        | QbeStatement::Volatile(QbeInstr::Call(function, args, _)) => {
+            if extern_call_model(function) == Some(ExternCallModel::Exit) {
+                if let Some((_, code)) = args.first() {
+                    value_to_smt(code, regs_curr, reg_slots, global_map)
+                } else {
+                    bv_const_u64(0, 64)
+                }
             } else {
-                bv_const_u64(0, 64)
+                exit_curr.to_string()
             }
         }
         _ => exit_curr.to_string(),
     }
+}
+
+fn non_zero_size_expr(size_expr: &str) -> String {
+    format!(
+        "(ite (= {size_expr} {}) {} {size_expr})",
+        bv_const_u64(0, 64),
+        bv_const_u64(1, 64)
+    )
+}
+
+fn bounded_copy_with_fallback_expr(
+    mem_curr: &str,
+    src_expr: &str,
+    dst_expr: &str,
+    len_expr: &str,
+    limit: u64,
+    mem_fallback: &str,
+) -> String {
+    let precise = bounded_copy_expr(mem_curr, src_expr, dst_expr, len_expr, limit);
+    format!(
+        "(ite (bvule {len_expr} {}) {precise} {mem_fallback})",
+        bv_const_u64(limit, 64)
+    )
+}
+
+fn bounded_copy_expr(
+    mem_curr: &str,
+    src_expr: &str,
+    dst_expr: &str,
+    len_expr: &str,
+    limit: u64,
+) -> String {
+    let mut acc = mem_curr.to_string();
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let cond = format!("(bvugt {len_expr} {index_expr})");
+        let src_i = format!("(bvadd {src_expr} {index_expr})");
+        let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+        let byte_i = format!("(select {mem_curr} {src_i})");
+        let write_i = format!("(store {acc} {dst_i} {byte_i})");
+        acc = format!("(ite {cond} {write_i} {acc})");
+    }
+    acc
+}
+
+fn bounded_set_with_fallback_expr(
+    mem_curr: &str,
+    dst_expr: &str,
+    len_expr: &str,
+    byte_expr: &str,
+    limit: u64,
+    mem_fallback: &str,
+) -> String {
+    let precise = bounded_set_expr(mem_curr, dst_expr, len_expr, byte_expr, limit);
+    format!(
+        "(ite (bvule {len_expr} {}) {precise} {mem_fallback})",
+        bv_const_u64(limit, 64)
+    )
+}
+
+fn bounded_set_expr(
+    mem_curr: &str,
+    dst_expr: &str,
+    len_expr: &str,
+    byte_expr: &str,
+    limit: u64,
+) -> String {
+    let mut acc = mem_curr.to_string();
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let cond = format!("(bvugt {len_expr} {index_expr})");
+        let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+        let write_i = format!("(store {acc} {dst_i} {byte_expr})");
+        acc = format!("(ite {cond} {write_i} {acc})");
+    }
+    acc
+}
+
+fn bounded_havoc_with_fallback_expr(
+    mem_curr: &str,
+    dst_expr: &str,
+    len_expr: &str,
+    limit: u64,
+    mem_fallback: &str,
+) -> String {
+    let precise = bounded_havoc_expr(mem_curr, dst_expr, len_expr, limit, mem_fallback);
+    format!(
+        "(ite (bvule {len_expr} {}) {precise} {mem_fallback})",
+        bv_const_u64(limit, 64)
+    )
+}
+
+fn bounded_havoc_expr(
+    mem_curr: &str,
+    dst_expr: &str,
+    len_expr: &str,
+    limit: u64,
+    mem_havoc_source: &str,
+) -> String {
+    let mut acc = mem_curr.to_string();
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let cond = format!("(bvugt {len_expr} {index_expr})");
+        let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+        let havoc_byte = format!("(select {mem_havoc_source} {dst_i})");
+        let write_i = format!("(store {acc} {dst_i} {havoc_byte})");
+        acc = format!("(ite {cond} {write_i} {acc})");
+    }
+    acc
 }
 
 fn binary_expr(instr: &QbeInstr, ty: AssignType, lhs: &str, rhs: &str) -> String {
@@ -1433,14 +1851,6 @@ fn bv_const_u64(value: u64, width: u32) -> String {
         };
         format!("(_ bv{} {})", value & mask, width)
     }
-}
-
-fn is_malloc_call(function: &str) -> bool {
-    function == "malloc"
-}
-
-fn is_exit_call(function: &str) -> bool {
-    function == "exit"
 }
 
 fn temp_name(value: &QbeValue) -> Option<&str> {

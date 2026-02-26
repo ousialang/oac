@@ -439,6 +439,215 @@ mod tests {
     }
 
     #[test]
+    fn models_memcpy_with_symbolic_length_and_fallback_branch() {
+        let function = make_main(
+            vec![
+                (Type::Long, temp("dst")),
+                (Type::Long, temp("src")),
+                (Type::Long, temp("n")),
+            ],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Call(
+                        "memcpy".to_string(),
+                        vec![
+                            (Type::Long, temp("dst")),
+                            (Type::Long, temp("src")),
+                            (Type::Long, temp("n")),
+                        ],
+                        None,
+                    )),
+                    volatile(Instr::Ret(Some(Value::Const(0)))),
+                ],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("memcpy should encode");
+
+        assert!(smt.contains("(ite (bvule"));
+        assert!(smt.contains("(select mem"));
+    }
+
+    #[test]
+    fn models_memmove_overlap_case() {
+        let function = make_main(
+            vec![(Type::Long, temp("dst")), (Type::Long, temp("n"))],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Call(
+                        "memmove".to_string(),
+                        vec![
+                            (Type::Long, temp("dst")),
+                            (Type::Long, temp("dst")),
+                            (Type::Long, temp("n")),
+                        ],
+                        None,
+                    )),
+                    volatile(Instr::Ret(Some(Value::Const(0)))),
+                ],
+            )],
+        );
+
+        qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("memmove overlap case should encode");
+    }
+
+    #[test]
+    fn models_memset_bounded_writes() {
+        let function = make_main(
+            vec![
+                (Type::Long, temp("dst")),
+                (Type::Long, temp("n")),
+                (Type::Word, temp("fill")),
+            ],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Call(
+                        "memset".to_string(),
+                        vec![
+                            (Type::Long, temp("dst")),
+                            (Type::Word, temp("fill")),
+                            (Type::Long, temp("n")),
+                        ],
+                        None,
+                    )),
+                    volatile(Instr::Ret(Some(Value::Const(0)))),
+                ],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("memset should encode");
+
+        assert!(smt.contains("((_ extract 7 0)"));
+        assert!(smt.contains("(store"));
+    }
+
+    #[test]
+    fn models_calloc_realloc_and_free_calls() {
+        let function = make_main(
+            vec![],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "p",
+                        Type::Long,
+                        Instr::Call(
+                            "calloc".to_string(),
+                            vec![(Type::Long, Value::Const(2)), (Type::Long, Value::Const(8))],
+                            None,
+                        ),
+                    ),
+                    assign(
+                        "q",
+                        Type::Long,
+                        Instr::Call(
+                            "realloc".to_string(),
+                            vec![(Type::Long, temp("p")), (Type::Long, Value::Const(32))],
+                            None,
+                        ),
+                    ),
+                    volatile(Instr::Call(
+                        "free".to_string(),
+                        vec![(Type::Long, temp("q"))],
+                        None,
+                    )),
+                    volatile(Instr::Ret(Some(Value::Const(0)))),
+                ],
+            )],
+        );
+
+        qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("calloc/realloc/free should encode");
+    }
+
+    #[test]
+    fn models_variadic_printf_call() {
+        let function = make_main(
+            vec![],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Call(
+                        "printf".to_string(),
+                        vec![(Type::Long, Value::Const(0)), (Type::Word, Value::Const(7))],
+                        Some(1),
+                    )),
+                    volatile(Instr::Ret(Some(Value::Const(0)))),
+                ],
+            )],
+        );
+
+        qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("variadic printf should encode");
+    }
+
+    #[test]
+    fn rejects_printf_without_variadic_marker() {
+        let function = make_main(
+            vec![],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Call(
+                        "printf".to_string(),
+                        vec![(Type::Long, Value::Const(0))],
+                        None,
+                    )),
+                    volatile(Instr::Ret(Some(Value::Const(0)))),
+                ],
+            )],
+        );
+
+        let err = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect_err("printf without variadic marker should fail");
+        assert!(err
+            .to_string()
+            .contains("call target $printf must be variadic"));
+    }
+
+    #[test]
     fn rejects_unsupported_calls() {
         let function = make_main(
             vec![(Type::Word, temp("x"))],
