@@ -49,7 +49,7 @@ Act like a compiler engineer, not a text editor:
 
 ### Backend/runtime behavior change
 - Inspect generated QBE text and runtime output snapshots.
-- Check interop assumptions with std `Clib.*` bindings in `std_clib.oa` (`namespace`-scoped `extern fun` declarations that resolve to `Clib__*` internal keys while preserving declared link symbols) and helper functions.
+- Check interop assumptions with std `Clib.*` bindings in `crates/oac/src/std/std_clib.oa` (`namespace`-scoped `extern fun` declarations that resolve to `Clib__*` internal keys while preserving declared link symbols) and helper functions.
 
 ### Interop/bindings behavior change
 - Prefer stdlib declarations (`extern fun`) over compiler hardcoded signature tables.

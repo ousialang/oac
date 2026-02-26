@@ -2328,7 +2328,7 @@ invariant "packet pointer is reflexive" for (v: Packet) {
 }
 
 fun make_packet(dst: PtrInt, src: PtrInt, n: PtrInt) -> Packet {
-	copied = memcpy(dst, src, n)
+	copied = Clib.memcpy(dst, src, n)
 	return Packet struct { ptr: copied, len: n, }
 }
 
