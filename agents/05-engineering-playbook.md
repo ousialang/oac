@@ -48,7 +48,8 @@ Act like a compiler engineer, not a text editor:
 ## Pre-Commit Checklist
 
 - `cargo check --all-targets --all-features`
-- `cargo test --all-targets --all-features`
+- `cargo nextest run --all-targets --all-features` (preferred when `cargo-nextest` is available)
+- `cargo test --all-targets --all-features` (fallback when `cargo-nextest` is unavailable)
 - Review snapshot diffs for unintended behavior changes.
 - Update docs in `agents/` and root `AGENTS.md` if any context changed.
 
