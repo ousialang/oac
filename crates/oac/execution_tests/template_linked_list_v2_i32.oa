@@ -1,0 +1,84 @@
+instantiate IntList = LinkedList[I32]
+
+fun print_front(v: IntList__FrontResult) -> I32 {
+	match v {
+		IntList__FrontResult.Empty => {
+			print(99)
+			return 0
+		}
+		IntList__FrontResult.Value(x) => {
+			print(x)
+			return 0
+		}
+	}
+}
+
+fun print_tail(v: IntList__TailResult) -> I32 {
+	match v {
+		IntList__TailResult.Empty => {
+			print(99)
+			return 0
+		}
+		IntList__TailResult.Value(rest) => {
+			print(IntList.len(rest))
+			return 0
+		}
+	}
+}
+
+fun print_pop(v: IntList__PopFrontResult) -> I32 {
+	match v {
+		IntList__PopFrontResult.Empty => {
+			print(99)
+			return 0
+		}
+		IntList__PopFrontResult.Value(r) => {
+			print(r.value)
+			print(IntList.len(r.rest))
+			return 0
+		}
+	}
+}
+
+fun main() -> I32 {
+	xs = IntList.empty()
+	print(IntList.len(xs))
+	print(IntList.length(xs))
+
+	xs = IntList.singleton(2)
+	xs = IntList.cons(1, xs)
+	xs = IntList.push_front(0, xs)
+	print(IntList.len(xs))
+	print(IntList.head_or(xs, 77))
+	print_front(IntList.front(xs))
+	print_tail(IntList.tail(xs))
+
+	print(IntList.at_or(xs, 1, 77))
+	print_front(IntList.at(xs, 2))
+	print_front(IntList.at(xs, 5))
+
+	tail = IntList.tail_or(xs, IntList.empty())
+	print(IntList.len(tail))
+	print_pop(IntList.pop_front(xs))
+
+	ys = IntList.push_front(4, IntList.push_front(3, IntList.empty()))
+	app = IntList.append(xs, ys)
+	print(IntList.len(app))
+	print(IntList.at_or(app, 4, 77))
+
+	rev = IntList.reverse(app)
+	print(IntList.at_or(rev, 0, 77))
+
+	taken = IntList.take(app, 3)
+	print(IntList.len(taken))
+	print(IntList.at_or(taken, 2, 77))
+
+	dropped = IntList.drop(app, 2)
+	print(IntList.len(dropped))
+	print(IntList.at_or(dropped, 0, 77))
+
+	print(IntList.len(IntList.take(app, 0 - 1)))
+	print(IntList.len(IntList.drop(app, 0 - 1)))
+
+	return 0
+}
