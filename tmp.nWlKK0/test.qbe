@@ -1,7 +1,0 @@
-export function w $main() {
-@start
-	%a =s copy s_1.5
-	%b =s copy s_1.0
-	%c =w cslts %a, %b
-	ret %c
-}
