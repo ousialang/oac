@@ -78,6 +78,8 @@ Observed in parser/IR implementation:
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs). `AsciiChar` wraps `Char` and has an invariant requiring `0 <= Char.code(ch) <= 127`.
 - The split stdlib also defines `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with helpers `Char.from_code(...)`, `Char.code(...)`, and `Char.equals(...)`.
 - The split stdlib now also defines `Null` as an empty struct (`struct Null {}`), with a namespaced constructor helper `Null.value() -> Null`.
+- The split stdlib now also defines `HashTable[T]` as a dynamically resizing separate-chaining map in `std_collections.oa`; public helpers are `HashTable.new`, `HashTable.with_capacity`, `HashTable.set`, `HashTable.get`, `HashTable.remove`, `HashTable.len`, `HashTable.capacity`, `HashTable.contains_key`, and `HashTable.clear`.
+- `HashTable.set` returns `SetResult { table: HashTable, inserted_new: Bool }` and `HashTable.remove` returns `RemoveResult { table: HashTable, removed: Lookup }`; `HashTable` keys are `I32`.
 - Struct invariants are optional per struct type and can be declared directly as `invariant "Human label" for (v: TypeName) { ... }` or `invariant identifier "Human label" for (...) { ... }`.
 - Invariant declarations synthesize internal functions named `__struct__<TypeName>__invariant` with signature `fun ...(v: <TypeName>) -> Bool`; legacy explicit functions using that exact name/signature are still accepted for compatibility.
 - Malformed legacy invariant functions are compile errors.
@@ -88,6 +90,7 @@ Observed in parser/IR implementation:
 - Checker construction inlines reachable user-function calls into the site checker before CHC encoding, so loops/control-flow are reasoned about on QBE transitions.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
 - String literals lower to std `String.Literal` values by allocating `Bytes` + tagged union wrapper in codegen; runtime string helpers (`char_at`, `string_len`, `slice`, `print_str`) read `Bytes.ptr`/`Bytes.len` from that layout.
+- Runtime `i32_to_i64` helper lowering uses signed extension (`extsw`) so values above `255` are not truncated in pointer/length conversion paths.
 - Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` or `(argc: I32, argv: PtrInt)` form.
 - `oac test <file.oa>` is fail-fast: each `test` block is lowered to a generated zero-arg `I32` function, and a generated `main` executes tests in declaration order. A failing runtime `assert` exits immediately with code `242`.
 - `oac test` requires at least one `test` declaration and rejects source files that already define `main` (because `main` is synthesized by the test runner).

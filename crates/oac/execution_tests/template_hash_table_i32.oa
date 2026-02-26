@@ -13,33 +13,71 @@ fun print_lookup(v: IntTable__Lookup) -> I32 {
 	}
 }
 
-fun main() -> I32 {
-	table = IntTable.empty()
-	print(IntTable.size(table))
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+	} else {
+		print(0)
+	}
+	return 0
+}
 
-	table = IntTable.put(table, 1, 10)
-	table = IntTable.put(table, 9, 90)
-	table = IntTable.put(table, 2, 20)
-	print(IntTable.size(table))
+fun main() -> I32 {
+	table = IntTable.new()
+	print(IntTable.len(table))
+	print(IntTable.capacity(table))
+
+	r1 = IntTable.set(table, 1, 10)
+	table = r1.table
+	print_bool(r1.inserted_new)
+	r2 = IntTable.set(table, 9, 90)
+	table = r2.table
+	print_bool(r2.inserted_new)
+	r3 = IntTable.set(table, 17, 170)
+	table = r3.table
+	print_bool(r3.inserted_new)
+	print(IntTable.len(table))
 
 	print_lookup(IntTable.get(table, 1))
 	print_lookup(IntTable.get(table, 9))
+	print_lookup(IntTable.get(table, 17))
 	print_lookup(IntTable.get(table, 42))
 
-	table = IntTable.put(table, 1, 11)
-	print(IntTable.size(table))
+	r4 = IntTable.set(table, 1, 11)
+	table = r4.table
+	print_bool(r4.inserted_new)
+	print(IntTable.len(table))
 	print_lookup(IntTable.get(table, 1))
 
-	if IntTable.contains_key(table, 2) {
-		print(1)
-	} else {
-		print(0)
+	removed1 = IntTable.remove(table, 9)
+	table = removed1.table
+	print_lookup(removed1.removed)
+	print(IntTable.len(table))
+	print_lookup(IntTable.get(table, 9))
+
+	removed2 = IntTable.remove(table, 9)
+	table = removed2.table
+	print_lookup(removed2.removed)
+	print(IntTable.len(table))
+
+	print(IntTable.capacity(table))
+	i = 0
+	while i < 20 {
+		r = IntTable.set(table, 100 + i, i)
+		table = r.table
+		i = i + 1
 	}
-	if IntTable.contains_key(table, 42) {
-		print(1)
-	} else {
-		print(0)
-	}
+	print(IntTable.len(table))
+	print(IntTable.capacity(table))
+	print_lookup(IntTable.get(table, 1))
+	print_lookup(IntTable.get(table, 17))
+	print_lookup(IntTable.get(table, 119))
+	print_bool(IntTable.contains_key(table, 42))
+	print_bool(IntTable.contains_key(table, 119))
+
+	table = IntTable.clear(table)
+	print(IntTable.len(table))
+	print(IntTable.capacity(table))
 
 	return 0
 }

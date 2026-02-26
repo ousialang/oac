@@ -54,6 +54,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - The stdlib also exposes `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with namespaced helpers (`Char.from_code`, `Char.code`, `Char.equals`).
 - The stdlib now also exposes `Null` as an empty struct (`struct Null {}`) with namespaced constructor helper `Null.value()`.
 - The stdlib now also defines `Bytes` (`struct Bytes { ptr: PtrInt, len: I32 }`) and `String` as a tagged enum (`Literal(Bytes)` / `Heap(Bytes)`) in `std_string.oa`; `String` is no longer a compiler-primitive type.
+- The stdlib `HashTable[T]` in `std_collections.oa` is now a dynamically resizing separate-chaining map (persistent value semantics) with APIs `new`, `with_capacity`, `set` (`SetResult { table, inserted_new }`), `get`, `remove` (`RemoveResult { table, removed }`), `len`, `capacity`, `contains_key`, and `clear`; fixed-size `put`/`size` APIs were removed.
 - C interop in std is exposed through namespaced calls (`Clib.*`) and declared in `std_clib.oa` as `namespace Clib { extern fun ... }`; resolver keeps namespaced internal keys (`Clib__name`) while codegen emits declared extern symbol names for linking (for example `malloc`).
 - Built-in `Void` is available for C-style procedure signatures; in v1 only `extern fun` may return `Void`, and `Void` is rejected as a parameter type.
 - Built-in `U8` is available as an unsigned byte-like numeric type (`U8/U8` arithmetic and comparisons are allowed with no implicit coercions).

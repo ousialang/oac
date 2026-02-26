@@ -99,6 +99,7 @@ Key tests:
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts QBE emission for namespaced calls contains mangled function call symbols.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts statement-position `Void` extern calls are emitted (`call $free`).
+- `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `i32_to_i64` lowering uses signed extension (`extsw`) and not byte extension (`extub`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP32 lowering emits single-precision constants/ops and ordered float comparisons.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP64 lowering emits double-precision constants/ops and ordered float comparisons.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `U8` lowers with unsigned comparison/division ops (`cultw`, `udiv`).
@@ -113,10 +114,13 @@ Key tests:
   - `assert_fail.oa`
 - Execution fixtures also include namespace call coverage:
   - `namespace_basic.oa`
+- Execution fixtures also include large-string length regression coverage:
+  - `string_len_large.oa`
 - Stdlib namespacing coverage in execution fixtures:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
   - Template stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa`.
   - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), result-enum accessors (`front` / `tail` / `pop_front`), and transform helpers (`append`, `reverse`, `take`, `drop`, `at`, `at_or`) in addition to compatibility wrappers.
+  - `template_hash_table_i32.oa` additionally covers HashTable v2 behaviors: `set/remove/len/capacity`, insert-vs-update semantics via `inserted_new`, and resize retention for existing entries.
 
 Snapshots live in:
 - `crates/oac/src/snapshots/*.snap`
