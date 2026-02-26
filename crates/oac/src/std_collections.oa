@@ -231,9 +231,24 @@ template HashTable[T] {
 		value: T,
 	}
 
-	enum Slot {
+	struct EntryNode {
+		entry: Entry,
+		next: Bucket,
+	}
+
+	enum Bucket {
 		Empty,
-		Node(Entry),
+		Node(EntryNode),
+	}
+
+	struct BucketTreeNode {
+		left: Buckets,
+		right: Buckets,
+	}
+
+	enum Buckets {
+		Leaf(Bucket),
+		Branch(BucketTreeNode),
 	}
 
 	enum Lookup {
@@ -242,162 +257,460 @@ template HashTable[T] {
 	}
 
 	struct HashTable {
-		s0: Slot,
-		s1: Slot,
-		s2: Slot,
-		s3: Slot,
-		s4: Slot,
-		s5: Slot,
-		s6: Slot,
-		s7: Slot,
+		buckets: Buckets,
+		bucket_count: I32,
+		len: I32,
+		resize_threshold: I32,
 	}
 
-	fun empty() -> HashTable {
-		return HashTable struct { s0: Slot.Empty, s1: Slot.Empty, s2: Slot.Empty, s3: Slot.Empty, s4: Slot.Empty, s5: Slot.Empty, s6: Slot.Empty, s7: Slot.Empty, }
+	struct SetResult {
+		table: HashTable,
+		inserted_new: Bool,
 	}
 
-	fun hash_key(key: I32) -> I32 {
-		k = key
-		if k < 0 {
-			k = 0 - k
-		}
-
-		div = k / 8
-		return k - (div * 8)
+	struct RemoveResult {
+		table: HashTable,
+		removed: Lookup,
 	}
 
-	fun slot_at(table: HashTable, index: I32) -> Slot {
-		if index == 0 {
-			return table.s0
-		}
-		if index == 1 {
-			return table.s1
-		}
-		if index == 2 {
-			return table.s2
-		}
-		if index == 3 {
-			return table.s3
-		}
-		if index == 4 {
-			return table.s4
-		}
-		if index == 5 {
-			return table.s5
-		}
-		if index == 6 {
-			return table.s6
-		}
-
-		return table.s7
+	struct BucketSetResult {
+		bucket: Bucket,
+		inserted_new: Bool,
 	}
 
-	fun with_slot(table: HashTable, index: I32, slot: Slot) -> HashTable {
-		if index == 0 {
-			return HashTable struct { s0: slot, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
-		}
-		if index == 1 {
-			return HashTable struct { s0: table.s0, s1: slot, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
-		}
-		if index == 2 {
-			return HashTable struct { s0: table.s0, s1: table.s1, s2: slot, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
-		}
-		if index == 3 {
-			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: slot, s4: table.s4, s5: table.s5, s6: table.s6, s7: table.s7, }
-		}
-		if index == 4 {
-			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: slot, s5: table.s5, s6: table.s6, s7: table.s7, }
-		}
-		if index == 5 {
-			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: slot, s6: table.s6, s7: table.s7, }
-		}
-		if index == 6 {
-			return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: slot, s7: table.s7, }
-		}
-
-		return HashTable struct { s0: table.s0, s1: table.s1, s2: table.s2, s3: table.s3, s4: table.s4, s5: table.s5, s6: table.s6, s7: slot, }
+	struct BucketRemoveResult {
+		bucket: Bucket,
+		removed: Lookup,
 	}
 
-	fun add_wrap(index: I32, delta: I32) -> I32 {
-		n = index + delta
-		if n >= 8 {
-			return n - 8
+	fun min_bucket_count() -> I32 {
+		return 8
+	}
+
+	fun threshold_for_capacity(capacity: I32) -> I32 {
+		threshold = (capacity * 3) / 4
+		if threshold < 1 {
+			return 1
 		}
+		return threshold
+	}
+
+	fun next_power_of_two(min_capacity: I32) -> I32 {
+		n = HashTable.min_bucket_count()
+		if min_capacity <= n {
+			return n
+		}
+
+		while n < min_capacity {
+			n = n + n
+		}
+
 		return n
 	}
 
-	fun put_probe(table: HashTable, start: I32, delta: I32, key: I32, value: T) -> HashTable {
-		if delta >= 8 {
-			return table
+	fun empty_buckets(count: I32) -> Buckets {
+		if count <= 1 {
+			return Buckets.Leaf(Bucket.Empty)
 		}
 
-		index = add_wrap(start, delta)
-		slot = slot_at(table, index)
-		match slot {
-			Slot.Empty => {
-				entry = Entry struct { key: key, value: value, }
-				return with_slot(table, index, Slot.Node(entry))
-			}
-			Slot.Node(entry) => {
-				if entry.key == key {
-					replaced = Entry struct { key: key, value: value, }
-					return with_slot(table, index, Slot.Node(replaced))
+		half = count / 2
+		left = HashTable.empty_buckets(half)
+		right = HashTable.empty_buckets(half)
+		node = BucketTreeNode struct {
+			left: left,
+			right: right,
+		}
+		return Buckets.Branch(node)
+	}
+
+	fun bucket_at(buckets: Buckets, count: I32, index: I32) -> Bucket {
+		if count <= 1 {
+			match buckets {
+				Buckets.Leaf(bucket) => {
+					return bucket
 				}
-				return put_probe(table, start, delta + 1, key, value)
+				Buckets.Branch(node) => {
+					return HashTable.bucket_at(node.left, 1, 0)
+				}
+			}
+		}
+
+		half = count / 2
+		match buckets {
+			Buckets.Leaf(bucket) => {
+				return bucket
+			}
+			Buckets.Branch(node) => {
+				if index < half {
+					return HashTable.bucket_at(node.left, half, index)
+				}
+				return HashTable.bucket_at(node.right, half, index - half)
 			}
 		}
 	}
 
-	fun get_probe(table: HashTable, start: I32, delta: I32, key: I32) -> Lookup {
-		if delta >= 8 {
-			return Lookup.Missing
+	fun with_bucket(buckets: Buckets, count: I32, index: I32, bucket: Bucket) -> Buckets {
+		if count <= 1 {
+			return Buckets.Leaf(bucket)
 		}
 
-		index = add_wrap(start, delta)
-		slot = slot_at(table, index)
-		match slot {
-			Slot.Empty => {
+		half = count / 2
+		match buckets {
+			Buckets.Leaf(_old) => {
+				return Buckets.Leaf(bucket)
+			}
+			Buckets.Branch(node) => {
+				if index < half {
+					left = HashTable.with_bucket(node.left, half, index, bucket)
+					updated = BucketTreeNode struct {
+						left: left,
+						right: node.right,
+					}
+					return Buckets.Branch(updated)
+				}
+				right = HashTable.with_bucket(node.right, half, index - half, bucket)
+				updated = BucketTreeNode struct {
+					left: node.left,
+					right: right,
+				}
+				return Buckets.Branch(updated)
+			}
+		}
+	}
+
+	fun modulo_non_negative(value: I32, divisor: I32) -> I32 {
+		q = value / divisor
+		r = value - (q * divisor)
+		if r < 0 {
+			return r + divisor
+		}
+		return r
+	}
+
+	fun bucket_index(key: I32, bucket_count: I32) -> I32 {
+		return HashTable.modulo_non_negative(key, bucket_count)
+	}
+
+	fun bucket_get(bucket: Bucket, key: I32) -> Lookup {
+		match bucket {
+			Bucket.Empty => {
 				return Lookup.Missing
 			}
-			Slot.Node(entry) => {
+			Bucket.Node(node) => {
+				entry = node.entry
 				if entry.key == key {
 					return Lookup.Found(entry.value)
 				}
-				return get_probe(table, start, delta + 1, key)
+				return HashTable.bucket_get(node.next, key)
 			}
 		}
 	}
 
-	fun slot_size(slot: Slot) -> I32 {
-		return match slot {
-			Slot.Empty => 0
-			Slot.Node(_entry) => 1
+	fun bucket_set(bucket: Bucket, key: I32, value: T) -> BucketSetResult {
+		match bucket {
+			Bucket.Empty => {
+				entry = Entry struct {
+					key: key,
+					value: value,
+				}
+				node = EntryNode struct {
+					entry: entry,
+					next: Bucket.Empty,
+				}
+				return BucketSetResult struct {
+					bucket: Bucket.Node(node),
+					inserted_new: true,
+				}
+			}
+			Bucket.Node(node) => {
+				entry = node.entry
+				if entry.key == key {
+					replaced_entry = Entry struct {
+						key: key,
+						value: value,
+					}
+					replaced_node = EntryNode struct {
+						entry: replaced_entry,
+						next: node.next,
+					}
+					return BucketSetResult struct {
+						bucket: Bucket.Node(replaced_node),
+						inserted_new: false,
+					}
+				}
+
+				tail = HashTable.bucket_set(node.next, key, value)
+				rebuilt = EntryNode struct {
+					entry: entry,
+					next: tail.bucket,
+				}
+				return BucketSetResult struct {
+					bucket: Bucket.Node(rebuilt),
+					inserted_new: tail.inserted_new,
+				}
+			}
 		}
 	}
 
-	fun put(table: HashTable, key: I32, value: T) -> HashTable {
-		start = hash_key(key)
-		return put_probe(table, start, 0, key, value)
+	fun bucket_remove(bucket: Bucket, key: I32) -> BucketRemoveResult {
+		match bucket {
+			Bucket.Empty => {
+				return BucketRemoveResult struct {
+					bucket: Bucket.Empty,
+					removed: Lookup.Missing,
+				}
+			}
+			Bucket.Node(node) => {
+				entry = node.entry
+				if entry.key == key {
+					return BucketRemoveResult struct {
+						bucket: node.next,
+						removed: Lookup.Found(entry.value),
+					}
+				}
+
+				tail = HashTable.bucket_remove(node.next, key)
+				rebuilt = EntryNode struct {
+					entry: entry,
+					next: tail.bucket,
+				}
+				return BucketRemoveResult struct {
+					bucket: Bucket.Node(rebuilt),
+					removed: tail.removed,
+				}
+			}
+		}
+	}
+
+	fun new() -> HashTable {
+		return HashTable.with_capacity(HashTable.min_bucket_count())
+	}
+
+	fun with_capacity(min_capacity: I32) -> HashTable {
+		cap = HashTable.next_power_of_two(min_capacity)
+		buckets = HashTable.empty_buckets(cap)
+		return HashTable struct {
+			buckets: buckets,
+			bucket_count: cap,
+			len: 0,
+			resize_threshold: HashTable.threshold_for_capacity(cap),
+		}
+	}
+
+	fun set_no_resize(table: HashTable, key: I32, value: T) -> SetResult {
+		index = HashTable.bucket_index(key, table.bucket_count)
+		bucket = HashTable.bucket_at(table.buckets, table.bucket_count, index)
+		bucket_result = HashTable.bucket_set(bucket, key, value)
+		next_buckets = HashTable.with_bucket(table.buckets, table.bucket_count, index, bucket_result.bucket)
+
+		next_len = table.len
+		if bucket_result.inserted_new {
+			next_len = next_len + 1
+		}
+
+		next_table = HashTable struct {
+			buckets: next_buckets,
+			bucket_count: table.bucket_count,
+			len: next_len,
+			resize_threshold: table.resize_threshold,
+		}
+		return SetResult struct {
+			table: next_table,
+			inserted_new: bucket_result.inserted_new,
+		}
+	}
+
+	fun insert_bucket_entries(dst: HashTable, bucket: Bucket) -> HashTable {
+		match bucket {
+			Bucket.Empty => {
+				return dst
+			}
+			Bucket.Node(node) => {
+				entry = node.entry
+				set_result = HashTable.set_no_resize(dst, entry.key, entry.value)
+				return HashTable.insert_bucket_entries(set_result.table, node.next)
+			}
+		}
+	}
+
+	fun insert_all_buckets(dst: HashTable, src: Buckets, count: I32) -> HashTable {
+		if count <= 1 {
+			match src {
+				Buckets.Leaf(bucket) => {
+					return HashTable.insert_bucket_entries(dst, bucket)
+				}
+				Buckets.Branch(node) => {
+					left = HashTable.insert_all_buckets(dst, node.left, 1)
+					return HashTable.insert_all_buckets(left, node.right, 1)
+				}
+			}
+		}
+
+		half = count / 2
+		match src {
+			Buckets.Leaf(bucket) => {
+				return HashTable.insert_bucket_entries(dst, bucket)
+			}
+			Buckets.Branch(node) => {
+				left = HashTable.insert_all_buckets(dst, node.left, half)
+				return HashTable.insert_all_buckets(left, node.right, half)
+			}
+		}
+	}
+
+	fun rehash(table: HashTable, new_bucket_count: I32) -> HashTable {
+		cap = HashTable.next_power_of_two(new_bucket_count)
+		fresh = HashTable.with_capacity(cap)
+		return HashTable.insert_all_buckets(fresh, table.buckets, table.bucket_count)
+	}
+
+	fun maybe_resize_before_insert(table: HashTable) -> HashTable {
+		if table.len + 1 > table.resize_threshold {
+			return HashTable.rehash(table, table.bucket_count + table.bucket_count)
+		}
+		return table
+	}
+
+	fun set(table: HashTable, key: I32, value: T) -> SetResult {
+		resized = HashTable.maybe_resize_before_insert(table)
+		return HashTable.set_no_resize(resized, key, value)
 	}
 
 	fun get(table: HashTable, key: I32) -> Lookup {
-		start = hash_key(key)
-		return get_probe(table, start, 0, key)
+		index = HashTable.bucket_index(key, table.bucket_count)
+		bucket = HashTable.bucket_at(table.buckets, table.bucket_count, index)
+		return HashTable.bucket_get(bucket, key)
+	}
+
+	fun remove(table: HashTable, key: I32) -> RemoveResult {
+		index = HashTable.bucket_index(key, table.bucket_count)
+		bucket = HashTable.bucket_at(table.buckets, table.bucket_count, index)
+		bucket_result = HashTable.bucket_remove(bucket, key)
+		next_buckets = HashTable.with_bucket(table.buckets, table.bucket_count, index, bucket_result.bucket)
+
+		next_len = table.len
+		match bucket_result.removed {
+			Lookup.Missing => {
+			}
+			Lookup.Found(_value) => {
+				next_len = next_len - 1
+			}
+		}
+
+		next_table = HashTable struct {
+			buckets: next_buckets,
+			bucket_count: table.bucket_count,
+			len: next_len,
+			resize_threshold: table.resize_threshold,
+		}
+		return RemoveResult struct {
+			table: next_table,
+			removed: bucket_result.removed,
+		}
+	}
+
+	fun clear(table: HashTable) -> HashTable {
+		buckets = HashTable.empty_buckets(table.bucket_count)
+		return HashTable struct {
+			buckets: buckets,
+			bucket_count: table.bucket_count,
+			len: 0,
+			resize_threshold: table.resize_threshold,
+		}
 	}
 
 	fun contains_key(table: HashTable, key: I32) -> Bool {
-		return match get(table, key) {
+		return match HashTable.get(table, key) {
 			Lookup.Missing => false
 			Lookup.Found(_value) => true
 		}
 	}
 
-	fun size(table: HashTable) -> I32 {
-		return slot_size(table.s0) + slot_size(table.s1) + slot_size(table.s2) + slot_size(table.s3) + slot_size(table.s4) + slot_size(table.s5) + slot_size(table.s6) + slot_size(table.s7)
+	fun len(table: HashTable) -> I32 {
+		return table.len
+	}
+
+	fun capacity(table: HashTable) -> I32 {
+		return table.bucket_count
 	}
 }
 
-test "A hashtable MUST have size 0 when created" {
-	table = HashTable.empty()
-	assert(HashTable.size(table) == 0)
+test "A hashtable MUST have len 0 when created" {
+	table = HashTable.new()
+	assert(HashTable.len(table) == 0)
+}
+
+test "A hashtable insert/get MUST work" {
+	r = HashTable.set(HashTable.new(), 10, 99)
+	table = r.table
+	assert(r.inserted_new)
+	assert(HashTable.len(table) == 1)
+	match HashTable.get(table, 10) {
+		HashTable__Lookup.Missing => {
+			assert(false)
+		}
+		HashTable__Lookup.Found(v) => {
+			assert(v == 99)
+		}
+	}
+}
+
+test "A hashtable update MUST not increase len" {
+	r1 = HashTable.set(HashTable.new(), 1, 10)
+	r2 = HashTable.set(r1.table, 1, 11)
+	if r2.inserted_new {
+		assert(false)
+	}
+	assert(HashTable.len(r2.table) == 1)
+	match HashTable.get(r2.table, 1) {
+		HashTable__Lookup.Missing => {
+			assert(false)
+		}
+		HashTable__Lookup.Found(v) => {
+			assert(v == 11)
+		}
+	}
+}
+
+test "A hashtable remove MUST decrease len" {
+	r1 = HashTable.set(HashTable.new(), 1, 10)
+	r2 = HashTable.set(r1.table, 9, 90)
+	removed = HashTable.remove(r2.table, 9)
+	assert(HashTable.len(removed.table) == 1)
+	match removed.removed {
+		HashTable__Lookup.Missing => {
+			assert(false)
+		}
+		HashTable__Lookup.Found(v) => {
+			assert(v == 90)
+		}
+	}
+}
+
+test "A hashtable resize MUST preserve entries" {
+	table = HashTable.new()
+	i = 0
+	while i < 20 {
+		r = HashTable.set(table, 100 + i, i)
+		table = r.table
+		i = i + 1
+	}
+	assert(HashTable.len(table) == 20)
+	assert(HashTable.capacity(table) >= 20)
+	match HashTable.get(table, 100) {
+		HashTable__Lookup.Missing => {
+			assert(false)
+		}
+		HashTable__Lookup.Found(v) => {
+			assert(v == 0)
+		}
+	}
+	match HashTable.get(table, 119) {
+		HashTable__Lookup.Missing => {
+			assert(false)
+		}
+		HashTable__Lookup.Found(v) => {
+			assert(v == 19)
+		}
+	}
 }

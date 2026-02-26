@@ -174,7 +174,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
         f.assign_instr(
             Value::Temporary(long.to_string()),
             qbe::Type::Long,
-            Instr::Extub(Value::Temporary("a".to_string())),
+            Instr::Extsw(Value::Temporary("a".to_string())),
         );
         f.add_instr(Instr::Ret(Some(Value::Temporary(long))));
         ctx.module.add_function(f);
@@ -2093,6 +2093,35 @@ fun main() -> I32 {
         assert!(
             !qbe_ir.contains("call $Clib__free"),
             "namespaced std clib calls should lower to libc symbol names, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_i32_to_i64_uses_signed_extension() {
+        let source = r#"
+fun main() -> I32 {
+	x = i32_to_i64(300)
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("function l $i32_to_i64"),
+            "expected i32_to_i64 helper in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("extsw %a"),
+            "expected i32_to_i64 to use signed extension, got:\n{qbe_ir}"
+        );
+        assert!(
+            !qbe_ir.contains("extub %a"),
+            "did not expect byte extension in i32_to_i64 helper, got:\n{qbe_ir}"
         );
     }
 
