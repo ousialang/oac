@@ -145,7 +145,7 @@ Important enforced invariants include:
 - `qbe-smt` models a broad integer + memory QBE subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - `phi` merging via predecessor-tracking state in CHC (`pred`)
-  - `call` with explicit support for `malloc` heap effects and `exit(code)` halting transitions
+  - `call` modeling for `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, `exit(code)`, and variadic `printf` (for builtin `print` lowering)
   - `load*`/`store*` byte-addressed memory operations
   - `alloc4/alloc8/alloc16` heap-pointer modeling
   - control flow via Horn transition rules (`jnz`, `jmp`, `ret`, halt relation)
@@ -153,6 +153,7 @@ Important enforced invariants include:
 - Relation state also threads predecessor-block identity so branch-edge semantics for `phi` are explicit.
 - Property surface is fixed: query whether halt with `exit == 1` is reachable (`(query bad)`).
 - Unsupported constructs are fail-closed hard errors (no havoc fallback path).
+- For modeled CLib memory operations, encoding uses bounded precise expansion (`limit = 16`) plus sound fallback branches (for example, unconstrained `mem_next` when bounds are exceeded).
 - Floating-point SMT reasoning is intentionally unsupported today; FP32/FP64 values/compares in obligations are rejected fail-closed.
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.

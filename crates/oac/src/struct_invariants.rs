@@ -2315,7 +2315,52 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn external_calls_fail_closed_in_qbe_native_flow() {
+    fn modeled_clib_memcpy_encodes_in_qbe_native_flow() {
+        let program = resolve_program(
+            r#"
+struct Packet {
+	ptr: PtrInt,
+	len: PtrInt,
+}
+
+invariant "packet pointer is reflexive" for (v: Packet) {
+	return v.ptr == v.ptr
+}
+
+fun make_packet(dst: PtrInt, src: PtrInt, n: PtrInt) -> Packet {
+	copied = memcpy(dst, src, n)
+	return Packet struct { ptr: copied, len: n, }
+}
+
+fun main(argc: I32, argv: PtrInt) -> I32 {
+	p = make_packet(argv, argv, argv)
+	return argc
+}
+"#,
+        );
+
+        let (sites, function_map) = site_function_map(&program).expect("build sites and qbe");
+        assert_eq!(sites.len(), 1);
+        let checker =
+            build_site_checker_function(&function_map, &sites[0]).expect("build site checker");
+        let smt = qbe_smt::qbe_to_smt(
+            &checker,
+            &qbe_smt::EncodeOptions {
+                assume_main_argc_non_negative: should_assume_main_argc_non_negative(
+                    &sites[0], &checker,
+                ),
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("memcpy-backed checker should encode");
+        assert!(
+            smt.contains("(ite (bvule"),
+            "expected bounded branch in SMT: {smt}"
+        );
+    }
+
+    #[test]
+    fn unknown_external_calls_fail_closed_in_qbe_native_flow() {
         let program = resolve_program(
             r#"
 struct Foo {
@@ -2326,8 +2371,10 @@ invariant "x must be one" for (v: Foo) {
 	return v.x == 1
 }
 
+extern fun unknown(v: I32) -> I32
+
 fun make_foo() -> Foo {
-	x = print(1)
+	x = unknown(1)
 	return Foo struct { x: x, }
 }
 
