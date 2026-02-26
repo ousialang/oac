@@ -1,5 +1,6 @@
 template LinkedList[T] {
 	struct Node {
+		len: I32,
 		value: T,
 		next: LinkedList,
 	}
@@ -9,12 +10,48 @@ template LinkedList[T] {
 		Cons(Node),
 	}
 
+	enum FrontResult {
+		Empty,
+		Value(T),
+	}
+
+	enum TailResult {
+		Empty,
+		Value(LinkedList),
+	}
+
+	struct PopFrontValue {
+		value: T,
+		rest: LinkedList,
+	}
+
+	enum PopFrontResult {
+		Empty,
+		Value(PopFrontValue),
+	}
+
 	fun empty() -> LinkedList {
 		return LinkedList.Empty
 	}
 
+	fun len(list: LinkedList) -> I32 {
+		return match list {
+			LinkedList.Empty => 0
+			LinkedList.Cons(node) => node.len
+		}
+	}
+
+	fun singleton(value: T) -> LinkedList {
+		return push_front(value, empty())
+	}
+
+	fun cons(value: T, list: LinkedList) -> LinkedList {
+		return push_front(value, list)
+	}
+
 	fun push_front(value: T, list: LinkedList) -> LinkedList {
 		node = Node struct {
+			len: len(list) + 1,
 			value: value,
 			next: list,
 		}
@@ -22,30 +59,168 @@ template LinkedList[T] {
 	}
 
 	fun is_empty(list: LinkedList) -> Bool {
+		return len(list) == 0
+	}
+
+	fun front(list: LinkedList) -> FrontResult {
 		return match list {
-			LinkedList.Empty => true
-			LinkedList.Cons(_node) => false
+			LinkedList.Empty => FrontResult.Empty
+			LinkedList.Cons(node) => FrontResult.Value(node.value)
+		}
+	}
+
+	fun tail(list: LinkedList) -> TailResult {
+		return match list {
+			LinkedList.Empty => TailResult.Empty
+			LinkedList.Cons(node) => TailResult.Value(node.next)
+		}
+	}
+
+	fun pop_front(list: LinkedList) -> PopFrontResult {
+		match list {
+			LinkedList.Empty => {
+				return PopFrontResult.Empty
+			}
+			LinkedList.Cons(node) => {
+				v = PopFrontValue struct {
+					value: node.value,
+					rest: node.next,
+				}
+				return PopFrontResult.Value(v)
+			}
 		}
 	}
 
 	fun head_or(list: LinkedList, fallback: T) -> T {
-		return match list {
-			LinkedList.Empty => fallback
-			LinkedList.Cons(node) => node.value
+		return match front(list) {
+			FrontResult.Empty => fallback
+			FrontResult.Value(value) => value
 		}
 	}
 
 	fun tail_or(list: LinkedList, fallback: LinkedList) -> LinkedList {
-		return match list {
-			LinkedList.Empty => fallback
-			LinkedList.Cons(node) => node.next
+		return match tail(list) {
+			TailResult.Empty => fallback
+			TailResult.Value(next) => next
 		}
 	}
 
 	fun length(list: LinkedList) -> I32 {
-		return match list {
-			LinkedList.Empty => 0
-			LinkedList.Cons(node) => 1 + length(node.next)
+		return len(list)
+	}
+
+	fun reverse(list: LinkedList) -> LinkedList {
+		cursor = list
+		out = empty()
+		while !is_empty(cursor) {
+			match cursor {
+				LinkedList.Empty => {
+					return out
+				}
+				LinkedList.Cons(node) => {
+					out = push_front(node.value, out)
+					cursor = node.next
+				}
+			}
+		}
+
+		return out
+	}
+
+	fun append(left: LinkedList, right: LinkedList) -> LinkedList {
+		cursor = reverse(left)
+		out = right
+		while !is_empty(cursor) {
+			match cursor {
+				LinkedList.Empty => {
+					return out
+				}
+				LinkedList.Cons(node) => {
+					out = push_front(node.value, out)
+					cursor = node.next
+				}
+			}
+		}
+
+		return out
+	}
+
+	fun take(list: LinkedList, count: I32) -> LinkedList {
+		if count <= 0 {
+			return empty()
+		}
+
+		cursor = list
+		remaining = count
+		out_rev = empty()
+		while remaining > 0 && !is_empty(cursor) {
+			match cursor {
+				LinkedList.Empty => {
+					return reverse(out_rev)
+				}
+				LinkedList.Cons(node) => {
+					out_rev = push_front(node.value, out_rev)
+					cursor = node.next
+					remaining = remaining - 1
+				}
+			}
+		}
+
+		return reverse(out_rev)
+	}
+
+	fun drop(list: LinkedList, count: I32) -> LinkedList {
+		if count <= 0 {
+			return list
+		}
+
+		cursor = list
+		remaining = count
+		while remaining > 0 && !is_empty(cursor) {
+			match cursor {
+				LinkedList.Empty => {
+					return empty()
+				}
+				LinkedList.Cons(node) => {
+					cursor = node.next
+					remaining = remaining - 1
+				}
+			}
+		}
+
+		return cursor
+	}
+
+	fun at(list: LinkedList, index: I32) -> FrontResult {
+		if index < 0 {
+			return FrontResult.Empty
+		}
+
+		cursor = list
+		i = 0
+		while !is_empty(cursor) {
+			match cursor {
+				LinkedList.Empty => {
+					return FrontResult.Empty
+				}
+				LinkedList.Cons(node) => {
+					if i == index {
+						return FrontResult.Value(node.value)
+					}
+
+					i = i + 1
+					cursor = node.next
+				}
+			}
+		}
+
+		return FrontResult.Empty
+	}
+
+	fun at_or(list: LinkedList, index: I32, fallback: T) -> T {
+		return match at(list, index) {
+			FrontResult.Empty => fallback
+			FrontResult.Value(value) => value
 		}
 	}
 }

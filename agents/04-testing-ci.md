@@ -115,7 +115,8 @@ Key tests:
   - `namespace_basic.oa`
 - Stdlib namespacing coverage in execution fixtures:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
-  - Template stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa` and `template_hash_table_i32.oa`.
+  - Template stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa`.
+  - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), result-enum accessors (`front` / `tail` / `pop_front`), and transform helpers (`append`, `reverse`, `take`, `drop`, `at`, `at_or`) in addition to compatibility wrappers.
 
 Snapshots live in:
 - `crates/oac/src/snapshots/*.snap`

@@ -42,6 +42,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.
 - The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_string.oa`, `std_collections.oa`, `std_json.oa`, `std_clib.oa`).
 - The split stdlib now exposes namespaced helper APIs where applicable: JSON parsing helpers are called via `Json.*` (for example `Json.json_kind`, `Json.parse_json_document_result`).
+- The split stdlib collections now expose a richer persistent `LinkedList` template API: cached length via `len`/`length` (O(1) from node metadata), constructors/helpers (`empty`, `singleton`, `cons`, `push_front`), accessors (`front`, `tail`, `pop_front`, `at`, `at_or`), transforms (`append`, `reverse`, `take`, `drop`), and compatibility wrappers (`head_or`, `tail_or`, `length`).
 - The stdlib also exposes `AsciiChar` and `AsciiCharResult` with namespaced helpers (`AsciiChar.from_code`, `AsciiChar.from_string_at`, `AsciiChar.code`, `AsciiChar.is_digit`, `AsciiChar.is_whitespace`, `AsciiChar.equals`); `AsciiChar` stores a wrapped `Char`.
 - The stdlib also exposes `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with namespaced helpers (`Char.from_code`, `Char.code`, `Char.equals`).
 - The stdlib now also exposes `Null` as an empty struct (`struct Null {}`) with namespaced constructor helper `Null.value()`.
