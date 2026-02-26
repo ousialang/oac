@@ -1,0 +1,59 @@
+generic Ref[T] {
+	struct Ref {
+		ptr: PtrInt,
+	}
+
+	fun from_ptr(ptr: PtrInt) -> Ref {
+		return Ref struct {
+			ptr: ptr,
+		}
+	}
+
+	fun ptr(r: Ref) -> PtrInt {
+		return r.ptr
+	}
+
+	fun is_null(r: Ref) -> Bool {
+		return r.ptr == i32_to_i64(0)
+	}
+
+	fun add_bytes(r: Ref, delta: PtrInt) -> Ref {
+		return from_ptr(r.ptr + delta)
+	}
+}
+
+specialize U8Ref = Ref[U8]
+specialize I32Ref = Ref[I32]
+specialize I64Ref = Ref[I64]
+specialize PtrIntRef = Ref[PtrInt]
+specialize BoolRef = Ref[Bool]
+
+namespace U8Ref {
+	fun read(r: U8Ref) -> U8 {
+		return load_u8(U8Ref.ptr(r))
+	}
+}
+
+namespace I32Ref {
+	fun read(r: I32Ref) -> I32 {
+		return load_i32(I32Ref.ptr(r))
+	}
+}
+
+namespace I64Ref {
+	fun read(r: I64Ref) -> I64 {
+		return load_i64(I64Ref.ptr(r))
+	}
+}
+
+namespace PtrIntRef {
+	fun read(r: PtrIntRef) -> PtrInt {
+		return load_i64(PtrIntRef.ptr(r))
+	}
+}
+
+namespace BoolRef {
+	fun read(r: BoolRef) -> Bool {
+		return load_bool(BoolRef.ptr(r))
+	}
+}

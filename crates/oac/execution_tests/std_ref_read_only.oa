@@ -1,0 +1,48 @@
+fun main() -> I32 {
+	ptr = Clib.calloc(i32_to_i64(1), i32_to_i64(8))
+
+	u8_ref = U8Ref.from_ptr(ptr)
+	i32_ref = I32Ref.from_ptr(ptr)
+	i64_ref = I64Ref.from_ptr(ptr)
+	ptr_ref = PtrIntRef.from_ptr(ptr)
+	bool_ref = BoolRef.from_ptr(ptr)
+
+	u8_val = U8Ref.read(u8_ref)
+	i32_val = I32Ref.read(i32_ref)
+	i64_val = I64Ref.read(i64_ref)
+	ptr_val = PtrIntRef.read(ptr_ref)
+	bool_val = BoolRef.read(bool_ref)
+
+	if u8_val == u8_val {
+		print(10)
+	} else {
+		print(11)
+	}
+
+	if i32_val == 0 {
+		print(20)
+	} else {
+		print(21)
+	}
+
+	if i64_val == i32_to_i64(0) {
+		print(30)
+	} else {
+		print(31)
+	}
+
+	if ptr_val == i32_to_i64(0) {
+		print(40)
+	} else {
+		print(41)
+	}
+
+	if !bool_val {
+		print(50)
+	} else {
+		print(51)
+	}
+
+	Clib.free(ptr)
+	return 0
+}

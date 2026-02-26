@@ -55,7 +55,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.
 - Struct values use byte-value semantics at assignment/call/return boundaries: codegen inserts copy barriers (`calloc` + `memcpy`) so pointer identity is not language-visible at those boundaries.
 - Struct equality is universal bytewise comparison: `==` / `!=` lower to `memcmp` over full struct size (including pointer-containing structs).
-- The stdlib entrypoint `crates/oac/src/std/std.oa` is now an import aggregator over split files in `crates/oac/src/std/` (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_string.oa`, `std_collections.oa`, `std_traits.oa`, `std_json.oa`, `std_clib.oa`).
+- The stdlib entrypoint `crates/oac/src/std/std.oa` is now an import aggregator over split files in `crates/oac/src/std/` (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_string.oa`, `std_ref.oa`, `std_collections.oa`, `std_traits.oa`, `std_json.oa`, `std_clib.oa`).
 - `crates/oac/src/std/std_traits.oa` defines core traits (`Hash`, `Eq`) with concrete impls for practical key/value types used by stdlib and user generics.
 - The split stdlib now exposes namespaced helper APIs where applicable: JSON parsing helpers are called via `Json.*` (for example `Json.json_kind`, `Json.parse_json_document_result`).
 - The split stdlib collections now expose a richer persistent `LinkedList` template API: cached length via `len`/`length` (O(1) from node metadata), constructors/helpers (`empty`, `singleton`, `cons`, `push_front`), accessors (`front`, `tail`, `pop_front`, `at`, `at_or`), transforms (`append`, `reverse`, `take`, `drop`), and compatibility wrappers (`head_or`, `tail_or`, `length`).
@@ -63,12 +63,13 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - The stdlib also exposes `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with namespaced helpers (`Char.from_code`, `Char.code`, `Char.equals`).
 - The stdlib now also exposes `Null` as an empty struct (`struct Null {}`) with namespaced constructor helper `Null.value()`.
 - The stdlib now also defines `Bytes` (`struct Bytes { ptr: PtrInt, len: I32 }`) and `String` as a tagged enum (`Literal(Bytes)` / `Heap(Bytes)`) in `crates/oac/src/std/std_string.oa`; `String` is no longer a compiler-primitive type.
+- The stdlib now also defines generic `Ref[T]` in `crates/oac/src/std/std_ref.oa` with helpers `from_ptr`, `ptr`, `is_null`, and `add_bytes`; read-only dereference helpers are exposed via concrete specializations `U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, and `BoolRef.read`.
 - The stdlib `HashTable[T]` in `crates/oac/src/std/std_collections.oa` is now a dynamically resizing separate-chaining map (persistent value semantics) with APIs `new`, `with_capacity`, `set` (`SetResult { table, inserted_new }`), `get`, `remove` (`RemoveResult { table, removed }`), `len`, `capacity`, `contains_key`, and `clear`; fixed-size `put`/`size` APIs were removed.
 - C interop in std is exposed through namespaced calls (`Clib.*`) and declared in `crates/oac/src/std/std_clib.oa` as `namespace Clib { extern fun ... }`; resolver keeps namespaced internal keys (`Clib__name`) while codegen emits declared extern symbol names for linking (for example `malloc` and `memcmp`).
 - Built-in `Void` is available for C-style procedure signatures; in v1 only `extern fun` may return `Void`, and `Void` is rejected as a parameter type.
 - Built-in `U8` is available as an unsigned byte-like numeric type (`U8/U8` arithmetic and comparisons are allowed with no implicit coercions).
 - The resolver also exposes `PtrInt` as a standard numeric alias hardcoded to `I64` (for pointer-sized integer use sites).
-- Runtime byte memory helpers are compiler builtins: `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`.
+- Runtime pointer memory helpers are compiler builtins: `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, and `store_u8(addr: PtrInt, value: U8) -> Void`.
 - Character literals use single quotes and lower to `Char` construction (`'x'`, escapes like `'\n'` and `'\''`); parser lowers literals to `Char.from_code(...)`.
 - Identifier tokenization is EOF-safe: trailing words (including `_`) now lex as `Word` tokens instead of panicking, which keeps `oac lsp` stable on incomplete buffers.
 - `AsciiChar` range is enforced by a declaration-based struct invariant over its wrapped `Char` (`0 <= Char.code(ch) <= 127`); stdlib invariant declarations are now merged during `resolve` alongside stdlib types/functions/generics.

@@ -81,7 +81,7 @@ Operator precedence is explicitly encoded in parser.
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_string.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_string.oa`, `std/std_ref.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
 - generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages
 - type definition graph creation
@@ -110,10 +110,11 @@ Important enforced invariants include:
 - stdlib split modules also include `Char` helper API in `crates/oac/src/std/std_char.oa`, loaded through `crates/oac/src/std/std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `crates/oac/src/std/std_null.oa` (with `Null.value()` helper), loaded through `crates/oac/src/std/std.oa` like other std modules
 - stdlib split modules now also include `Bytes` + `String` in `crates/oac/src/std/std_string.oa`; `String` is std-defined as a tagged enum (`Literal(Bytes)`, `Heap(Bytes)`) and is no longer a resolver primitive
+- stdlib split modules now also include generic `Ref[T]` plus read-only specializations/helpers in `crates/oac/src/std/std_ref.oa` (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`)
 - C interop signatures are no longer compiler-injected from JSON; stdlib exposes them via `namespace Clib { extern fun ... }` in `crates/oac/src/std/std_clib.oa` (resolver keys are still mangled as `Clib__*` for namespaced-call lookup)
 - resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
 - resolver builtins also include `Void` for procedure-like extern signatures
-- resolver builtins also include byte-memory helpers `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`
+- resolver builtins also include pointer-memory helpers `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, and `store_u8(addr: PtrInt, value: U8) -> Void`
 - `extern fun` declarations are signature-only (`extern` cannot be `comptime` and extern functions must not have bodies)
 - v2 ABI restriction: `extern fun` signatures cannot use struct parameter or return types; use manual `PtrInt` wrappers at C ABI boundaries when struct-like payloads are needed
 - `Void` is restricted in v1: function parameters cannot be `Void`, and only `extern fun` may return `Void`
@@ -138,7 +139,7 @@ Important enforced invariants include:
 - Handles expression lowering and control-flow generation.
 - Trait calls are lowered with static dispatch only (resolved concrete impl symbols), with no runtime dictionaries or vtables.
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
-- Lowers `load_u8`/`store_u8` builtins to `loadub`/`storeb` QBE operations.
+- Lowers pointer-memory builtins to QBE loads/stores: `load_u8` -> `loadub`, `load_i32` -> `loadw`, `load_i64` -> `loadl`, `load_bool` -> `loadw` + compare-to-zero, and `store_u8` -> `storeb`.
 - Lowers string literals to std-owned `String.Literal(Bytes{ptr,len})` heap objects (compiler allocates `Bytes` payload and tagged-union `String` wrapper).
 - String helper builtins (`char_at`, `string_len`, `slice`, `print_str`) operate over std `String`/`Bytes` layout rather than raw C-string pointers.
 - Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.

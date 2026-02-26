@@ -76,7 +76,7 @@ Key tests:
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `crates/oac/src/std/std.oa` imports.
-- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), C externs (`Clib__malloc`, `Clib__free`, `Clib__memcmp`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
+- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), ref helpers (`U8Ref`, `I32Ref`, `I64Ref`, `PtrIntRef`, `BoolRef`, and `*Ref__read` functions), C externs (`Clib__malloc`, `Clib__free`, `Clib__memcmp`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
 - The same regression also asserts stdlib `AsciiChar` invariant registration/synthesis (`struct_invariants["AsciiChar"]` and `__struct__AsciiChar__invariant` function definition).
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()`, `main(argc: I32, argv: I64)`, and `main(argc: I32, argv: PtrInt)`).
 - `crates/oac/src/ir.rs` includes alias coverage for `PtrInt` behaving as `I64` in function calls/equality and type-definition mapping.
@@ -87,7 +87,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also includes FP32 resolve/type-check regression coverage (FP32 arithmetic + comparison in `main`).
 - `crates/oac/src/ir.rs` also includes FP64 resolve/type-check regression coverage (FP64 arithmetic + comparison in `main`).
 - `crates/oac/src/ir.rs` also includes `U8` coverage for accepted same-type arithmetic/comparison and rejection of mixed `U8`/`I32` arithmetic.
-- `crates/oac/src/ir.rs` also includes resolve coverage for builtin byte-memory helpers (`load_u8`, `store_u8`) with `PtrInt` addresses.
+- `crates/oac/src/ir.rs` also includes resolve coverage for builtin pointer-memory helpers (`load_u8`, `load_i32`, `load_i64`, `load_bool`, `store_u8`) with `PtrInt` addresses.
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
 - `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, and strict rejection of unsupported operations.
 - `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
@@ -108,7 +108,7 @@ Key tests:
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP32 lowering emits single-precision constants/ops and ordered float comparisons.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts FP64 lowering emits double-precision constants/ops and ordered float comparisons.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `U8` lowers with unsigned comparison/division ops (`cultw`, `udiv`).
-- `crates/oac/src/qbe_backend.rs` also has a unit test that asserts byte-memory builtins lower to byte-addressed ops (`loadub`, `storeb`).
+- `crates/oac/src/qbe_backend.rs` also has a unit test that asserts pointer-memory builtins lower to expected QBE ops (`loadub`, `loadw`, `loadl`, compare-to-zero for bool, `storeb`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts char literals lower through `call $Char__from_code`.
 - `crates/oac/src/qbe_backend.rs` also has a unit regression that asserts struct by-value barriers and equality lowering emit `calloc`/`memcpy` clones plus `call $memcmp` (`qbe_codegen_structs_use_copy_barriers_and_memcmp_equality`).
 - `crates/qbe-rs/src/tests.rs` includes coverage for FP32/FP64 constant formatting (`s_<literal>`, `d_<literal>`) and ordered float compare formatting (`clts`, `cgtd`).
@@ -127,6 +127,8 @@ Key tests:
   - `generic_hash_table_missing_impl.oa` (negative missing bound impl diagnostic)
 - Execution fixtures also include struct V2 equality semantics coverage:
   - `struct_equality_v2_memcmp.oa` (equal and unequal struct comparisons plus pointer-containing struct bytewise-equality behavior)
+- Execution fixtures also include read-only ref/deref coverage:
+  - `std_ref_read_only.oa` (read-only typed dereference via `Ref[T]` specializations and zero-initialized memory checks)
 - Stdlib namespacing coverage in execution fixtures:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
   - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).

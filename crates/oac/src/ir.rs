@@ -624,6 +624,39 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         },
     );
     program.function_sigs.insert(
+        "load_i32".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "addr".to_string(),
+                ty: "PtrInt".to_string(),
+            }],
+            return_type: "I32".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
+        "load_i64".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "addr".to_string(),
+                ty: "PtrInt".to_string(),
+            }],
+            return_type: "I64".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
+        "load_bool".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "addr".to_string(),
+                ty: "PtrInt".to_string(),
+            }],
+            return_type: "Bool".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
         "store_u8".to_string(),
         FunctionSignature {
             parameters: vec![
@@ -3419,8 +3452,60 @@ fun main() -> I32 {
             "missing load_u8 builtin signature"
         );
         assert!(
+            resolved.function_sigs.contains_key("load_i32"),
+            "missing load_i32 builtin signature"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("load_i64"),
+            "missing load_i64 builtin signature"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("load_bool"),
+            "missing load_bool builtin signature"
+        );
+        assert!(
             resolved.function_sigs.contains_key("store_u8"),
             "missing store_u8 builtin signature"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("U8Ref"),
+            "missing U8Ref type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("I32Ref"),
+            "missing I32Ref type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("I64Ref"),
+            "missing I64Ref type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("PtrIntRef"),
+            "missing PtrIntRef type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("BoolRef"),
+            "missing BoolRef type from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("U8Ref__read"),
+            "missing U8Ref__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("I32Ref__read"),
+            "missing I32Ref__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("I64Ref__read"),
+            "missing I64Ref__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("PtrIntRef__read"),
+            "missing PtrIntRef__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("BoolRef__read"),
+            "missing BoolRef__read function from split stdlib"
         );
         assert!(
             resolved.struct_invariants.contains_key("AsciiChar"),
@@ -4084,13 +4169,16 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn resolve_accepts_load_u8_and_store_u8_builtins() {
+    fn resolve_accepts_pointer_load_and_store_builtins() {
         let source = r#"
 fun main(argc: I32, argv: PtrInt) -> I32 {
 	b = load_u8(argv)
+	w = load_i32(argv)
+	l = load_i64(argv)
+	flag = load_bool(argv)
 	store_u8(argv, b)
-	if b == b {
-		return argc
+	if flag {
+		return w
 	}
 	return 0
 }

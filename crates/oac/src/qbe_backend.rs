@@ -201,6 +201,71 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     {
         let mut f = Function::new(
             Linkage::public(),
+            "load_i32".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+        let value = new_id(&["load", "i32"]);
+        f.assign_instr(
+            Value::Temporary(value.clone()),
+            qbe::Type::Word,
+            Instr::Load(Type::Word, Value::Temporary("addr".to_string())),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(value))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "load_i64".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
+            Some(Type::Long),
+        );
+        f.add_block("start".to_string());
+        let value = new_id(&["load", "i64"]);
+        f.assign_instr(
+            Value::Temporary(value.clone()),
+            qbe::Type::Long,
+            Instr::Load(Type::Long, Value::Temporary("addr".to_string())),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(value))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "load_bool".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+        let raw = new_id(&["load", "bool", "raw"]);
+        f.assign_instr(
+            Value::Temporary(raw.clone()),
+            qbe::Type::Word,
+            Instr::Load(Type::Word, Value::Temporary("addr".to_string())),
+        );
+        let value = new_id(&["load", "bool", "value"]);
+        f.assign_instr(
+            Value::Temporary(value.clone()),
+            qbe::Type::Word,
+            Instr::Cmp(
+                Type::Word,
+                qbe::Cmp::Ne,
+                Value::Temporary(raw),
+                Value::Const(0),
+            ),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(value))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
             "store_u8".to_string(),
             vec![
                 (qbe::Type::Long, qbe::Value::Temporary("addr".to_string())),
@@ -2442,11 +2507,17 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn qbe_codegen_supports_load_store_u8_builtins() {
+    fn qbe_codegen_supports_pointer_load_and_store_builtins() {
         let source = r#"
 fun main(argc: I32, argv: PtrInt) -> I32 {
 	b = load_u8(argv)
+	w = load_i32(argv)
+	l = load_i64(argv)
+	flag = load_bool(argv)
 	store_u8(argv, b)
+	if flag {
+		return w
+	}
 	return argc
 }
 "#
@@ -2470,8 +2541,40 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
             "expected call to load_u8 in qbe output, got:\n{qbe_ir}"
         );
         assert!(
+            qbe_ir.contains("function w $load_i32"),
+            "expected load_i32 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $load_i32"),
+            "expected call to load_i32 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("function l $load_i64"),
+            "expected load_i64 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $load_i64"),
+            "expected call to load_i64 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("function w $load_bool"),
+            "expected load_bool builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $load_bool"),
+            "expected call to load_bool in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
             qbe_ir.contains("call $store_u8"),
             "expected call to store_u8 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("loadw %addr"),
+            "expected load_i32/load_bool lowering to loadw in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("loadl %addr"),
+            "expected load_i64 lowering to loadl in qbe output, got:\n{qbe_ir}"
         );
         assert!(
             qbe_ir.contains("loadub %addr"),
