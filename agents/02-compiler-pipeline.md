@@ -15,7 +15,7 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 9. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
 10. Emit QBE IR to `target/oac/ir.qbe`.
 11. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
-12. Invoke `zig cc` to link executable (`target/oac/app`) with writable cache dirs under target (`zig-global-cache`, `zig-local-cache`), and fail compilation if `zig cc` exits non-zero.
+12. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`): default `cc` (plus `--target=<triple>` when arch mapping is known), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc`, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`

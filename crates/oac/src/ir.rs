@@ -398,18 +398,15 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         ast.type_definitions.extend(stdlib_ast.type_definitions);
         ast.trait_declarations.extend(stdlib_ast.trait_declarations);
         ast.impl_declarations.extend(stdlib_ast.impl_declarations);
-        ast.generic_definitions.extend(stdlib_ast.generic_definitions);
+        ast.generic_definitions
+            .extend(stdlib_ast.generic_definitions);
         ast.generic_specializations
             .extend(stdlib_ast.generic_specializations);
         ast.invariants.extend(stdlib_ast.invariants);
     }
     let (trait_method_signatures, trait_impl_methods, trait_impl_targets, impl_functions) =
         collect_trait_metadata(&ast)?;
-    expand_generics(
-        &mut ast,
-        &trait_method_signatures,
-        &trait_impl_targets,
-    )?;
+    expand_generics(&mut ast, &trait_method_signatures, &trait_impl_targets)?;
 
     let mut program = ResolvedProgram {
         ast: ast.clone(),
@@ -1539,7 +1536,10 @@ fn collect_trait_metadata(
 
     for trait_decl in &ast.trait_declarations {
         if trait_methods_by_trait.contains_key(&trait_decl.name) {
-            return Err(anyhow::anyhow!("duplicate trait declaration {}", trait_decl.name));
+            return Err(anyhow::anyhow!(
+                "duplicate trait declaration {}",
+                trait_decl.name
+            ));
         }
         let mut seen_method_names = HashSet::new();
         let mut methods = vec![];
@@ -1666,7 +1666,8 @@ fn collect_trait_metadata(
                 }
             }
             let expected_return = replace_self_type(&trait_method.return_type, &impl_decl.for_type);
-            if normalize_numeric_alias(&method.return_type) != normalize_numeric_alias(&expected_return)
+            if normalize_numeric_alias(&method.return_type)
+                != normalize_numeric_alias(&expected_return)
             {
                 return Err(anyhow::anyhow!(
                     "impl method {}.{} return type mismatch: expected {}, got {}",
@@ -1887,7 +1888,11 @@ fn rewrite_expression(
             struct_name,
             field_values,
         } => Expression::StructValue {
-            struct_name: rewrite_identifier(struct_name, type_substitution_map, local_type_name_map),
+            struct_name: rewrite_identifier(
+                struct_name,
+                type_substitution_map,
+                local_type_name_map,
+            ),
             field_values: field_values
                 .iter()
                 .map(|(name, expr)| {
@@ -2116,7 +2121,8 @@ fn expand_generics(
         }
 
         let mut type_substitution_map: HashMap<String, String> = HashMap::new();
-        for (parameter, concrete_type) in generic.params.iter().zip(&specialization.concrete_types) {
+        for (parameter, concrete_type) in generic.params.iter().zip(&specialization.concrete_types)
+        {
             type_substitution_map.insert(parameter.name.clone(), concrete_type.clone());
             for bound in &parameter.bounds {
                 if !declared_traits.contains(bound) {
@@ -2127,8 +2133,7 @@ fn expand_generics(
                         generic.name
                     ));
                 }
-                let impl_target =
-                    trait_impl_target_key(bound, concrete_type);
+                let impl_target = trait_impl_target_key(bound, concrete_type);
                 if !trait_impl_targets.contains(&impl_target) {
                     return Err(anyhow::anyhow!(
                         "missing impl {} for {} required by generic {} parameter {} in specialization {}",
@@ -2319,7 +2324,14 @@ pub(crate) fn get_expression_type(
 ) -> anyhow::Result<TypeRef> {
     match expr {
         Expression::Match { subject, arms } => {
-            let subject_type = get_expression_type(subject, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+            let subject_type = get_expression_type(
+                subject,
+                var_types,
+                fns,
+                type_definitions,
+                trait_method_signatures,
+                trait_impl_methods,
+            )?;
             let enum_def = match type_definitions.get(&subject_type) {
                 Some(TypeDef::Enum(enum_def)) => enum_def,
                 _ => {
@@ -2387,7 +2399,14 @@ pub(crate) fn get_expression_type(
                     (None, None) => {}
                 }
 
-                let ty = get_expression_type(&arm.value, &scoped_var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let ty = get_expression_type(
+                    &arm.value,
+                    &scoped_var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if let Some(expected_ty) = arm_value_type.as_ref() {
                     if expected_ty != &ty {
                         return Err(anyhow::anyhow!(
@@ -2498,8 +2517,14 @@ pub(crate) fn get_expression_type(
                                 args.len()
                             ));
                         }
-                        let arg_ty =
-                            get_expression_type(&args[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                        let arg_ty = get_expression_type(
+                            &args[0],
+                            var_types,
+                            fns,
+                            type_definitions,
+                            trait_method_signatures,
+                            trait_impl_methods,
+                        )?;
                         if &arg_ty != payload_ty {
                             return Err(anyhow::anyhow!(
                                 "mismatched payload type for {}.{}: expected {}, got {}",
@@ -2647,7 +2672,14 @@ pub(crate) fn get_expression_type(
                         .ok_or_else(|| {
                             anyhow::anyhow!("field {} not found in struct {}", name, struct_name)
                         })?;
-                    let value_type = get_expression_type(value, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                    let value_type = get_expression_type(
+                        value,
+                        var_types,
+                        fns,
+                        type_definitions,
+                        trait_method_signatures,
+                        trait_impl_methods,
+                    )?;
                     if field.ty != value_type {
                         return Err(anyhow::anyhow!(
                             "mismatched types for field {}: expected {}, but got {}",
@@ -2685,8 +2717,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_type =
-                    get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_type = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if !arg_type.starts_with("Option[") || !arg_type.ends_with(']') {
                     return Err(anyhow::anyhow!(
                         "is_some expects an Option[T] argument, got {}",
@@ -2702,8 +2740,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_type =
-                    get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_type = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 let Some(inner) = arg_type
                     .strip_prefix("Option[")
                     .and_then(|s| s.strip_suffix(']'))
@@ -2722,8 +2766,22 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let left = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let right = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let left = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let right = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if left != "String" || right != "String" {
                     return Err(anyhow::anyhow!(
                         "concat expects (String, String), got ({}, {})",
@@ -2740,7 +2798,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
                         "type_name expects Type argument, got {}",
@@ -2756,7 +2821,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if arg_ty != "String" {
                     return Err(anyhow::anyhow!(
                         "resolve_type expects String argument, got {}",
@@ -2790,7 +2862,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
                         "is_struct expects Type argument, got {}",
@@ -2806,7 +2885,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
                         "as_struct_opt expects Type argument, got {}",
@@ -2822,7 +2908,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if arg_ty != "StructInfo" {
                     return Err(anyhow::anyhow!(
                         "struct_field_count expects StructInfo argument, got {}",
@@ -2838,8 +2931,22 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let a = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let b = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if a != "StructInfo" || b != "I32" {
                     return Err(anyhow::anyhow!(
                         "struct_field_at expects (StructInfo, I32), got ({}, {})",
@@ -2856,7 +2963,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if arg_ty != "FieldInfo" {
                     return Err(anyhow::anyhow!(
                         "field_name expects FieldInfo argument, got {}",
@@ -2872,7 +2986,14 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if arg_ty != "FieldInfo" {
                     return Err(anyhow::anyhow!(
                         "field_type expects FieldInfo argument, got {}",
@@ -2897,9 +3018,30 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let a = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let b = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let c = get_expression_type(
+                    &arguments[2],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if a != "DeclSet" || b != "StructInfo" || c != "String" {
                     return Err(anyhow::anyhow!(
                         "declset_add_derived_struct expects (DeclSet, StructInfo, String), got ({}, {}, {})",
@@ -2917,11 +3059,46 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let d = get_expression_type(&arguments[3], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-                let e = get_expression_type(&arguments[4], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let a = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let b = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let c = get_expression_type(
+                    &arguments[2],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let d = get_expression_type(
+                    &arguments[3],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let e = get_expression_type(
+                    &arguments[4],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 if a != "DeclSet" || b != "Type" || c != "String" || d != "String" || e != "I32" {
                     return Err(anyhow::anyhow!(
                         "declset_add_invariant_field_gt_i32 expects (DeclSet, Type, String, String, I32), got ({}, {}, {}, {}, {})",
@@ -2946,7 +3123,14 @@ pub(crate) fn get_expression_type(
             }
             for (param, arg) in func.parameters.iter().zip(arguments) {
                 let param_type = &param.ty;
-                let arg_type = get_expression_type(arg, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let arg_type = get_expression_type(
+                    arg,
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
                 let compatible =
                     normalize_numeric_alias(param_type) == normalize_numeric_alias(&arg_type);
                 if !compatible {
@@ -2960,7 +3144,14 @@ pub(crate) fn get_expression_type(
             Ok(func.return_type.clone())
         }
         Expression::UnaryOp(op, expr) => {
-            let expr_type = get_expression_type(expr, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+            let expr_type = get_expression_type(
+                expr,
+                var_types,
+                fns,
+                type_definitions,
+                trait_method_signatures,
+                trait_impl_methods,
+            )?;
             match op {
                 UnaryOp::Not => {
                     if expr_type == "Bool" {
@@ -2976,8 +3167,22 @@ pub(crate) fn get_expression_type(
             }
         }
         Expression::BinOp(op, left, right) => {
-            let left_type = get_expression_type(left, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
-            let right_type = get_expression_type(right, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+            let left_type = get_expression_type(
+                left,
+                var_types,
+                fns,
+                type_definitions,
+                trait_method_signatures,
+                trait_impl_methods,
+            )?;
+            let right_type = get_expression_type(
+                right,
+                var_types,
+                fns,
+                type_definitions,
+                trait_method_signatures,
+                trait_impl_methods,
+            )?;
             let left_norm = normalize_numeric_alias(&left_type);
             let right_norm = normalize_numeric_alias(&right_type);
             match op {
@@ -3137,9 +3342,7 @@ fun main() -> I32 {
             "missing Null__value function from split stdlib"
         );
         assert!(
-            resolved
-                .trait_method_signatures
-                .contains_key("Hash::hash"),
+            resolved.trait_method_signatures.contains_key("Hash::hash"),
             "missing Hash::hash trait method from split stdlib"
         );
         assert!(
@@ -3676,9 +3879,7 @@ fun main() -> I32 {
         let resolved = resolve(ast).expect("resolve source");
 
         assert!(resolved.function_sigs.contains_key("Hash__I32__hash"));
-        assert!(resolved
-            .function_sigs
-            .contains_key("IntWrapper__hash_of"));
+        assert!(resolved.function_sigs.contains_key("IntWrapper__hash_of"));
     }
 
     #[test]
