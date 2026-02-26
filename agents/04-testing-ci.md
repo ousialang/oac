@@ -17,10 +17,25 @@ From repository root:
 
 ```bash
 cargo check --all-targets --all-features
+# Prefer nextest when available (faster local execution).
+cargo nextest run --all-targets --all-features
+```
+
+Fallback when `cargo-nextest` is not installed:
+
+```bash
 cargo test --all-targets --all-features
 ```
 
 Targeted crate:
+
+```bash
+# Prefer nextest when available.
+cargo nextest run -p oac
+cargo nextest run -p qbe-smt
+```
+
+Fallback when `cargo-nextest` is not installed:
 
 ```bash
 cargo test -p oac
@@ -129,7 +144,7 @@ Missing tools can cause test/build failures unrelated to Rust logic.
 2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and checker artifacts (`target/oac/prove/site_*.qbe`, `site_*.smt2`, `target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory `qbe::Function` obligations.
 3. Isolate stage failure: tokenize, parse, resolve, codegen, or external tool invocation.
 4. Add/adjust snapshot to encode fixed behavior.
-5. Run full test suite.
+5. Run full test suite (prefer `cargo nextest run`; use `cargo test` fallback only if nextest is unavailable).
 
 ## Autonomous Sync Rule
 
