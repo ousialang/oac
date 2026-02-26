@@ -115,6 +115,7 @@ Important enforced invariants include:
 - resolver builtins also include `Void` for procedure-like extern signatures
 - resolver builtins also include byte-memory helpers `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`
 - `extern fun` declarations are signature-only (`extern` cannot be `comptime` and extern functions must not have bodies)
+- v2 ABI restriction: `extern fun` signatures cannot use struct parameter or return types; use manual `PtrInt` wrappers at C ABI boundaries when struct-like payloads are needed
 - `Void` is restricted in v1: function parameters cannot be `Void`, and only `extern fun` may return `Void`
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
@@ -131,6 +132,9 @@ Important enforced invariants include:
 - Generates QBE module/functions/data.
 - Includes builtins and interop helpers (for example integer ops, print, string utilities) plus user/std-declared extern call targets.
 - Extern calls emit symbol names from signature metadata; namespace externs (for example `Clib.malloc`) therefore call raw declared extern symbols (for example `malloc`) while keeping namespaced lookup keys internal.
+- Struct literals allocate zero-initialized storage via `calloc` before field stores, so padding bytes are deterministic for bytewise equality.
+- Struct assignment, struct call arguments, and struct returns insert copy barriers (`calloc` + `memcpy`) to enforce by-value byte-copy semantics at language boundaries.
+- Struct `==` / `!=` lower through `memcmp(lhs, rhs, size)` and compare the result with zero.
 - Handles expression lowering and control-flow generation.
 - Trait calls are lowered with static dispatch only (resolved concrete impl symbols), with no runtime dictionaries or vtables.
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
@@ -152,7 +156,7 @@ Important enforced invariants include:
 - `qbe-smt` models a broad integer + memory QBE subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - `phi` merging via predecessor-tracking state in CHC (`pred`)
-  - `call` modeling for `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, `exit(code)`, and variadic `printf` (for builtin `print` lowering)
+  - `call` modeling for `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, `exit(code)`, and variadic `printf` (for builtin `print` lowering)
   - `load*`/`store*` byte-addressed memory operations
   - `alloc4/alloc8/alloc16` heap-pointer modeling
   - control flow via Horn transition rules (`jnz`, `jmp`, `ret`, halt relation)

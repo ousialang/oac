@@ -6,6 +6,7 @@ namespace Clib {
 	extern fun memcpy(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
 	extern fun memset(s: PtrInt, c: Int, n: PtrInt) -> PtrInt
 	extern fun memmove(dest: PtrInt, src: PtrInt, n: PtrInt) -> PtrInt
+	extern fun memcmp(s1: PtrInt, s2: PtrInt, n: PtrInt) -> Int
 	extern fun strlen(s: PtrInt) -> PtrInt
 	extern fun strcmp(s1: PtrInt, s2: PtrInt) -> Int
 	extern fun strcpy(dest: PtrInt, src: PtrInt) -> PtrInt

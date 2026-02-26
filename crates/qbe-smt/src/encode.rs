@@ -435,6 +435,7 @@ enum ExternCallModel {
     Memcpy,
     Memset,
     Memmove,
+    Memcmp,
     Strlen,
     Strcmp,
     Strcpy,
@@ -464,6 +465,7 @@ impl ExternCallModel {
             ExternCallModel::Memcpy => Some(3),
             ExternCallModel::Memset => Some(3),
             ExternCallModel::Memmove => Some(3),
+            ExternCallModel::Memcmp => Some(3),
             ExternCallModel::Strlen => Some(1),
             ExternCallModel::Strcmp => Some(2),
             ExternCallModel::Strcpy => Some(2),
@@ -487,6 +489,7 @@ fn extern_call_model(function: &str) -> Option<ExternCallModel> {
         "memcpy" => Some(ExternCallModel::Memcpy),
         "memset" => Some(ExternCallModel::Memset),
         "memmove" => Some(ExternCallModel::Memmove),
+        "memcmp" => Some(ExternCallModel::Memcmp),
         "strlen" => Some(ExternCallModel::Strlen),
         "strcmp" => Some(ExternCallModel::Strcmp),
         "strcpy" => Some(ExternCallModel::Strcpy),
@@ -1014,6 +1017,7 @@ fn regs_update_expr(
             assign_ty,
             slot,
             regs_curr,
+            mem_curr,
             heap_curr,
             reg_slots,
             global_map,
@@ -1054,6 +1058,7 @@ fn call_assign_result_expr(
     assign_ty: AssignType,
     dest_slot: u32,
     regs_curr: &str,
+    mem_curr: &str,
     heap_curr: &str,
     reg_slots: &HashMap<String, u32>,
     global_map: &HashMap<String, u64>,
@@ -1080,6 +1085,26 @@ fn call_assign_result_expr(
         | ExternCallModel::Strncpy => call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
             .map(|dest| normalize_to_assign_type(&dest, assign_ty))
             .unwrap_or(unknown_result),
+        ExternCallModel::Memcmp => {
+            let Some(left_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map) else {
+                return unknown_result;
+            };
+            let Some(right_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map) else {
+                return unknown_result;
+            };
+            let Some(len_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map) else {
+                return unknown_result;
+            };
+            let cmp_expr = bounded_memcmp_result_with_fallback_expr(
+                mem_curr,
+                &left_expr,
+                &right_expr,
+                &len_expr,
+                CLIB_CALL_INLINE_LIMIT,
+                &unknown_result,
+            );
+            normalize_to_assign_type(&cmp_expr, assign_ty)
+        }
         ExternCallModel::Exit
         | ExternCallModel::Free
         | ExternCallModel::Strlen
@@ -1241,6 +1266,7 @@ fn memory_update_expr(
                 ExternCallModel::Strcpy => "mem_next".to_string(),
                 ExternCallModel::Malloc
                 | ExternCallModel::Free
+                | ExternCallModel::Memcmp
                 | ExternCallModel::Strlen
                 | ExternCallModel::Strcmp
                 | ExternCallModel::Open
@@ -1306,6 +1332,7 @@ fn heap_update_expr(
                 | ExternCallModel::Memcpy
                 | ExternCallModel::Memmove
                 | ExternCallModel::Memset
+                | ExternCallModel::Memcmp
                 | ExternCallModel::Strlen
                 | ExternCallModel::Strcmp
                 | ExternCallModel::Strcpy
@@ -1470,6 +1497,44 @@ fn bounded_havoc_expr(
         acc = format!("(ite {cond} {write_i} {acc})");
     }
     acc
+}
+
+fn bounded_memcmp_result_with_fallback_expr(
+    mem_curr: &str,
+    left_expr: &str,
+    right_expr: &str,
+    len_expr: &str,
+    limit: u64,
+    fallback: &str,
+) -> String {
+    let precise = bounded_memcmp_result_expr(mem_curr, left_expr, right_expr, len_expr, limit);
+    format!(
+        "(ite (bvule {len_expr} {}) {precise} {fallback})",
+        bv_const_u64(limit, 64)
+    )
+}
+
+fn bounded_memcmp_result_expr(
+    mem_curr: &str,
+    left_expr: &str,
+    right_expr: &str,
+    len_expr: &str,
+    limit: u64,
+) -> String {
+    let mut all_equal = "true".to_string();
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let cond = format!("(bvugt {len_expr} {index_expr})");
+        let left_i = format!("(bvadd {left_expr} {index_expr})");
+        let right_i = format!("(bvadd {right_expr} {index_expr})");
+        let bytes_equal = format!("(= (select {mem_curr} {left_i}) (select {mem_curr} {right_i}))");
+        all_equal = format!("(and {all_equal} (ite {cond} {bytes_equal} true))");
+    }
+    format!(
+        "(ite {all_equal} {} {})",
+        bv_const_u64(0, 64),
+        bv_const_u64(1, 64)
+    )
 }
 
 fn binary_expr(instr: &QbeInstr, ty: AssignType, lhs: &str, rhs: &str) -> String {

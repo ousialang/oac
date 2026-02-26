@@ -76,20 +76,21 @@ Key tests:
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `crates/oac/src/std/std.oa` imports.
-- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), C externs (`Clib__malloc`, `Clib__free`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
+- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), C externs (`Clib__malloc`, `Clib__free`, `Clib__memcmp`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
 - The same regression also asserts stdlib `AsciiChar` invariant registration/synthesis (`struct_invariants["AsciiChar"]` and `__struct__AsciiChar__invariant` function definition).
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()`, `main(argc: I32, argv: I64)`, and `main(argc: I32, argv: PtrInt)`).
 - `crates/oac/src/ir.rs` includes alias coverage for `PtrInt` behaving as `I64` in function calls/equality and type-definition mapping.
 - `crates/oac/src/ir.rs` also validates namespace call resolution/type-checking by lowering to mangled function names (`TypeName__helper`).
 - `crates/oac/src/ir.rs` also validates trait-system behavior: duplicate impl rejection, impl signature mismatch rejection, missing bound impl failures at specialization, and trait-call dispatch/type-check through concrete impl symbols.
 - `crates/oac/src/ir.rs` also validates `Void`/extern constraints: accepted statement calls to `Void` externs, rejection of `Void` parameters, and rejection of non-extern `Void` returns.
+- `crates/oac/src/ir.rs` also validates v2 extern ABI restrictions by rejecting struct parameters/returns in `extern fun` signatures with diagnostics that direct users to `PtrInt` wrappers.
 - `crates/oac/src/ir.rs` also includes FP32 resolve/type-check regression coverage (FP32 arithmetic + comparison in `main`).
 - `crates/oac/src/ir.rs` also includes FP64 resolve/type-check regression coverage (FP64 arithmetic + comparison in `main`).
 - `crates/oac/src/ir.rs` also includes `U8` coverage for accepted same-type arithmetic/comparison and rejection of mixed `U8`/`I32` arithmetic.
 - `crates/oac/src/ir.rs` also includes resolve coverage for builtin byte-memory helpers (`load_u8`, `store_u8`) with `PtrInt` addresses.
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
 - `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, and strict rejection of unsupported operations.
-- `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memset`, `calloc`/`realloc`/`free`) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
+- `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
 - `crates/qbe-smt/src/lib.rs` also verifies reachable-only encoding behavior (unsupported instructions inside unreachable blocks are ignored).
 - `crates/qbe-smt/src/lib.rs` is also the shared CHC solver entrypoint (`solve_chc_script` and `solve_chc_script_with_diagnostics`) used by struct invariant verification.
@@ -109,6 +110,7 @@ Key tests:
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `U8` lowers with unsigned comparison/division ops (`cultw`, `udiv`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts byte-memory builtins lower to byte-addressed ops (`loadub`, `storeb`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts char literals lower through `call $Char__from_code`.
+- `crates/oac/src/qbe_backend.rs` also has a unit regression that asserts struct by-value barriers and equality lowering emit `calloc`/`memcpy` clones plus `call $memcmp` (`qbe_codegen_structs_use_copy_barriers_and_memcmp_equality`).
 - `crates/qbe-rs/src/tests.rs` includes coverage for FP32/FP64 constant formatting (`s_<literal>`, `d_<literal>`) and ordered float compare formatting (`clts`, `cgtd`).
 - Execution fixtures now include dedicated prove/assert coverage:
   - `prove_pass.oa`
@@ -123,6 +125,8 @@ Key tests:
 - Execution fixtures now include trait-bounded generic hash table coverage:
   - `generic_hash_table_custom_key.oa` (positive custom key + custom `Hash`/`Eq` impl)
   - `generic_hash_table_missing_impl.oa` (negative missing bound impl diagnostic)
+- Execution fixtures also include struct V2 equality semantics coverage:
+  - `struct_equality_v2_memcmp.oa` (equal and unequal struct comparisons plus pointer-containing struct bytewise-equality behavior)
 - Stdlib namespacing coverage in execution fixtures:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
   - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).
