@@ -39,6 +39,7 @@ Act like a compiler engineer, not a text editor:
 - Extend parser AST and precedence handling.
 - Extend type inference/checks in IR.
 - Extend QBE lowering and tests.
+- For generic/trait changes, keep expansion-first architecture intact: specialize to concrete declarations before normal type-check/codegen, and preserve static dispatch (no runtime trait dictionaries/vtables).
 
 ### New type or enum behavior
 - Update built-in/type-resolution logic.

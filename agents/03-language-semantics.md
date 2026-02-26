@@ -34,7 +34,9 @@ Observed in parser/IR implementation:
 - Field access.
 - Enum definitions with optional payloads.
 - Pattern matching on enums (`match`) as statement and expression.
-- Template definitions and template instantiation aliases with square-bracket type arguments (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`).
+- Generic definitions and specialization aliases with square-bracket type arguments (`generic Name[T]`, `specialize Alias = Name[ConcreteType]`).
+- Trait declarations and concrete impl blocks (`trait Name { fun method(v: Self, ...) -> ... }`, `impl Name for Type { ... }`).
+- Generic inline bounds (`generic Map[K: Hash + Eq, V] { ... }`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
 - Top-level namespaces for helper/interop declarations: `namespace TypeName { fun helper(...) -> ... { ... } }` and `namespace TypeName { extern fun symbol(...) -> ... }`, callable as `TypeName.helper(...)`.
 - External function declarations are signature-only (`extern fun name(args...) -> Type`, no body) and may appear at top-level or inside namespace blocks.
@@ -44,6 +46,7 @@ Observed in parser/IR implementation:
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
 - Runtime byte-memory builtins: `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`.
 - Top-level test declarations: `test "Name" { ... }`.
+- Legacy syntax `template` / `instantiate` is hard-cut and rejected with migration diagnostics.
 
 ## Semantic Rules You Must Preserve
 
@@ -68,9 +71,17 @@ Observed in parser/IR implementation:
 - Assignment statements cannot bind variables to `Void`-typed expressions.
 - `Void`-return calls are statement-only (cannot be used as expression values).
 - Namespace calls are syntactic sugar for internal function names using `Namespace__function` lowering, while preserving existing enum constructor call syntax `Enum.Variant(...)`.
-- Namespace call lowering also applies to template-instantiated helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
+- Namespace call lowering also applies to generic-specialized helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
+- Traits are static-only in v1: method calls use `Trait.method(value, ...)` and are resolved to concrete impl symbols (`Trait__Type__method`) before backend lowering.
+- Trait method signatures must take `Self` as the first parameter type in v1.
+- Impl coherence is global: exactly one `impl Trait for Type` is allowed in a program.
+- Impl method sets/signatures must match trait declarations exactly (arity, parameter types after `Self` substitution, return type); missing/extra methods are compile errors.
+- `impl` methods cannot be `extern` or `comptime` in v1.
+- Generic specialization enforces trait bounds fail-closed: missing `impl Trait for ConcreteType` required by a bound is a compile error.
+- Generic expansion is ahead-of-type-checking and ahead-of-codegen: backend/proving/invariant passes still operate on concrete non-generic IR/function symbols.
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
-- The built-in stdlib is composed through flat imports from `std.oa` into split sibling files (including `std_clib.oa` extern bindings), then merged into one global scope before user type-checking (including stdlib invariant declarations).
+- The built-in stdlib is composed through flat imports from `std.oa` into split sibling files (including `std_clib.oa` extern bindings and `std_traits.oa` trait/impl declarations), then merged into one global scope before user type-checking (including stdlib invariant declarations).
+- Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Eq, V]`) and preserves probing/table semantics while routing key hashing/equality through `Hash.hash(k)` and `Eq.equals(a, b)`.
 - `String` is std-defined (in `std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive.
 - C interop signatures are std-defined in `std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).

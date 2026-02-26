@@ -6,4 +6,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-unknown generic Missing in specialization X
+missing impl Hash for BadKey required by generic HashTable parameter K in specialization BadTable

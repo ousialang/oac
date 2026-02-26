@@ -78,6 +78,8 @@ pub struct ResolvedProgram {
     pub type_definitions: HashMap<String, TypeDef>,
     pub function_sigs: HashMap<String, FunctionSignature>,
     pub function_definitions: HashMap<String, FunctionDefinition>,
+    pub trait_method_signatures: HashMap<String, TraitMethodSignature>,
+    pub trait_impl_methods: HashMap<String, String>,
     pub struct_invariants: HashMap<String, StructInvariantDefinition>,
     pub comptime_function_definitions: HashMap<String, FunctionDefinition>,
     pub comptime_apply_order: Vec<parser::ComptimeApply>,
@@ -108,7 +110,30 @@ pub struct StructInvariantDefinition {
     pub display_name: String,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct TraitMethodSignature {
+    pub trait_name: String,
+    pub method_name: String,
+    pub parameter_types: Vec<String>,
+    pub return_type: String,
+}
+
 impl ResolvedProgram {
+    fn expression_type(
+        &self,
+        expr: &Expression,
+        var_types: &HashMap<String, TypeRef>,
+    ) -> anyhow::Result<TypeRef> {
+        get_expression_type(
+            expr,
+            var_types,
+            &self.function_sigs,
+            &self.type_definitions,
+            &self.trait_method_signatures,
+            &self.trait_impl_methods,
+        )
+    }
+
     fn type_check(&self, func_def: &FunctionDefinition) -> anyhow::Result<()> {
         let mut var_types: HashMap<String, TypeRef> = HashMap::new();
         for param in &func_def.sig.parameters {
@@ -154,12 +179,7 @@ impl ResolvedProgram {
         match statement {
             parser::Statement::StructDef { .. } => {}
             parser::Statement::Match { subject, arms } => {
-                let subject_type = get_expression_type(
-                    subject,
-                    var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let subject_type = self.expression_type(subject, var_types)?;
                 let enum_def = match self.type_definitions.get(&subject_type) {
                     Some(TypeDef::Enum(enum_def)) => enum_def,
                     _ => {
@@ -263,12 +283,7 @@ impl ResolvedProgram {
                 body,
                 else_body,
             } => {
-                let condition_type = get_expression_type(
-                    condition,
-                    var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let condition_type = self.expression_type(condition, var_types)?;
                 if condition_type != "Bool" {
                     return Err(anyhow::anyhow!(
                         "expected condition to be of type Bool, but got {:?}",
@@ -285,12 +300,7 @@ impl ResolvedProgram {
                 }
             }
             parser::Statement::Prove { condition } => {
-                let condition_type = get_expression_type(
-                    condition,
-                    var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let condition_type = self.expression_type(condition, var_types)?;
                 if condition_type != "Bool" {
                     return Err(anyhow::anyhow!(
                         "prove expects Bool condition, got {:?}",
@@ -299,12 +309,7 @@ impl ResolvedProgram {
                 }
             }
             parser::Statement::Assert { condition } => {
-                let condition_type = get_expression_type(
-                    condition,
-                    var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let condition_type = self.expression_type(condition, var_types)?;
                 if condition_type != "Bool" {
                     return Err(anyhow::anyhow!(
                         "assert expects Bool condition, got {:?}",
@@ -313,12 +318,7 @@ impl ResolvedProgram {
                 }
             }
             parser::Statement::While { condition, body } => {
-                let condition_type = get_expression_type(
-                    condition,
-                    var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let condition_type = self.expression_type(condition, var_types)?;
                 if condition_type != "Bool" {
                     return Err(anyhow::anyhow!(
                         "expected condition to be of type Bool, but got {:?}",
@@ -330,12 +330,7 @@ impl ResolvedProgram {
                 }
             }
             parser::Statement::Assign { variable, value } => {
-                let variable_type = get_expression_type(
-                    value,
-                    &var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let variable_type = self.expression_type(value, var_types)?;
                 if variable_type == "Void" {
                     return Err(anyhow::anyhow!(
                         "cannot assign expression of type Void to variable {}",
@@ -345,12 +340,7 @@ impl ResolvedProgram {
                 var_types.insert(variable.clone(), variable_type);
             }
             parser::Statement::Return { expr } => {
-                let expr_type = get_expression_type(
-                    expr,
-                    &var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let expr_type = self.expression_type(expr, var_types)?;
                 if *return_type == None || *return_type == Some(expr_type.clone()) {
                     *return_type = Some(expr_type);
                 } else {
@@ -363,12 +353,7 @@ impl ResolvedProgram {
             }
             parser::Statement::Expression { expr } => {
                 trace!("Type-checking expression inside function body: {:#?}", expr);
-                let _ = get_expression_type(
-                    expr,
-                    &var_types,
-                    &self.function_sigs,
-                    &self.type_definitions,
-                )?;
+                let _ = self.expression_type(expr, var_types)?;
             }
         }
 
@@ -410,18 +395,27 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         ast.top_level_functions
             .extend(stdlib_ast.top_level_functions);
         ast.type_definitions.extend(stdlib_ast.type_definitions);
-        ast.template_definitions
-            .extend(stdlib_ast.template_definitions);
-        ast.template_instantiations
-            .extend(stdlib_ast.template_instantiations);
+        ast.trait_declarations.extend(stdlib_ast.trait_declarations);
+        ast.impl_declarations.extend(stdlib_ast.impl_declarations);
+        ast.generic_definitions.extend(stdlib_ast.generic_definitions);
+        ast.generic_specializations
+            .extend(stdlib_ast.generic_specializations);
         ast.invariants.extend(stdlib_ast.invariants);
     }
-    expand_templates(&mut ast)?;
+    let (trait_method_signatures, trait_impl_methods, trait_impl_targets, impl_functions) =
+        collect_trait_metadata(&ast)?;
+    expand_generics(
+        &mut ast,
+        &trait_method_signatures,
+        &trait_impl_targets,
+    )?;
 
     let mut program = ResolvedProgram {
         ast: ast.clone(),
         function_definitions: HashMap::new(),
         function_sigs: HashMap::new(),
+        trait_method_signatures,
+        trait_impl_methods,
         type_definitions: HashMap::new(),
         struct_invariants: HashMap::new(),
         comptime_function_definitions: HashMap::new(),
@@ -841,6 +835,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     let mut all_functions = user_runtime_functions.clone();
+    all_functions.extend(impl_functions);
     let synthesized_invariants = synthesize_invariant_functions(
         &ast.invariants,
         &program.type_definitions,
@@ -1488,23 +1483,292 @@ fn register_legacy_struct_invariants(
     Ok(())
 }
 
-fn rewrite_type_ref(
-    ty: &str,
-    type_param: &str,
-    concrete_type: &str,
-    local_type_name_map: &HashMap<String, String>,
-) -> String {
-    if ty == type_param {
-        concrete_type.to_string()
-    } else if let Some(mapped) = local_type_name_map.get(ty) {
-        mapped.clone()
+fn trait_method_key(trait_name: &str, method_name: &str) -> String {
+    format!("{trait_name}::{method_name}")
+}
+
+fn trait_impl_target_key(trait_name: &str, for_type: &str) -> String {
+    format!("{trait_name}::{for_type}")
+}
+
+fn trait_impl_method_key(trait_name: &str, for_type: &str, method_name: &str) -> String {
+    format!("{trait_name}::{for_type}::{method_name}")
+}
+
+fn mangle_symbol_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn trait_impl_function_name(trait_name: &str, for_type: &str, method_name: &str) -> String {
+    format!(
+        "{}__{}__{}",
+        trait_name,
+        mangle_symbol_component(for_type),
+        method_name
+    )
+}
+
+fn replace_self_type(ty: &str, concrete_self: &str) -> String {
+    if ty == "Self" {
+        concrete_self.to_string()
     } else {
         ty.to_string()
     }
 }
 
+fn collect_trait_metadata(
+    ast: &Ast,
+) -> anyhow::Result<(
+    HashMap<String, TraitMethodSignature>,
+    HashMap<String, String>,
+    HashSet<String>,
+    Vec<parser::Function>,
+)> {
+    let mut trait_method_signatures = HashMap::new();
+    let mut trait_methods_by_trait: HashMap<String, Vec<TraitMethodSignature>> = HashMap::new();
+
+    for trait_decl in &ast.trait_declarations {
+        if trait_methods_by_trait.contains_key(&trait_decl.name) {
+            return Err(anyhow::anyhow!("duplicate trait declaration {}", trait_decl.name));
+        }
+        let mut seen_method_names = HashSet::new();
+        let mut methods = vec![];
+        for method in &trait_decl.methods {
+            if !seen_method_names.insert(method.name.clone()) {
+                return Err(anyhow::anyhow!(
+                    "duplicate method {} in trait {}",
+                    method.name,
+                    trait_decl.name
+                ));
+            }
+            if method.parameters.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "trait method {}.{} must take Self as the first parameter",
+                    trait_decl.name,
+                    method.name
+                ));
+            }
+            if method.parameters[0].ty != "Self" {
+                return Err(anyhow::anyhow!(
+                    "trait method {}.{} must use Self as first parameter type in v1",
+                    trait_decl.name,
+                    method.name
+                ));
+            }
+            let signature = TraitMethodSignature {
+                trait_name: trait_decl.name.clone(),
+                method_name: method.name.clone(),
+                parameter_types: method.parameters.iter().map(|p| p.ty.clone()).collect(),
+                return_type: method.return_type.clone(),
+            };
+            trait_method_signatures.insert(
+                trait_method_key(&trait_decl.name, &method.name),
+                signature.clone(),
+            );
+            methods.push(signature);
+        }
+        trait_methods_by_trait.insert(trait_decl.name.clone(), methods);
+    }
+
+    let mut trait_impl_methods = HashMap::new();
+    let mut trait_impl_targets = HashSet::new();
+    let mut impl_functions = vec![];
+
+    for impl_decl in &ast.impl_declarations {
+        let trait_methods = trait_methods_by_trait
+            .get(&impl_decl.trait_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown trait {} in impl", impl_decl.trait_name))?;
+        let target_key = trait_impl_target_key(&impl_decl.trait_name, &impl_decl.for_type);
+        if !trait_impl_targets.insert(target_key) {
+            return Err(anyhow::anyhow!(
+                "duplicate impl for trait {} and type {}",
+                impl_decl.trait_name,
+                impl_decl.for_type
+            ));
+        }
+
+        let mut impl_methods_by_name: HashMap<String, &parser::Function> = HashMap::new();
+        for method in &impl_decl.methods {
+            if method.is_comptime {
+                return Err(anyhow::anyhow!(
+                    "impl method {}.{} cannot be comptime in v1",
+                    impl_decl.trait_name,
+                    method.name
+                ));
+            }
+            if method.is_extern {
+                return Err(anyhow::anyhow!(
+                    "impl method {}.{} cannot be extern in v1",
+                    impl_decl.trait_name,
+                    method.name
+                ));
+            }
+            if impl_methods_by_name
+                .insert(method.name.clone(), method)
+                .is_some()
+            {
+                return Err(anyhow::anyhow!(
+                    "duplicate impl method {} for trait {} and type {}",
+                    method.name,
+                    impl_decl.trait_name,
+                    impl_decl.for_type
+                ));
+            }
+        }
+
+        for trait_method in trait_methods {
+            let method = impl_methods_by_name
+                .remove(&trait_method.method_name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "impl {} for {} is missing required method {}",
+                        impl_decl.trait_name,
+                        impl_decl.for_type,
+                        trait_method.method_name
+                    )
+                })?;
+
+            if method.parameters.len() != trait_method.parameter_types.len() {
+                return Err(anyhow::anyhow!(
+                    "impl method {}.{} has wrong arity: expected {}, got {}",
+                    impl_decl.trait_name,
+                    trait_method.method_name,
+                    trait_method.parameter_types.len(),
+                    method.parameters.len()
+                ));
+            }
+
+            for (parameter, expected_ty) in method
+                .parameters
+                .iter()
+                .zip(trait_method.parameter_types.iter())
+            {
+                let expected = replace_self_type(expected_ty, &impl_decl.for_type);
+                if normalize_numeric_alias(&parameter.ty) != normalize_numeric_alias(&expected) {
+                    return Err(anyhow::anyhow!(
+                        "impl method {}.{} parameter {} type mismatch: expected {}, got {}",
+                        impl_decl.trait_name,
+                        trait_method.method_name,
+                        parameter.name,
+                        expected,
+                        parameter.ty
+                    ));
+                }
+            }
+            let expected_return = replace_self_type(&trait_method.return_type, &impl_decl.for_type);
+            if normalize_numeric_alias(&method.return_type) != normalize_numeric_alias(&expected_return)
+            {
+                return Err(anyhow::anyhow!(
+                    "impl method {}.{} return type mismatch: expected {}, got {}",
+                    impl_decl.trait_name,
+                    trait_method.method_name,
+                    expected_return,
+                    method.return_type
+                ));
+            }
+
+            let function_name = trait_impl_function_name(
+                &impl_decl.trait_name,
+                &impl_decl.for_type,
+                &trait_method.method_name,
+            );
+            trait_impl_methods.insert(
+                trait_impl_method_key(
+                    &impl_decl.trait_name,
+                    &impl_decl.for_type,
+                    &trait_method.method_name,
+                ),
+                function_name.clone(),
+            );
+            impl_functions.push(parser::Function {
+                name: function_name,
+                extern_symbol_name: None,
+                parameters: method.parameters.clone(),
+                body: method.body.clone(),
+                return_type: method.return_type.clone(),
+                is_comptime: false,
+                is_extern: false,
+            });
+        }
+
+        if let Some(extra_method_name) = impl_methods_by_name.keys().next() {
+            return Err(anyhow::anyhow!(
+                "impl {} for {} has unknown method {}",
+                impl_decl.trait_name,
+                impl_decl.for_type,
+                extra_method_name
+            ));
+        }
+    }
+
+    Ok((
+        trait_method_signatures,
+        trait_impl_methods,
+        trait_impl_targets,
+        impl_functions,
+    ))
+}
+
+fn rewrite_identifier(
+    identifier: &str,
+    type_substitution_map: &HashMap<String, String>,
+    local_type_name_map: &HashMap<String, String>,
+) -> String {
+    if let Some(mapped) = local_type_name_map.get(identifier) {
+        mapped.clone()
+    } else if let Some(mapped) = type_substitution_map.get(identifier) {
+        mapped.clone()
+    } else {
+        identifier.to_string()
+    }
+}
+
+fn rewrite_type_ref(
+    ty: &str,
+    type_substitution_map: &HashMap<String, String>,
+    local_type_name_map: &HashMap<String, String>,
+) -> String {
+    let mut out = String::new();
+    let mut identifier = String::new();
+    for ch in ty.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            identifier.push(ch);
+            continue;
+        }
+        if !identifier.is_empty() {
+            out.push_str(&rewrite_identifier(
+                &identifier,
+                type_substitution_map,
+                local_type_name_map,
+            ));
+            identifier.clear();
+        }
+        if !ch.is_whitespace() {
+            out.push(ch);
+        }
+    }
+    if !identifier.is_empty() {
+        out.push_str(&rewrite_identifier(
+            &identifier,
+            type_substitution_map,
+            local_type_name_map,
+        ));
+    }
+    out
+}
+
 fn rewrite_expression(
     expr: &Expression,
+    type_substitution_map: &HashMap<String, String>,
     local_type_name_map: &HashMap<String, String>,
     local_function_name_map: &HashMap<String, String>,
 ) -> Expression {
@@ -1512,6 +1776,7 @@ fn rewrite_expression(
         Expression::Match { subject, arms } => Expression::Match {
             subject: Box::new(rewrite_expression(
                 subject,
+                type_substitution_map,
                 local_type_name_map,
                 local_function_name_map,
             )),
@@ -1524,16 +1789,18 @@ fn rewrite_expression(
                             variant_name,
                             binder,
                         } => parser::MatchPattern::Variant {
-                            type_name: local_type_name_map
-                                .get(type_name)
-                                .cloned()
-                                .unwrap_or_else(|| type_name.clone()),
+                            type_name: rewrite_identifier(
+                                type_name,
+                                type_substitution_map,
+                                local_type_name_map,
+                            ),
                             variant_name: variant_name.clone(),
                             binder: binder.clone(),
                         },
                     },
                     value: rewrite_expression(
                         &arm.value,
+                        type_substitution_map,
                         local_type_name_map,
                         local_function_name_map,
                     ),
@@ -1551,7 +1818,12 @@ fn rewrite_expression(
                 mapped_name,
                 args.iter()
                     .map(|arg| {
-                        rewrite_expression(arg, local_type_name_map, local_function_name_map)
+                        rewrite_expression(
+                            arg,
+                            type_substitution_map,
+                            local_type_name_map,
+                            local_function_name_map,
+                        )
                     })
                     .collect(),
             )
@@ -1559,23 +1831,33 @@ fn rewrite_expression(
         Expression::PostfixCall { callee, args } => Expression::PostfixCall {
             callee: Box::new(rewrite_expression(
                 callee,
+                type_substitution_map,
                 local_type_name_map,
                 local_function_name_map,
             )),
             args: args
                 .iter()
-                .map(|arg| rewrite_expression(arg, local_type_name_map, local_function_name_map))
+                .map(|arg| {
+                    rewrite_expression(
+                        arg,
+                        type_substitution_map,
+                        local_type_name_map,
+                        local_function_name_map,
+                    )
+                })
                 .collect(),
         },
         Expression::BinOp(op, left, right) => Expression::BinOp(
             *op,
             Box::new(rewrite_expression(
                 left,
+                type_substitution_map,
                 local_type_name_map,
                 local_function_name_map,
             )),
             Box::new(rewrite_expression(
                 right,
+                type_substitution_map,
                 local_type_name_map,
                 local_function_name_map,
             )),
@@ -1584,6 +1866,7 @@ fn rewrite_expression(
             *op,
             Box::new(rewrite_expression(
                 expr,
+                type_substitution_map,
                 local_type_name_map,
                 local_function_name_map,
             )),
@@ -1592,26 +1875,29 @@ fn rewrite_expression(
             struct_variable,
             field,
         } => Expression::FieldAccess {
-            struct_variable: local_type_name_map
-                .get(struct_variable)
-                .cloned()
-                .unwrap_or_else(|| struct_variable.clone()),
+            struct_variable: rewrite_identifier(
+                struct_variable,
+                type_substitution_map,
+                local_type_name_map,
+            ),
             field: field.clone(),
         },
         Expression::StructValue {
             struct_name,
             field_values,
         } => Expression::StructValue {
-            struct_name: local_type_name_map
-                .get(struct_name)
-                .cloned()
-                .unwrap_or_else(|| struct_name.clone()),
+            struct_name: rewrite_identifier(struct_name, type_substitution_map, local_type_name_map),
             field_values: field_values
                 .iter()
                 .map(|(name, expr)| {
                     (
                         name.clone(),
-                        rewrite_expression(expr, local_type_name_map, local_function_name_map),
+                        rewrite_expression(
+                            expr,
+                            type_substitution_map,
+                            local_type_name_map,
+                            local_function_name_map,
+                        ),
                     )
                 })
                 .collect(),
@@ -1621,13 +1907,19 @@ fn rewrite_expression(
 
 fn rewrite_statement(
     statement: &parser::Statement,
+    type_substitution_map: &HashMap<String, String>,
     local_type_name_map: &HashMap<String, String>,
     local_function_name_map: &HashMap<String, String>,
 ) -> parser::Statement {
     match statement {
         parser::Statement::StructDef { def } => parser::Statement::StructDef { def: def.clone() },
         parser::Statement::Match { subject, arms } => parser::Statement::Match {
-            subject: rewrite_expression(subject, local_type_name_map, local_function_name_map),
+            subject: rewrite_expression(
+                subject,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
             arms: arms
                 .iter()
                 .map(|arm| parser::MatchArm {
@@ -1637,10 +1929,11 @@ fn rewrite_statement(
                             variant_name,
                             binder,
                         } => parser::MatchPattern::Variant {
-                            type_name: local_type_name_map
-                                .get(type_name)
-                                .cloned()
-                                .unwrap_or_else(|| type_name.clone()),
+                            type_name: rewrite_identifier(
+                                type_name,
+                                type_substitution_map,
+                                local_type_name_map,
+                            ),
                             variant_name: variant_name.clone(),
                             binder: binder.clone(),
                         },
@@ -1651,6 +1944,7 @@ fn rewrite_statement(
                         .map(|statement| {
                             rewrite_statement(
                                 statement,
+                                type_substitution_map,
                                 local_type_name_map,
                                 local_function_name_map,
                             )
@@ -1664,61 +1958,126 @@ fn rewrite_statement(
             body,
             else_body,
         } => parser::Statement::Conditional {
-            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+            condition: rewrite_expression(
+                condition,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
             body: body
                 .iter()
                 .map(|statement| {
-                    rewrite_statement(statement, local_type_name_map, local_function_name_map)
+                    rewrite_statement(
+                        statement,
+                        type_substitution_map,
+                        local_type_name_map,
+                        local_function_name_map,
+                    )
                 })
                 .collect(),
             else_body: else_body.as_ref().map(|body| {
                 body.iter()
                     .map(|statement| {
-                        rewrite_statement(statement, local_type_name_map, local_function_name_map)
+                        rewrite_statement(
+                            statement,
+                            type_substitution_map,
+                            local_type_name_map,
+                            local_function_name_map,
+                        )
                     })
                     .collect()
             }),
         },
         parser::Statement::Assign { variable, value } => parser::Statement::Assign {
             variable: variable.clone(),
-            value: rewrite_expression(value, local_type_name_map, local_function_name_map),
+            value: rewrite_expression(
+                value,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
         },
         parser::Statement::Return { expr } => parser::Statement::Return {
-            expr: rewrite_expression(expr, local_type_name_map, local_function_name_map),
+            expr: rewrite_expression(
+                expr,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
         },
         parser::Statement::Expression { expr } => parser::Statement::Expression {
-            expr: rewrite_expression(expr, local_type_name_map, local_function_name_map),
+            expr: rewrite_expression(
+                expr,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
         },
         parser::Statement::Prove { condition } => parser::Statement::Prove {
-            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+            condition: rewrite_expression(
+                condition,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
         },
         parser::Statement::Assert { condition } => parser::Statement::Assert {
-            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+            condition: rewrite_expression(
+                condition,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
         },
         parser::Statement::While { condition, body } => parser::Statement::While {
-            condition: rewrite_expression(condition, local_type_name_map, local_function_name_map),
+            condition: rewrite_expression(
+                condition,
+                type_substitution_map,
+                local_type_name_map,
+                local_function_name_map,
+            ),
             body: body
                 .iter()
                 .map(|statement| {
-                    rewrite_statement(statement, local_type_name_map, local_function_name_map)
+                    rewrite_statement(
+                        statement,
+                        type_substitution_map,
+                        local_type_name_map,
+                        local_function_name_map,
+                    )
                 })
                 .collect(),
         },
     }
 }
 
-fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
-    let mut templates_by_name: HashMap<String, parser::TemplateDef> = HashMap::new();
-    for template in &ast.template_definitions {
-        if templates_by_name
-            .insert(template.name.clone(), template.clone())
+fn expand_generics(
+    ast: &mut Ast,
+    trait_method_signatures: &HashMap<String, TraitMethodSignature>,
+    trait_impl_targets: &HashSet<String>,
+) -> anyhow::Result<()> {
+    let mut generics_by_name: HashMap<String, parser::GenericDef> = HashMap::new();
+    for generic in &ast.generic_definitions {
+        if generics_by_name
+            .insert(generic.name.clone(), generic.clone())
             .is_some()
         {
             return Err(anyhow::anyhow!(
-                "duplicate template definition {}",
-                template.name
+                "duplicate generic definition {}",
+                generic.name
             ));
         }
+    }
+
+    let declared_traits = ast
+        .trait_declarations
+        .iter()
+        .map(|trait_decl| trait_decl.name.clone())
+        .collect::<HashSet<_>>();
+    if declared_traits.is_empty() && !trait_method_signatures.is_empty() {
+        return Err(anyhow::anyhow!(
+            "internal trait metadata mismatch: method signatures exist without trait declarations"
+        ));
     }
 
     let mut used_type_names = HashSet::new();
@@ -1734,64 +2093,101 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
     let mut generated_functions = vec![];
     let mut generated_invariants = vec![];
 
-    for instantiation in &ast.template_instantiations {
-        let template = templates_by_name
-            .get(&instantiation.template_name)
+    for specialization in &ast.generic_specializations {
+        let generic = generics_by_name
+            .get(&specialization.generic_name)
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "unknown template {} in instantiation {}",
-                    instantiation.template_name,
-                    instantiation.alias
+                    "unknown generic {} in specialization {}",
+                    specialization.generic_name,
+                    specialization.alias
                 )
             })?;
 
+        if generic.params.len() != specialization.concrete_types.len() {
+            return Err(anyhow::anyhow!(
+                "generic {} expects {} type arguments in specialization {}, got {}",
+                generic.name,
+                generic.params.len(),
+                specialization.alias,
+                specialization.concrete_types.len()
+            ));
+        }
+
+        let mut type_substitution_map: HashMap<String, String> = HashMap::new();
+        for (parameter, concrete_type) in generic.params.iter().zip(&specialization.concrete_types) {
+            type_substitution_map.insert(parameter.name.clone(), concrete_type.clone());
+            for bound in &parameter.bounds {
+                if !declared_traits.contains(bound) {
+                    return Err(anyhow::anyhow!(
+                        "unknown trait bound {} for parameter {} in generic {}",
+                        bound,
+                        parameter.name,
+                        generic.name
+                    ));
+                }
+                let impl_target =
+                    trait_impl_target_key(bound, concrete_type);
+                if !trait_impl_targets.contains(&impl_target) {
+                    return Err(anyhow::anyhow!(
+                        "missing impl {} for {} required by generic {} parameter {} in specialization {}",
+                        bound,
+                        concrete_type,
+                        generic.name,
+                        parameter.name,
+                        specialization.alias
+                    ));
+                }
+            }
+        }
+
         let mut local_type_name_map: HashMap<String, String> = HashMap::new();
-        for type_def in &template.type_definitions {
+        for type_def in &generic.type_definitions {
             let local_name = type_def_name(type_def).to_string();
-            let mapped_name = if local_name == template.name {
-                instantiation.alias.clone()
+            let mapped_name = if local_name == generic.name {
+                specialization.alias.clone()
             } else {
-                format!("{}__{}", instantiation.alias, local_name)
+                format!("{}__{}", specialization.alias, local_name)
             };
             local_type_name_map.insert(local_name, mapped_name);
         }
 
-        if !local_type_name_map.contains_key(&template.name) {
+        if !local_type_name_map.contains_key(&generic.name) {
             return Err(anyhow::anyhow!(
-                "template {} must define a primary type named {}",
-                template.name,
-                template.name
+                "generic {} must define a primary type named {}",
+                generic.name,
+                generic.name
             ));
         }
 
         let mut local_function_name_map: HashMap<String, String> = HashMap::new();
-        for function in &template.top_level_functions {
+        for function in &generic.top_level_functions {
             local_function_name_map.insert(
                 function.name.clone(),
-                format!("{}__{}", instantiation.alias, function.name),
+                format!("{}__{}", specialization.alias, function.name),
             );
         }
 
         for mapped_name in local_type_name_map.values() {
             if !used_type_names.insert(mapped_name.clone()) {
                 return Err(anyhow::anyhow!(
-                    "duplicate generated type name {} from template instantiation {}",
+                    "duplicate generated type name {} from specialization {}",
                     mapped_name,
-                    instantiation.alias
+                    specialization.alias
                 ));
             }
         }
         for mapped_name in local_function_name_map.values() {
             if !used_function_names.insert(mapped_name.clone()) {
                 return Err(anyhow::anyhow!(
-                    "duplicate generated function name {} from template instantiation {}",
+                    "duplicate generated function name {} from specialization {}",
                     mapped_name,
-                    instantiation.alias
+                    specialization.alias
                 ));
             }
         }
 
-        for type_def in &template.type_definitions {
+        for type_def in &generic.type_definitions {
             let rewritten = match type_def {
                 parser::TypeDefDecl::Struct(struct_def) => {
                     parser::TypeDefDecl::Struct(parser::StructDef {
@@ -1806,8 +2202,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                                 name: field.name.clone(),
                                 ty: rewrite_type_ref(
                                     &field.ty,
-                                    &template.type_param,
-                                    &instantiation.concrete_type,
+                                    &type_substitution_map,
                                     &local_type_name_map,
                                 ),
                             })
@@ -1827,8 +2222,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                             payload_ty: variant.payload_ty.as_ref().map(|payload_ty| {
                                 rewrite_type_ref(
                                     payload_ty,
-                                    &template.type_param,
-                                    &instantiation.concrete_type,
+                                    &type_substitution_map,
                                     &local_type_name_map,
                                 )
                             }),
@@ -1839,7 +2233,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
             generated_type_defs.push(rewritten);
         }
 
-        for function in &template.top_level_functions {
+        for function in &generic.top_level_functions {
             generated_functions.push(parser::Function {
                 name: local_function_name_map
                     .get(&function.name)
@@ -1853,8 +2247,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                         name: param.name.clone(),
                         ty: rewrite_type_ref(
                             &param.ty,
-                            &template.type_param,
-                            &instantiation.concrete_type,
+                            &type_substitution_map,
                             &local_type_name_map,
                         ),
                     })
@@ -1863,13 +2256,17 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                     .body
                     .iter()
                     .map(|statement| {
-                        rewrite_statement(statement, &local_type_name_map, &local_function_name_map)
+                        rewrite_statement(
+                            statement,
+                            &type_substitution_map,
+                            &local_type_name_map,
+                            &local_function_name_map,
+                        )
                     })
                     .collect(),
                 return_type: rewrite_type_ref(
                     &function.return_type,
-                    &template.type_param,
-                    &instantiation.concrete_type,
+                    &type_substitution_map,
                     &local_type_name_map,
                 ),
                 is_comptime: function.is_comptime,
@@ -1877,7 +2274,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
             });
         }
 
-        for invariant in &template.invariants {
+        for invariant in &generic.invariants {
             generated_invariants.push(parser::StructInvariantDecl {
                 identifier: invariant.identifier.clone(),
                 display_name: invariant.display_name.clone(),
@@ -1885,8 +2282,7 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                     name: invariant.parameter.name.clone(),
                     ty: rewrite_type_ref(
                         &invariant.parameter.ty,
-                        &template.type_param,
-                        &instantiation.concrete_type,
+                        &type_substitution_map,
                         &local_type_name_map,
                     ),
                 },
@@ -1894,7 +2290,12 @@ fn expand_templates(ast: &mut Ast) -> anyhow::Result<()> {
                     .body
                     .iter()
                     .map(|statement| {
-                        rewrite_statement(statement, &local_type_name_map, &local_function_name_map)
+                        rewrite_statement(
+                            statement,
+                            &type_substitution_map,
+                            &local_type_name_map,
+                            &local_function_name_map,
+                        )
                     })
                     .collect(),
             });
@@ -1912,10 +2313,12 @@ pub(crate) fn get_expression_type(
     var_types: &HashMap<String, TypeRef>,
     fns: &HashMap<String, FunctionSignature>,
     type_definitions: &HashMap<String, TypeDef>,
+    trait_method_signatures: &HashMap<String, TraitMethodSignature>,
+    trait_impl_methods: &HashMap<String, String>,
 ) -> anyhow::Result<TypeRef> {
     match expr {
         Expression::Match { subject, arms } => {
-            let subject_type = get_expression_type(subject, var_types, fns, type_definitions)?;
+            let subject_type = get_expression_type(subject, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
             let enum_def = match type_definitions.get(&subject_type) {
                 Some(TypeDef::Enum(enum_def)) => enum_def,
                 _ => {
@@ -1983,7 +2386,7 @@ pub(crate) fn get_expression_type(
                     (None, None) => {}
                 }
 
-                let ty = get_expression_type(&arm.value, &scoped_var_types, fns, type_definitions)?;
+                let ty = get_expression_type(&arm.value, &scoped_var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if let Some(expected_ty) = arm_value_type.as_ref() {
                     if expected_ty != &ty {
                         return Err(anyhow::anyhow!(
@@ -2024,6 +2427,8 @@ pub(crate) fn get_expression_type(
                     var_types,
                     fns,
                     type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
                 )?;
                 let type_def = type_definitions
                     .get(&struct_type)
@@ -2093,7 +2498,7 @@ pub(crate) fn get_expression_type(
                             ));
                         }
                         let arg_ty =
-                            get_expression_type(&args[0], var_types, fns, type_definitions)?;
+                            get_expression_type(&args[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                         if &arg_ty != payload_ty {
                             return Err(anyhow::anyhow!(
                                 "mismatched payload type for {}.{}: expected {}, got {}",
@@ -2114,6 +2519,8 @@ pub(crate) fn get_expression_type(
                             var_types,
                             fns,
                             type_definitions,
+                            trait_method_signatures,
+                            trait_impl_methods,
                         );
                     }
 
@@ -2124,6 +2531,82 @@ pub(crate) fn get_expression_type(
                     ));
                 }
 
+                if let Some(trait_method) =
+                    trait_method_signatures.get(&trait_method_key(struct_variable, field))
+                {
+                    if args.is_empty() {
+                        return Err(anyhow::anyhow!(
+                            "trait call {}.{} requires at least one argument for Self",
+                            struct_variable,
+                            field
+                        ));
+                    }
+                    if args.len() != trait_method.parameter_types.len() {
+                        return Err(anyhow::anyhow!(
+                            "trait call {}.{} expects {} arguments, got {}",
+                            struct_variable,
+                            field,
+                            trait_method.parameter_types.len(),
+                            args.len()
+                        ));
+                    }
+                    let self_type = get_expression_type(
+                        &args[0],
+                        var_types,
+                        fns,
+                        type_definitions,
+                        trait_method_signatures,
+                        trait_impl_methods,
+                    )?;
+                    for (index, (argument, param_ty)) in args
+                        .iter()
+                        .zip(trait_method.parameter_types.iter())
+                        .enumerate()
+                    {
+                        let argument_type = get_expression_type(
+                            argument,
+                            var_types,
+                            fns,
+                            type_definitions,
+                            trait_method_signatures,
+                            trait_impl_methods,
+                        )?;
+                        let expected_type = replace_self_type(param_ty, &self_type);
+                        if normalize_numeric_alias(&argument_type)
+                            != normalize_numeric_alias(&expected_type)
+                        {
+                            return Err(anyhow::anyhow!(
+                                "trait call {}.{} argument {} mismatch: expected {}, got {}",
+                                struct_variable,
+                                field,
+                                index,
+                                expected_type,
+                                argument_type
+                            ));
+                        }
+                    }
+
+                    let impl_key = trait_impl_method_key(struct_variable, &self_type, field);
+                    let target_function = trait_impl_methods.get(&impl_key).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "missing impl {} for {} required by trait call {}.{}",
+                            struct_variable,
+                            self_type,
+                            struct_variable,
+                            field
+                        )
+                    })?;
+
+                    return get_expression_type(
+                        &Expression::Call(target_function.clone(), args.clone()),
+                        var_types,
+                        fns,
+                        type_definitions,
+                        trait_method_signatures,
+                        trait_impl_methods,
+                    );
+                }
+
                 let namespaced_call =
                     parser::qualify_namespace_function_name(struct_variable, field);
                 if fns.contains_key(&namespaced_call) {
@@ -2132,6 +2615,8 @@ pub(crate) fn get_expression_type(
                         var_types,
                         fns,
                         type_definitions,
+                        trait_method_signatures,
+                        trait_impl_methods,
                     );
                 }
 
@@ -2161,7 +2646,7 @@ pub(crate) fn get_expression_type(
                         .ok_or_else(|| {
                             anyhow::anyhow!("field {} not found in struct {}", name, struct_name)
                         })?;
-                    let value_type = get_expression_type(value, var_types, fns, type_definitions)?;
+                    let value_type = get_expression_type(value, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                     if field.ty != value_type {
                         return Err(anyhow::anyhow!(
                             "mismatched types for field {}: expected {}, but got {}",
@@ -2200,7 +2685,7 @@ pub(crate) fn get_expression_type(
                     ));
                 }
                 let arg_type =
-                    get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                    get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if !arg_type.starts_with("Option[") || !arg_type.ends_with(']') {
                     return Err(anyhow::anyhow!(
                         "is_some expects an Option[T] argument, got {}",
@@ -2217,7 +2702,7 @@ pub(crate) fn get_expression_type(
                     ));
                 }
                 let arg_type =
-                    get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                    get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 let Some(inner) = arg_type
                     .strip_prefix("Option[")
                     .and_then(|s| s.strip_suffix(']'))
@@ -2236,8 +2721,8 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let left = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
-                let right = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
+                let left = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let right = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if left != "String" || right != "String" {
                     return Err(anyhow::anyhow!(
                         "concat expects (String, String), got ({}, {})",
@@ -2254,7 +2739,7 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
                         "type_name expects Type argument, got {}",
@@ -2270,7 +2755,7 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if arg_ty != "String" {
                     return Err(anyhow::anyhow!(
                         "resolve_type expects String argument, got {}",
@@ -2304,7 +2789,7 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
                         "is_struct expects Type argument, got {}",
@@ -2320,7 +2805,7 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
                         "as_struct_opt expects Type argument, got {}",
@@ -2336,7 +2821,7 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if arg_ty != "StructInfo" {
                     return Err(anyhow::anyhow!(
                         "struct_field_count expects StructInfo argument, got {}",
@@ -2352,8 +2837,8 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
-                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
+                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if a != "StructInfo" || b != "I32" {
                     return Err(anyhow::anyhow!(
                         "struct_field_at expects (StructInfo, I32), got ({}, {})",
@@ -2370,7 +2855,7 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if arg_ty != "FieldInfo" {
                     return Err(anyhow::anyhow!(
                         "field_name expects FieldInfo argument, got {}",
@@ -2386,7 +2871,7 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
+                let arg_ty = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if arg_ty != "FieldInfo" {
                     return Err(anyhow::anyhow!(
                         "field_type expects FieldInfo argument, got {}",
@@ -2411,9 +2896,9 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
-                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
-                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions)?;
+                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if a != "DeclSet" || b != "StructInfo" || c != "String" {
                     return Err(anyhow::anyhow!(
                         "declset_add_derived_struct expects (DeclSet, StructInfo, String), got ({}, {}, {})",
@@ -2431,11 +2916,11 @@ pub(crate) fn get_expression_type(
                         arguments.len()
                     ));
                 }
-                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions)?;
-                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions)?;
-                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions)?;
-                let d = get_expression_type(&arguments[3], var_types, fns, type_definitions)?;
-                let e = get_expression_type(&arguments[4], var_types, fns, type_definitions)?;
+                let a = get_expression_type(&arguments[0], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let b = get_expression_type(&arguments[1], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let c = get_expression_type(&arguments[2], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let d = get_expression_type(&arguments[3], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+                let e = get_expression_type(&arguments[4], var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 if a != "DeclSet" || b != "Type" || c != "String" || d != "String" || e != "I32" {
                     return Err(anyhow::anyhow!(
                         "declset_add_invariant_field_gt_i32 expects (DeclSet, Type, String, String, I32), got ({}, {}, {}, {}, {})",
@@ -2460,7 +2945,7 @@ pub(crate) fn get_expression_type(
             }
             for (param, arg) in func.parameters.iter().zip(arguments) {
                 let param_type = &param.ty;
-                let arg_type = get_expression_type(arg, var_types, fns, type_definitions)?;
+                let arg_type = get_expression_type(arg, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
                 let compatible =
                     normalize_numeric_alias(param_type) == normalize_numeric_alias(&arg_type);
                 if !compatible {
@@ -2474,7 +2959,7 @@ pub(crate) fn get_expression_type(
             Ok(func.return_type.clone())
         }
         Expression::UnaryOp(op, expr) => {
-            let expr_type = get_expression_type(expr, var_types, fns, type_definitions)?;
+            let expr_type = get_expression_type(expr, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
             match op {
                 UnaryOp::Not => {
                     if expr_type == "Bool" {
@@ -2490,8 +2975,8 @@ pub(crate) fn get_expression_type(
             }
         }
         Expression::BinOp(op, left, right) => {
-            let left_type = get_expression_type(left, var_types, fns, type_definitions)?;
-            let right_type = get_expression_type(right, var_types, fns, type_definitions)?;
+            let left_type = get_expression_type(left, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
+            let right_type = get_expression_type(right, var_types, fns, type_definitions, trait_method_signatures, trait_impl_methods)?;
             let left_norm = normalize_numeric_alias(&left_type);
             let right_norm = normalize_numeric_alias(&right_type);
             match op {
@@ -2649,6 +3134,24 @@ fun main() -> I32 {
         assert!(
             resolved.function_sigs.contains_key("Null__value"),
             "missing Null__value function from split stdlib"
+        );
+        assert!(
+            resolved
+                .trait_method_signatures
+                .contains_key("Hash::hash"),
+            "missing Hash::hash trait method from split stdlib"
+        );
+        assert!(
+            resolved.trait_method_signatures.contains_key("Eq::equals"),
+            "missing Eq::equals trait method from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Hash__I32__hash"),
+            "missing synthesized Hash__I32__hash impl function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Eq__I32__equals"),
+            "missing synthesized Eq__I32__equals impl function from split stdlib"
         );
         assert!(
             resolved
@@ -2873,9 +3376,9 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn resolve_expands_template_invariant_to_concrete_struct() {
+    fn resolve_expands_generic_invariant_to_concrete_struct() {
         let source = r#"
-template Box[T] {
+generic Box[T] {
 	struct Box {
 		value: T,
 	}
@@ -2885,7 +3388,7 @@ template Box[T] {
 	}
 }
 
-instantiate BoxI32 = Box[I32]
+specialize BoxI32 = Box[I32]
 
 fun main() -> I32 {
 	return 0
@@ -3030,9 +3533,9 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn resolve_accepts_namespaced_calls_to_template_instantiated_helpers() {
+    fn resolve_accepts_namespaced_calls_to_generic_specialized_helpers() {
         let source = r#"
-template Identity[T] {
+generic Identity[T] {
 	struct Identity {
 		value: T,
 	}
@@ -3042,7 +3545,7 @@ template Identity[T] {
 	}
 }
 
-instantiate IntIdentity = Identity[I32]
+specialize IntIdentity = Identity[I32]
 
 fun main() -> I32 {
 	return IntIdentity.value(7)
@@ -3057,6 +3560,124 @@ fun main() -> I32 {
         assert!(resolved
             .function_definitions
             .contains_key("IntIdentity__value"));
+    }
+
+    #[test]
+    fn resolve_rejects_missing_impl_for_generic_bound() {
+        let source = r#"
+generic Table[K: Hash + Eq] {
+	struct Table {
+		k: K,
+	}
+}
+
+struct BadKey {
+	x: I32,
+}
+
+specialize BadTable = Table[BadKey]
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err.to_string().contains("missing impl Hash for BadKey"));
+    }
+
+    #[test]
+    fn resolve_rejects_duplicate_impl_for_trait_and_type() {
+        let source = r#"
+trait MyEq {
+	fun equals(a: Self, b: Self) -> Bool
+}
+
+impl MyEq for I32 {
+	fun equals(a: I32, b: I32) -> Bool {
+		return a == b
+	}
+}
+
+impl MyEq for I32 {
+	fun equals(a: I32, b: I32) -> Bool {
+		return a == b
+	}
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err
+            .to_string()
+            .contains("duplicate impl for trait MyEq and type I32"));
+    }
+
+    #[test]
+    fn resolve_rejects_impl_signature_mismatch() {
+        let source = r#"
+trait MyHash {
+	fun hash(v: Self) -> I32
+}
+
+impl MyHash for I32 {
+	fun hash(v: I32) -> Bool {
+		return true
+	}
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(err
+            .to_string()
+            .contains("impl method MyHash.hash return type mismatch: expected I32, got Bool"));
+    }
+
+    #[test]
+    fn resolve_accepts_trait_dispatch_in_generic_specialization() {
+        let source = r#"
+generic Wrapper[T: Hash] {
+	struct Wrapper {
+		value: T,
+	}
+
+	fun hash_of(v: T) -> I32 {
+		return Hash.hash(v)
+	}
+}
+
+specialize IntWrapper = Wrapper[I32]
+
+fun main() -> I32 {
+	return IntWrapper.hash_of(7)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        assert!(resolved.function_sigs.contains_key("Hash__I32__hash"));
+        assert!(resolved
+            .function_sigs
+            .contains_key("IntWrapper__hash_of"));
     }
 
     #[test]

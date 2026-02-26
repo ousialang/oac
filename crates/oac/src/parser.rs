@@ -33,20 +33,46 @@ pub enum TypeDefDecl {
     Enum(EnumDef),
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct TemplateDef {
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct GenericParam {
     pub name: String,
-    pub type_param: String,
+    pub bounds: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GenericDef {
+    pub name: String,
+    pub params: Vec<GenericParam>,
     pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
     pub invariants: Vec<StructInvariantDecl>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct TemplateInstantiation {
+pub struct GenericSpecialization {
     pub alias: String,
-    pub template_name: String,
-    pub concrete_type: String,
+    pub generic_name: String,
+    pub concrete_types: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TraitMethodSig {
+    pub name: String,
+    pub parameters: Vec<Parameter>,
+    pub return_type: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TraitDecl {
+    pub name: String,
+    pub methods: Vec<TraitMethodSig>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ImplDecl {
+    pub trait_name: String,
+    pub for_type: String,
+    pub methods: Vec<Function>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -77,10 +103,12 @@ pub struct Ast {
     pub imports: Vec<ImportDecl>,
     pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
+    pub trait_declarations: Vec<TraitDecl>,
+    pub impl_declarations: Vec<ImplDecl>,
     pub tests: Vec<TestDecl>,
     pub invariants: Vec<StructInvariantDecl>,
-    pub template_definitions: Vec<TemplateDef>,
-    pub template_instantiations: Vec<TemplateInstantiation>,
+    pub generic_definitions: Vec<GenericDef>,
+    pub generic_specializations: Vec<GenericSpecialization>,
     pub comptime_applies: Vec<ComptimeApply>,
 }
 
@@ -797,10 +825,7 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Struc
                     tokens.remove(0) == TokenData::Symbols(":".to_string()),
                     "expected ':' after field name"
                 );
-                let ty = match tokens.remove(0) {
-                    TokenData::Word(ty) => ty,
-                    _ => return Err(anyhow::anyhow!("expected field type")),
-                };
+                let ty = parse_type_reference(tokens)?;
 
                 match tokens.first() {
                     Some(TokenData::Symbols(s)) if s == "," => {
@@ -883,10 +908,7 @@ fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef
                         is_opening: true,
                     }) {
                     tokens.remove(0);
-                    let ty = match tokens.remove(0) {
-                        TokenData::Word(ty) => ty,
-                        _ => return Err(anyhow::anyhow!("expected payload type in variant")),
-                    };
+                    let ty = parse_type_reference(tokens)?;
                     anyhow::ensure!(
                         tokens.remove(0)
                             == TokenData::Parenthesis {
@@ -1107,26 +1129,159 @@ fn parse_type_reference(tokens: &mut Vec<TokenData>) -> anyhow::Result<String> {
         token => return Err(anyhow::anyhow!("expected type name, got {:?}", token)),
     };
 
-    if tokens.first()
+    let args = if tokens.first()
         == Some(&TokenData::Parenthesis {
             opening: '[',
             is_opening: true,
-        })
-    {
-        tokens.remove(0);
-        let inner = parse_type_reference(tokens)?;
-        anyhow::ensure!(
-            tokens.remove(0)
-                == TokenData::Parenthesis {
-                    opening: ']',
-                    is_opening: false
-                },
-            "expected closing ']' in type reference"
-        );
-        Ok(format!("{base}[{inner}]"))
+        }) {
+        parse_bracketed_type_argument_list(tokens)?
     } else {
+        vec![]
+    };
+
+    if args.is_empty() {
         Ok(base)
+    } else {
+        Ok(format!("{base}[{}]", args.join(",")))
     }
+}
+
+fn parse_bracketed_type_argument_list(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<String>> {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '[',
+                is_opening: true
+            },
+        "expected '[' to start type argument list"
+    );
+
+    let mut args = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: ']',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(_) => {
+                let arg = parse_type_reference(tokens)?;
+                args.push(arg);
+                match tokens.first() {
+                    Some(TokenData::Symbols(s)) if s == "," => {
+                        tokens.remove(0);
+                    }
+                    Some(TokenData::Parenthesis {
+                        opening: ']',
+                        is_opening: false,
+                    }) => {}
+                    Some(tok) => {
+                        return Err(anyhow::anyhow!(
+                            "expected ',' or ']' in type argument list, got {:?}",
+                            tok
+                        ));
+                    }
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "unexpected end of file in type argument list"
+                        ));
+                    }
+                }
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in type argument list")),
+        }
+    }
+
+    Ok(args)
+}
+
+fn parse_generic_params(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<GenericParam>> {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '[',
+                is_opening: true
+            },
+        "expected '[' after generic name"
+    );
+
+    let mut params = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: ']',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Word(_)) => {
+                let name = match tokens.remove(0) {
+                    TokenData::Word(name) => name,
+                    _ => unreachable!(),
+                };
+                let mut bounds = vec![];
+                if tokens.first() == Some(&TokenData::Symbols(":".to_string())) {
+                    tokens.remove(0);
+                    loop {
+                        let bound = match tokens.remove(0) {
+                            TokenData::Word(name) => name,
+                            token => {
+                                return Err(anyhow::anyhow!(
+                                    "expected trait bound name, got {:?}",
+                                    token
+                                ));
+                            }
+                        };
+                        bounds.push(bound);
+                        if tokens.first() == Some(&TokenData::Symbols("+".to_string())) {
+                            tokens.remove(0);
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                params.push(GenericParam { name, bounds });
+                match tokens.first() {
+                    Some(TokenData::Symbols(s)) if s == "," => {
+                        tokens.remove(0);
+                    }
+                    Some(TokenData::Parenthesis {
+                        opening: ']',
+                        is_opening: false,
+                    }) => {}
+                    Some(tok) => {
+                        return Err(anyhow::anyhow!(
+                            "expected ',' or ']' after generic parameter, got {:?}",
+                            tok
+                        ));
+                    }
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "unexpected end of file in generic parameter list"
+                        ));
+                    }
+                }
+            }
+            Some(tok) => {
+                return Err(anyhow::anyhow!(
+                    "unexpected token in generic parameter list: {:?}",
+                    tok
+                ))
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in generic parameter list")),
+        }
+    }
+
+    Ok(params)
 }
 
 fn parse_struct_invariant_declaration(
@@ -1226,10 +1381,12 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         imports: vec![],
         type_definitions: vec![],
         top_level_functions: vec![],
+        trait_declarations: vec![],
+        impl_declarations: vec![],
         tests: vec![],
         invariants: vec![],
-        template_definitions: vec![],
-        template_instantiations: vec![],
+        generic_definitions: vec![],
+        generic_specializations: vec![],
         comptime_applies: vec![],
     };
 
@@ -1277,17 +1434,35 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
                 let invariant = parse_struct_invariant_declaration(&mut tokens.tokens)?;
                 ast.invariants.push(invariant);
             }
-            TokenData::Word(name) if name == "template" => {
-                let template = parse_template_declaration(&mut tokens.tokens)?;
-                ast.template_definitions.push(template);
+            TokenData::Word(name) if name == "generic" => {
+                let generic = parse_generic_declaration(&mut tokens.tokens)?;
+                ast.generic_definitions.push(generic);
             }
             TokenData::Word(name) if name == "namespace" => {
                 let functions = parse_namespace_declaration(&mut tokens.tokens)?;
                 ast.top_level_functions.extend(functions);
             }
+            TokenData::Word(name) if name == "specialize" => {
+                let specialization = parse_generic_specialization(&mut tokens.tokens)?;
+                ast.generic_specializations.push(specialization);
+            }
+            TokenData::Word(name) if name == "trait" => {
+                let trait_decl = parse_trait_declaration(&mut tokens.tokens)?;
+                ast.trait_declarations.push(trait_decl);
+            }
+            TokenData::Word(name) if name == "impl" => {
+                let impl_decl = parse_impl_declaration(&mut tokens.tokens)?;
+                ast.impl_declarations.push(impl_decl);
+            }
+            TokenData::Word(name) if name == "template" => {
+                return Err(anyhow::anyhow!(
+                    "template syntax was removed; use `generic Name[T, ...] {{ ... }}` instead"
+                ));
+            }
             TokenData::Word(name) if name == "instantiate" => {
-                let instantiation = parse_template_instantiation(&mut tokens.tokens)?;
-                ast.template_instantiations.push(instantiation);
+                return Err(anyhow::anyhow!(
+                    "instantiate syntax was removed; use `specialize Alias = Name[T, ...]` instead"
+                ));
             }
             TokenData::Word(name) if name == "import" => {
                 let import = parse_import_declaration(&mut tokens.tokens)?;
@@ -1501,37 +1676,18 @@ fn expect_identifier(token: TokenData) -> anyhow::Result<String> {
     }
 }
 
-fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TemplateDef> {
+fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<GenericDef> {
     anyhow::ensure!(
-        tokens.remove(0) == TokenData::Word("template".to_string()),
-        "expected 'template' keyword"
+        tokens.remove(0) == TokenData::Word("generic".to_string()),
+        "expected 'generic' keyword"
     );
 
     let name = match tokens.remove(0) {
         TokenData::Word(name) => name,
-        _ => return Err(anyhow::anyhow!("expected template name")),
+        _ => return Err(anyhow::anyhow!("expected generic name")),
     };
 
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: '[',
-                is_opening: true
-            },
-        "expected '[' after template name"
-    );
-    let type_param = match tokens.remove(0) {
-        TokenData::Word(name) => name,
-        _ => return Err(anyhow::anyhow!("expected template type parameter")),
-    };
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: ']',
-                is_opening: false
-            },
-        "expected ']' after template type parameter"
-    );
+    let params = parse_generic_params(tokens)?;
 
     anyhow::ensure!(
         tokens.remove(0)
@@ -1539,7 +1695,7 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
                 opening: '{',
                 is_opening: true
             },
-        "expected '{{' after template header"
+        "expected '{{' after generic header"
     );
 
     let mut type_definitions = vec![];
@@ -1568,7 +1724,7 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
             }
             Some(TokenData::Word(name)) if name == "extern" => {
                 return Err(anyhow::anyhow!(
-                    "template body only supports `fun`, `comptime fun`, type declarations, and invariants in v1"
+                    "generic body only supports `fun`, `comptime fun`, type declarations, and invariants in v1"
                 ));
             }
             Some(TokenData::Word(name)) if name == "comptime" => match tokens.get(1) {
@@ -1578,7 +1734,7 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
                 }
                 token => {
                     return Err(anyhow::anyhow!(
-                        "unexpected token after 'comptime' in template body: {:?}",
+                        "unexpected token after 'comptime' in generic body: {:?}",
                         token
                     ))
                 }
@@ -1592,68 +1748,202 @@ fn parse_template_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Tem
             }
             Some(tok) => {
                 return Err(anyhow::anyhow!(
-                    "unexpected token in template body: {:?}",
+                    "unexpected token in generic body: {:?}",
                     tok
                 ))
             }
-            None => return Err(anyhow::anyhow!("unexpected end of file in template body")),
+            None => return Err(anyhow::anyhow!("unexpected end of file in generic body")),
         }
     }
 
-    Ok(TemplateDef {
+    Ok(GenericDef {
         name,
-        type_param,
+        params,
         type_definitions,
         top_level_functions,
         invariants,
     })
 }
 
-fn parse_template_instantiation(
-    tokens: &mut Vec<TokenData>,
-) -> anyhow::Result<TemplateInstantiation> {
+fn parse_generic_specialization(tokens: &mut Vec<TokenData>) -> anyhow::Result<GenericSpecialization> {
     anyhow::ensure!(
-        tokens.remove(0) == TokenData::Word("instantiate".to_string()),
-        "expected 'instantiate' keyword"
+        tokens.remove(0) == TokenData::Word("specialize".to_string()),
+        "expected 'specialize' keyword"
     );
 
     let alias = match tokens.remove(0) {
         TokenData::Word(name) => name,
-        _ => return Err(anyhow::anyhow!("expected instantiated alias name")),
+        _ => return Err(anyhow::anyhow!("expected specialization alias name")),
     };
 
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Symbols("=".to_string()),
-        "expected '=' after instantiate alias"
+        "expected '=' after specialization alias"
     );
 
-    let template_name = match tokens.remove(0) {
+    let generic_name = match tokens.remove(0) {
         TokenData::Word(name) => name,
-        _ => return Err(anyhow::anyhow!("expected template name")),
+        _ => return Err(anyhow::anyhow!("expected generic name")),
     };
 
+    let concrete_types = parse_bracketed_type_argument_list(tokens)?;
     anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: '[',
-                is_opening: true
-            },
-        "expected '[' after template name"
-    );
-    let concrete_type = parse_type_reference(tokens)?;
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: ']',
-                is_opening: false
-            },
-        "expected ']' after concrete type"
+        !concrete_types.is_empty(),
+        "specialization must provide at least one concrete type argument"
     );
 
-    Ok(TemplateInstantiation {
+    Ok(GenericSpecialization {
         alias,
-        template_name,
-        concrete_type,
+        generic_name,
+        concrete_types,
+    })
+}
+
+fn parse_trait_method_signature(tokens: &mut Vec<TokenData>) -> anyhow::Result<TraitMethodSig> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("fun".to_string()),
+        "expected 'fun' keyword in trait body"
+    );
+    let name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        token => return Err(anyhow::anyhow!("expected trait method name, got {:?}", token)),
+    };
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true
+            },
+        "expected '(' after trait method name"
+    );
+    let parameters = parse_function_args(tokens)?;
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Symbols("->".to_string()),
+        "expected '->' after trait method parameters"
+    );
+    let return_type = parse_type_reference(tokens)?;
+    if tokens.first() == Some(&TokenData::Symbols(",".to_string())) {
+        tokens.remove(0);
+    }
+    while tokens.first() == Some(&TokenData::Newline) {
+        tokens.remove(0);
+    }
+    Ok(TraitMethodSig {
+        name,
+        parameters,
+        return_type,
+    })
+}
+
+fn parse_trait_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TraitDecl> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("trait".to_string()),
+        "expected 'trait' keyword"
+    );
+    let name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        token => return Err(anyhow::anyhow!("expected trait name, got {:?}", token)),
+    };
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected '{{' after trait name"
+    );
+
+    let mut methods = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Word(name)) if name == "fun" => {
+                methods.push(parse_trait_method_signature(tokens)?);
+            }
+            Some(token) => {
+                return Err(anyhow::anyhow!(
+                    "trait body only supports method signatures, found {:?}",
+                    token
+                ));
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in trait body")),
+        }
+    }
+
+    Ok(TraitDecl { name, methods })
+}
+
+fn parse_impl_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<ImplDecl> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("impl".to_string()),
+        "expected 'impl' keyword"
+    );
+    let trait_name = match tokens.remove(0) {
+        TokenData::Word(name) => name,
+        token => return Err(anyhow::anyhow!("expected trait name in impl, got {:?}", token)),
+    };
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("for".to_string()),
+        "expected 'for' after trait name in impl declaration"
+    );
+    let for_type = parse_type_reference(tokens)?;
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected '{{' after impl header"
+    );
+
+    let mut methods = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Word(name)) if name == "fun" => {
+                let method = parse_function_declaration(tokens, false)?;
+                anyhow::ensure!(
+                    !method.is_extern,
+                    "impl method {} cannot be extern",
+                    method.name
+                );
+                methods.push(method);
+            }
+            Some(TokenData::Word(name)) if name == "comptime" => {
+                return Err(anyhow::anyhow!("impl methods cannot be comptime in v1"));
+            }
+            Some(token) => {
+                return Err(anyhow::anyhow!(
+                    "impl body only supports method functions, found {:?}",
+                    token
+                ));
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in impl body")),
+        }
+    }
+
+    Ok(ImplDecl {
+        trait_name,
+        for_type,
+        methods,
     })
 }
 
@@ -1664,7 +1954,92 @@ mod tests {
     use super::parse;
 
     #[test]
-    fn parses_template_with_square_brackets() {
+    fn parses_generic_with_bounds_and_specialization() {
+        let source = r#"
+generic HashMap[K: Hash + Eq, V] {
+	struct HashMap {
+		_size: I32,
+	}
+}
+
+specialize IntToInt = HashMap[I32, I32]
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize generic source");
+        let ast = parse(tokens).expect("parse generic source");
+
+        assert_eq!(ast.generic_definitions.len(), 1);
+        assert_eq!(ast.generic_specializations.len(), 1);
+        let generic = &ast.generic_definitions[0];
+        assert_eq!(generic.name, "HashMap");
+        assert_eq!(generic.params.len(), 2);
+        assert_eq!(generic.params[0].name, "K");
+        assert_eq!(generic.params[0].bounds, vec!["Hash", "Eq"]);
+        assert_eq!(generic.params[1].name, "V");
+        assert!(generic.params[1].bounds.is_empty());
+        assert_eq!(ast.generic_specializations[0].alias, "IntToInt");
+        assert_eq!(ast.generic_specializations[0].generic_name, "HashMap");
+        assert_eq!(
+            ast.generic_specializations[0].concrete_types,
+            vec!["I32".to_string(), "I32".to_string()]
+        );
+    }
+
+    #[test]
+    fn parses_trait_and_impl_declarations() {
+        let source = r#"
+trait Hash {
+	fun hash(v: Self) -> I32
+}
+
+impl Hash for I32 {
+	fun hash(v: I32) -> I32 {
+		return v
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize trait source");
+        let ast = parse(tokens).expect("parse trait source");
+
+        assert_eq!(ast.trait_declarations.len(), 1);
+        assert_eq!(ast.impl_declarations.len(), 1);
+        assert_eq!(ast.trait_declarations[0].name, "Hash");
+        assert_eq!(ast.trait_declarations[0].methods.len(), 1);
+        assert_eq!(ast.trait_declarations[0].methods[0].name, "hash");
+        assert_eq!(ast.impl_declarations[0].trait_name, "Hash");
+        assert_eq!(ast.impl_declarations[0].for_type, "I32");
+        assert_eq!(ast.impl_declarations[0].methods.len(), 1);
+    }
+
+    #[test]
+    fn parses_nested_multi_arg_type_references() {
+        let source = r#"
+struct Holder {
+	value: Pair[Option[I32], Result[I32, Bool]],
+}
+
+fun id(v: Pair[Option[I32], Result[I32, Bool]]) -> Pair[Option[I32], Result[I32, Bool]] {
+	return v
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize nested type source");
+        let ast = parse(tokens).expect("parse nested type source");
+        let super::TypeDefDecl::Struct(holder) = &ast.type_definitions[0] else {
+            panic!("expected struct");
+        };
+        assert_eq!(
+            holder.struct_fields[0].ty,
+            "Pair[Option[I32],Result[I32,Bool]]"
+        );
+    }
+
+    #[test]
+    fn rejects_template_keyword_with_migration_hint() {
         let source = r#"
 template Option[T] {
 	enum Option {
@@ -1672,21 +2047,30 @@ template Option[T] {
 		Some(T),
 	}
 }
-
-instantiate OptionI32 = Option[I32]
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize template source");
-        let ast = parse(tokens).expect("parse template source");
+        let tokens = tokenize(source).expect("tokenize legacy template source");
+        let err = parse(tokens).expect_err("legacy template syntax should fail");
+        assert!(
+            err.to_string().contains("template syntax was removed"),
+            "unexpected parse error: {err}"
+        );
+    }
 
-        assert_eq!(ast.template_definitions.len(), 1);
-        assert_eq!(ast.template_instantiations.len(), 1);
-        assert_eq!(ast.template_definitions[0].name, "Option");
-        assert_eq!(ast.template_definitions[0].type_param, "T");
-        assert_eq!(ast.template_instantiations[0].alias, "OptionI32");
-        assert_eq!(ast.template_instantiations[0].template_name, "Option");
-        assert_eq!(ast.template_instantiations[0].concrete_type, "I32");
+    #[test]
+    fn rejects_instantiate_keyword_with_migration_hint() {
+        let source = r#"
+specialize OptionI32 = Option[I32]
+"#
+        .replace("specialize", "instantiate");
+
+        let tokens = tokenize(source).expect("tokenize legacy instantiate source");
+        let err = parse(tokens).expect_err("legacy instantiate syntax should fail");
+        assert!(
+            err.to_string().contains("instantiate syntax was removed"),
+            "unexpected parse error: {err}"
+        );
     }
 
     #[test]
@@ -1704,25 +2088,6 @@ fun main() -> I32 {
         let ast = parse(tokens).expect("parse import source");
         assert_eq!(ast.imports.len(), 1);
         assert_eq!(ast.imports[0].path, "helpers.oa");
-    }
-
-    #[test]
-    fn rejects_template_parentheses_syntax() {
-        let source = r#"
-template Legacy(T) {
-	enum Legacy {
-		Value(T),
-	}
-}
-"#
-        .to_string();
-
-        let tokens = tokenize(source).expect("tokenize template source");
-        let err = parse(tokens).expect_err("legacy template syntax should fail");
-        assert!(
-            err.to_string().contains("expected '[' after template name"),
-            "unexpected parse error: {err}"
-        );
     }
 
     #[test]
@@ -1773,9 +2138,9 @@ invariant positive_value "positive .value" for (v: Counter) {
     }
 
     #[test]
-    fn parses_template_struct_invariant_declaration() {
+    fn parses_generic_struct_invariant_declaration() {
         let source = r#"
-template Box[T] {
+generic Box[T] {
 	struct Box {
 		value: T,
 	}
@@ -1787,14 +2152,14 @@ template Box[T] {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize template invariant source");
-        let ast = parse(tokens).expect("parse template invariant source");
+        let tokens = tokenize(source).expect("tokenize generic invariant source");
+        let ast = parse(tokens).expect("parse generic invariant source");
 
-        assert_eq!(ast.template_definitions.len(), 1);
-        let template = &ast.template_definitions[0];
-        assert_eq!(template.invariants.len(), 1);
-        assert_eq!(template.invariants[0].display_name, "value must be valid");
-        assert_eq!(template.invariants[0].parameter.ty, "Box");
+        assert_eq!(ast.generic_definitions.len(), 1);
+        let generic = &ast.generic_definitions[0];
+        assert_eq!(generic.invariants.len(), 1);
+        assert_eq!(generic.invariants[0].display_name, "value must be valid");
+        assert_eq!(generic.invariants[0].parameter.ty, "Box");
     }
 
     #[test]

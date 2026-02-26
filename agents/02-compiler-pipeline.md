@@ -65,7 +65,8 @@ Artifacts emitted during test runs:
 
 Core AST includes:
 - Type defs: `Struct`, `Enum`
-- Templates and template instantiations (`template Name[T]`, `instantiate Alias = Name[ConcreteType]`)
+- Generic definitions and specializations (`generic Name[T]`, `specialize Alias = Name[ConcreteType]`)
+- Trait declarations and concrete impl blocks (`trait Name { ... }`, `impl Name for Type { ... }`)
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
 - Top-level test declarations (`test "Name" { ... }`).
 - Top-level namespaces (`namespace Name { ... }`) support `fun` and `extern fun`; declarations are flattened to mangled internal function keys (`Name__fn`).
@@ -73,13 +74,16 @@ Core AST includes:
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`Name.fn(args)` parses as postfix call and resolves either as enum constructor or namespace call)
 - Char literals are parsed from single quotes (for example `'x'`, `'\n'`) and lowered to a namespaced constructor call (`Char.from_code(<i32>)`).
+- Legacy `template` / `instantiate` are hard-cut parser errors with migration hints to `generic` / `specialize`.
 
 Operator precedence is explicitly encoded in parser.
 
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules including `std_clib.oa` and `std_string.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules including `std_clib.oa`, `std_string.oa`, and `std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
+- generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages
 - type definition graph creation
 - function signature collection
 - function body semantic checks
@@ -95,7 +99,9 @@ Important enforced invariants include:
 - `prove(...)` and `assert(...)` are statement-only; expression usage is rejected
 - user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
 - namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
-- namespace call lowering is also used for template-instantiated helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
+- namespace call lowering is also used for generic-specialized helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
+- trait calls are v1 namespaced calls (`Trait.method(value, ...)`) that type-check against trait signatures and resolve to concrete impl function names (`Trait__Type__method`)
+- trait coherence is enforced globally: duplicate `impl Trait for Type` is rejected, and missing impls for generic bounds are rejected at specialization time
 - built-in `U8`/`FP32`/`FP64` exist alongside integer primitives; unsuffixed decimal literals type-check as `FP32`, and `f64`-suffixed decimal literals type-check as `FP64`
 - arithmetic/comparison on numerics requires matching widths/types (`U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - `U8` comparisons/codegen are unsigned (`ult/ule/ugt/uge`), and `U8` division lowers to unsigned division (`udiv`)
@@ -126,6 +132,7 @@ Important enforced invariants include:
 - Includes builtins and interop helpers (for example integer ops, print, string utilities) plus user/std-declared extern call targets.
 - Extern calls emit symbol names from signature metadata; namespace externs (for example `Clib.malloc`) therefore call raw declared extern symbols (for example `malloc`) while keeping namespaced lookup keys internal.
 - Handles expression lowering and control-flow generation.
+- Trait calls are lowered with static dispatch only (resolved concrete impl symbols), with no runtime dictionaries or vtables.
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
 - Lowers `load_u8`/`store_u8` builtins to `loadub`/`storeb` QBE operations.
 - Lowers string literals to std-owned `String.Literal(Bytes{ptr,len})` heap objects (compiler allocates `Bytes` payload and tagged-union `String` wrapper).
@@ -166,6 +173,7 @@ Important enforced invariants include:
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
 - Symbol indexing includes `extern fun` declarations in document symbols.
+- Completion keywords include `generic`, `specialize`, `trait`, and `impl` (legacy `template`/`instantiate` are removed).
 - Diagnostics are produced from tokenizer/parser/import-resolution/type-resolution, and published via `textDocument/publishDiagnostics`.
 
 ## Implementation Guidance

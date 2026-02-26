@@ -1280,6 +1280,14 @@ fn call_target_symbol(function_name: &str, sig: &ir::FunctionSignature) -> Strin
         .unwrap_or_else(|| function_name.to_string())
 }
 
+fn trait_method_key(trait_name: &str, method_name: &str) -> String {
+    format!("{trait_name}::{method_name}")
+}
+
+fn trait_impl_method_key(trait_name: &str, for_type: &str, method_name: &str) -> String {
+    format!("{trait_name}::{for_type}::{method_name}")
+}
+
 fn compile_named_call(
     ctx: &mut CodegenCtx,
     func: &mut qbe::Function,
@@ -1351,6 +1359,8 @@ fn compile_expr(
                 &var_types,
                 &ctx.resolved.function_sigs,
                 &ctx.resolved.type_definitions,
+                &ctx.resolved.trait_method_signatures,
+                &ctx.resolved.trait_impl_methods,
             )
             .unwrap_or_else(|err| {
                 panic!("failed to type-check match expression in codegen: {err}")
@@ -1565,6 +1575,45 @@ fn compile_expr(
 
                         return (enum_ptr, enum_name);
                     }
+                }
+
+                if ctx
+                    .resolved
+                    .trait_method_signatures
+                    .contains_key(&trait_method_key(struct_variable, field))
+                {
+                    assert!(
+                        !args.is_empty(),
+                        "trait call {}.{} must pass receiver argument",
+                        struct_variable,
+                        field
+                    );
+                    let var_types = variables
+                        .iter()
+                        .map(|(name, (_, ty))| (name.clone(), ty.clone()))
+                        .collect::<HashMap<_, _>>();
+                    let self_type = ir::get_expression_type(
+                        &args[0],
+                        &var_types,
+                        &ctx.resolved.function_sigs,
+                        &ctx.resolved.type_definitions,
+                        &ctx.resolved.trait_method_signatures,
+                        &ctx.resolved.trait_impl_methods,
+                    )
+                    .expect("failed to resolve trait call receiver type");
+                    let impl_key = trait_impl_method_key(struct_variable, &self_type, field);
+                    let target = ctx
+                        .resolved
+                        .trait_impl_methods
+                        .get(&impl_key)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing impl for trait call {}.{} with receiver type {}",
+                                struct_variable, field, self_type
+                            )
+                        })
+                        .clone();
+                    return compile_named_call(ctx, func, &target, args, variables);
                 }
 
                 let namespaced_call =

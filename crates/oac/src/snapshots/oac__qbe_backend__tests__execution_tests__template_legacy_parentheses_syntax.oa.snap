@@ -1,8 +1,9 @@
 ---
 source: crates/oac/src/qbe_backend.rs
+assertion_line: 2309
 expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
 snapshot_kind: text
 ---
 COMPILATION ERROR
 
-expected '[' after template name
+template syntax was removed; use `generic Name[T, ...] { ... }` instead

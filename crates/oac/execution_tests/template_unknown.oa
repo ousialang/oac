@@ -1,4 +1,4 @@
-instantiate X = Missing[I32]
+specialize X = Missing[I32]
 
 fun main() -> I32 {
 	return 0

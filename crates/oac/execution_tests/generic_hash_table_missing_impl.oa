@@ -1,0 +1,11 @@
+struct BadKey {
+	id: I32,
+}
+
+specialize BadTable = HashTable[BadKey, I32]
+
+fun main() -> I32 {
+	table = BadTable.empty()
+	print(BadTable.size(table))
+	return 0
+}

@@ -620,9 +620,11 @@ fn completion_response(
         "fun",
         "struct",
         "enum",
-        "template",
+        "generic",
+        "specialize",
         "namespace",
-        "instantiate",
+        "trait",
+        "impl",
         "comptime",
         "apply",
         "import",
@@ -851,17 +853,25 @@ fn parse_symbol_declaration(line: &str) -> Option<(String, String, u32)> {
         let name = parse_symbol_name(rest)?;
         return Some((name.clone(), format!("enum {name}"), 10));
     }
-    if let Some(rest) = line.strip_prefix("template ") {
+    if let Some(rest) = line.strip_prefix("generic ") {
         let name = parse_symbol_name(rest)?;
-        return Some((name.clone(), format!("template {name}"), 5));
+        return Some((name.clone(), format!("generic {name}"), 5));
     }
     if let Some(rest) = line.strip_prefix("namespace ") {
         let name = parse_symbol_name(rest)?;
         return Some((name.clone(), format!("namespace {name}"), 3));
     }
-    if let Some(rest) = line.strip_prefix("instantiate ") {
+    if let Some(rest) = line.strip_prefix("specialize ") {
         let name = parse_symbol_name(rest)?;
-        return Some((name.clone(), format!("instantiate {name}"), 5));
+        return Some((name.clone(), format!("specialize {name}"), 5));
+    }
+    if let Some(rest) = line.strip_prefix("trait ") {
+        let name = parse_symbol_name(rest)?;
+        return Some((name.clone(), format!("trait {name}"), 11));
+    }
+    if let Some(rest) = line.strip_prefix("impl ") {
+        let name = parse_symbol_name(rest)?;
+        return Some((name.clone(), format!("impl {name}"), 11));
     }
     None
 }
