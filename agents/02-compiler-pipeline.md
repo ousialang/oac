@@ -81,7 +81,7 @@ Operator precedence is explicitly encoded in parser.
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std.oa` (which imports split `std_*.oa` modules including `std_clib.oa`, `std_string.oa`, and `std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_string.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
 - generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages
 - type definition graph creation
@@ -106,11 +106,11 @@ Important enforced invariants include:
 - arithmetic/comparison on numerics requires matching widths/types (`U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - `U8` comparisons/codegen are unsigned (`ult/ule/ugt/uge`), and `U8` division lowers to unsigned division (`udiv`)
 - stdlib split modules intentionally expose namespaced helper APIs for JSON (`Json.*`) while keeping JSON enums as top-level types
-- stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
-- stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
-- stdlib split modules now also include `Null` as an empty struct in `std_null.oa` (with `Null.value()` helper), loaded through `std.oa` like other std modules
-- stdlib split modules now also include `Bytes` + `String` in `std_string.oa`; `String` is std-defined as a tagged enum (`Literal(Bytes)`, `Heap(Bytes)`) and is no longer a resolver primitive
-- C interop signatures are no longer compiler-injected from JSON; stdlib exposes them via `namespace Clib { extern fun ... }` in `std_clib.oa` (resolver keys are still mangled as `Clib__*` for namespaced-call lookup)
+- stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `crates/oac/src/std/std_ascii.oa`, loaded through `crates/oac/src/std/std.oa` like other std modules
+- stdlib split modules also include `Char` helper API in `crates/oac/src/std/std_char.oa`, loaded through `crates/oac/src/std/std.oa` like other std modules
+- stdlib split modules now also include `Null` as an empty struct in `crates/oac/src/std/std_null.oa` (with `Null.value()` helper), loaded through `crates/oac/src/std/std.oa` like other std modules
+- stdlib split modules now also include `Bytes` + `String` in `crates/oac/src/std/std_string.oa`; `String` is std-defined as a tagged enum (`Literal(Bytes)`, `Heap(Bytes)`) and is no longer a resolver primitive
+- C interop signatures are no longer compiler-injected from JSON; stdlib exposes them via `namespace Clib { extern fun ... }` in `crates/oac/src/std/std_clib.oa` (resolver keys are still mangled as `Clib__*` for namespaced-call lookup)
 - resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
 - resolver builtins also include `Void` for procedure-like extern signatures
 - resolver builtins also include byte-memory helpers `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`

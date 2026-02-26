@@ -389,6 +389,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     {
         let stdlib_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src")
+            .join("std")
             .join("std.oa");
         let stdlib_ast = flat_imports::parse_and_resolve_file(&stdlib_path)?;
 
