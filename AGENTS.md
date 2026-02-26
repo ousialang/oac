@@ -28,6 +28,13 @@ Do this autonomously. Do not defer it to “later docs cleanup”.
 
 This repository contains the Ousia compiler workspace (`crates/*`) plus editor tooling under `tools/vscode-ousia/`. Prefer touching compiler code only unless explicitly requested.
 
+## API Stability Policy (Pre-Release)
+
+- Ousia is pre-release; source compatibility and stdlib API stability are not guaranteed yet.
+- Prefer semantic clarity, correctness, and maintainability over preserving legacy interfaces.
+- If a clean fix requires an API break (language surface, stdlib helpers, CLI behavior, or internal crate APIs), take the break instead of adding compatibility shims.
+- When introducing a breaking change, update tests/snapshots and all affected `agents/*` documentation in the same change set.
+
 ## Testing Runner Preference
 
 - For Rust test execution, use `cargo nextest run` when `cargo-nextest` is available in the environment (it is the preferred default because it is faster).

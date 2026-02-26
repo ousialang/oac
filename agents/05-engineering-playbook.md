@@ -6,6 +6,7 @@ Act like a compiler engineer, not a text editor:
 - preserve language invariants
 - protect existing behavior with tests
 - make changes stage-aware (tokenizer -> parser -> IR -> backend)
+- treat backward compatibility as secondary while Ousia is pre-release
 
 ## Working Model
 
@@ -18,10 +19,18 @@ Act like a compiler engineer, not a text editor:
 ## Practical Rules
 
 - Prefer small semantic deltas over broad rewrites.
+- Prefer coherent, cleaner APIs over compatibility shims when the two conflict.
 - Do not change parser shape without corresponding IR/type-check updates.
 - Do not change IR assumptions without auditing backend lowering paths.
 - Preserve or explicitly migrate snapshot expectations.
 - Keep error messages actionable and stable where possible.
+
+## Pre-Release Compatibility Posture
+
+- Ousia is pre-release; breaking API and language-surface changes are acceptable when they simplify or correct the design.
+- Do not keep obsolete interfaces solely for compatibility. Remove or reshape them when needed.
+- Ship breaks as complete migrations: update parser/IR/backend behavior, fixtures, snapshots, and `agents/*` docs together.
+- Make breakage explicit in change descriptions so downstream users can adjust quickly.
 
 ## Change Patterns
 

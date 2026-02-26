@@ -2,6 +2,8 @@
 
 This describes behavior implemented in current compiler code, not aspirational docs.
 
+Pre-release policy: this compiler and stdlib are intentionally allowed to evolve with breaking API changes when needed for correctness or language design clarity.
+
 ## Built-In Types
 
 From `crates/oac/src/builtins.rs`:
