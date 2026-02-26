@@ -31,8 +31,8 @@ fun print_lookup(v: UserTable__Lookup) -> I32 {
 }
 
 fun main() -> I32 {
-	table = UserTable.empty()
-	print(UserTable.size(table))
+	table = UserTable.new()
+	print(UserTable.len(table))
 
 	a = UserKey struct {
 		id: 1,
@@ -47,9 +47,11 @@ fun main() -> I32 {
 		bucket: 7,
 	}
 
-	table = UserTable.put(table, a, 10)
-	table = UserTable.put(table, b, 20)
-	print(UserTable.size(table))
+	set_a = UserTable.set(table, a, 10)
+	table = set_a.table
+	set_b = UserTable.set(table, b, 20)
+	table = set_b.table
+	print(UserTable.len(table))
 
 	print_lookup(UserTable.get(table, a))
 	print_lookup(UserTable.get(table, b))

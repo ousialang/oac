@@ -5,7 +5,10 @@
 Defined in `.github/workflows/ci.yml`:
 - `cargo check --all-targets --all-features`
 - `cargo test --all-targets --all-features`
-- `z3` installation (required for struct invariant verification obligations)
+- backend dependency provisioning before Rust checks:
+  - `z3` (required for struct invariant/prove obligations)
+  - `qbe` (required for backend assembly generation in execution-style tests; CI builds/installs upstream `qbe-1.2` from `https://c9x.me/compile/release/`)
+  - Zig via `goto-bus-stop/setup-zig@v2` (pinned to `0.13.0`, used as `zig cc`)
 
 Any change should keep both green.
 

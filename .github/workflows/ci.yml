@@ -19,8 +19,17 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: rui314/setup-mold@v1
-      - name: Install z3
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Install backend dependencies
         run: sudo apt-get update && sudo apt-get install -y z3
+      - name: Install qbe
+        run: |
+          curl -fsSL https://c9x.me/compile/release/qbe-1.2.tar.xz -o /tmp/qbe-1.2.tar.xz
+          tar -xf /tmp/qbe-1.2.tar.xz -C /tmp
+          make -C /tmp/qbe-1.2
+          sudo make -C /tmp/qbe-1.2 install
       - name: Install Rust
         run: rustup show && rustup install nightly && rustup component add rustfmt --toolchain nightly-x86_64-unknown-linux-gnu # Nightly is needed for our configuration of cargo fmt
       - run: cargo check --all-targets --all-features
