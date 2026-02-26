@@ -11,6 +11,7 @@ mod struct_invariants;
 mod test_framework;
 mod tokenizer;
 
+use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -190,42 +191,219 @@ fn compile_ast_to_executable(
     debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
 
     let executable_path = target_dir.join(executable_name);
+    let linker_attempts = resolve_linker_attempts(arch)?;
+    let mut failures = Vec::new();
 
-    let zig_global_cache_dir = target_dir.join("zig-global-cache");
-    let zig_local_cache_dir = target_dir.join("zig-local-cache");
-    std::fs::create_dir_all(&zig_global_cache_dir)?;
-    std::fs::create_dir_all(&zig_local_cache_dir)?;
+    for attempt in linker_attempts {
+        let command_display = format_linker_command(
+            &attempt.program,
+            &attempt.args,
+            &executable_path,
+            &assembly_path,
+        );
 
-    let mut cc_cmd = std::process::Command::new("zig");
-    cc_cmd.arg("cc").arg("-g").arg("-o").arg(&executable_path);
-    cc_cmd.env("ZIG_GLOBAL_CACHE_DIR", &zig_global_cache_dir);
-    cc_cmd.env("ZIG_LOCAL_CACHE_DIR", &zig_local_cache_dir);
-    if let Some(arch) = arch {
-        let cc_arch = match arch {
-            "rv64" => "riscv64-linux-gnu",
-            _ => panic!("invalid arch"),
+        let mut cc_cmd = std::process::Command::new(&attempt.program);
+        cc_cmd
+            .args(&attempt.args)
+            .arg("-g")
+            .arg("-o")
+            .arg(&executable_path)
+            .arg(&assembly_path);
+
+        let cc_output = match cc_cmd.output() {
+            Ok(output) => output,
+            Err(err) => {
+                failures.push(format!("{command_display}: failed to start: {err}"));
+                continue;
+            }
         };
 
-        cc_cmd
-            .arg("-target")
-            .arg(cc_arch)
-            .arg("-march=generic_rv64");
-    }
+        let stderr = String::from_utf8_lossy(&cc_output.stderr);
+        if cc_output.status.success() {
+            if !stderr.trim().is_empty() {
+                eprintln!("{stderr}");
+            }
+            info!(
+                executable_path = %executable_path.display(),
+                linker = %command_display,
+                "Assembly compiled to executable"
+            );
+            return Ok(executable_path);
+        }
 
-    cc_cmd.arg(&assembly_path);
-
-    let cc_output = cc_cmd.output()?;
-    println!("{}", String::from_utf8_lossy(&cc_output.stderr));
-    if !cc_output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Compilation of assembly to executable failed: {}",
-            String::from_utf8_lossy(&cc_output.stderr)
+        failures.push(format!(
+            "{command_display}: {}",
+            format_status_and_stderr(&cc_output.status, &stderr)
         ));
     }
 
-    info!(executable_path = %executable_path.display(), "Assembly compiled to executable");
+    Err(anyhow::anyhow!(
+        "Compilation of assembly to executable failed after trying {} linker command(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    ))
+}
 
-    Ok(executable_path)
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct LinkerAttempt {
+    program: String,
+    args: Vec<String>,
+}
+
+fn resolve_linker_attempts(arch: Option<&str>) -> anyhow::Result<Vec<LinkerAttempt>> {
+    let configured_command = env::var("OAC_CC")
+        .ok()
+        .map(|raw| ("OAC_CC", raw))
+        .or_else(|| env::var("CC").ok().map(|raw| ("CC", raw)));
+    let target_override = env::var("OAC_CC_TARGET").ok();
+    let extra_flags = env::var("OAC_CC_FLAGS")
+        .ok()
+        .map(|raw| split_words(&raw))
+        .unwrap_or_default();
+
+    resolve_linker_attempts_for_config(
+        arch,
+        configured_command
+            .as_ref()
+            .map(|(name, raw)| (*name, raw.as_str())),
+        target_override.as_deref(),
+        &extra_flags,
+    )
+}
+
+fn resolve_linker_attempts_for_config(
+    arch: Option<&str>,
+    configured_command: Option<(&str, &str)>,
+    target_override: Option<&str>,
+    extra_flags: &[String],
+) -> anyhow::Result<Vec<LinkerAttempt>> {
+    let mut attempts = Vec::new();
+    let mut include_defaults = true;
+
+    if let Some((var_name, raw_command)) = configured_command {
+        let mut words = split_words(raw_command);
+        if words.is_empty() {
+            return Err(anyhow::anyhow!("{var_name} must not be empty"));
+        }
+
+        let program = words.remove(0);
+        let mut args = words;
+        if let Some(target) = target_override {
+            args.push(format!("--target={target}"));
+        }
+        args.extend(extra_flags.iter().cloned());
+        attempts.push(LinkerAttempt { program, args });
+        include_defaults = var_name != "OAC_CC";
+    }
+
+    if !include_defaults {
+        return Ok(dedup_linker_attempts(attempts));
+    }
+
+    if let Some(target) = target_override
+        .map(std::borrow::ToOwned::to_owned)
+        .or_else(|| {
+            arch.and_then(default_target_triple_for_qbe_arch)
+                .map(str::to_owned)
+        })
+    {
+        attempts.push(LinkerAttempt {
+            program: "cc".to_string(),
+            args: vec![format!("--target={target}")],
+        });
+        attempts.push(LinkerAttempt {
+            program: "clang".to_string(),
+            args: vec![format!("--target={target}")],
+        });
+    }
+
+    if let Some(arch) = arch {
+        if let Some(cross_cc) = default_gnu_cross_cc_for_qbe_arch(arch) {
+            attempts.push(LinkerAttempt {
+                program: cross_cc.to_string(),
+                args: Vec::new(),
+            });
+        }
+    }
+
+    attempts.push(LinkerAttempt {
+        program: "cc".to_string(),
+        args: Vec::new(),
+    });
+
+    let configured_prefix = configured_command.map(|(var, _)| var);
+    for (idx, attempt) in attempts.iter_mut().enumerate() {
+        if idx == 0 && matches!(configured_prefix, Some("CC")) {
+            continue;
+        }
+        attempt.args.extend(extra_flags.iter().cloned());
+    }
+
+    Ok(dedup_linker_attempts(attempts))
+}
+
+fn default_target_triple_for_qbe_arch(arch: &str) -> Option<&'static str> {
+    match arch {
+        "amd64_sysv" => Some("x86_64-linux-gnu"),
+        "amd64_apple" => Some("x86_64-apple-darwin"),
+        "arm64" => Some("aarch64-linux-gnu"),
+        "arm64_apple" => Some("aarch64-apple-darwin"),
+        "rv64" => Some("riscv64-linux-gnu"),
+        _ => None,
+    }
+}
+
+fn default_gnu_cross_cc_for_qbe_arch(arch: &str) -> Option<&'static str> {
+    match arch {
+        "amd64_sysv" => Some("x86_64-linux-gnu-gcc"),
+        "arm64" => Some("aarch64-linux-gnu-gcc"),
+        "rv64" => Some("riscv64-linux-gnu-gcc"),
+        _ => None,
+    }
+}
+
+fn split_words(raw: &str) -> Vec<String> {
+    raw.split_whitespace().map(str::to_owned).collect()
+}
+
+fn dedup_linker_attempts(attempts: Vec<LinkerAttempt>) -> Vec<LinkerAttempt> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+    for attempt in attempts {
+        if seen.insert(attempt.clone()) {
+            deduped.push(attempt);
+        }
+    }
+    deduped
+}
+
+fn format_linker_command(
+    program: &str,
+    args: &[String],
+    executable: &Path,
+    assembly: &Path,
+) -> String {
+    let mut parts = Vec::new();
+    parts.push(program.to_string());
+    parts.extend(args.iter().cloned());
+    parts.push("-g".to_string());
+    parts.push("-o".to_string());
+    parts.push(executable.display().to_string());
+    parts.push(assembly.display().to_string());
+    parts.join(" ")
+}
+
+fn format_status_and_stderr(status: &std::process::ExitStatus, stderr: &str) -> String {
+    let status_text = status.code().map_or_else(
+        || "terminated by signal".to_string(),
+        |code| format!("exit code {code}"),
+    );
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        status_text
+    } else {
+        format!("{status_text}: {stderr}")
+    }
 }
 
 fn reject_proven_non_terminating_main(qbe_module: &qbe::Module) -> anyhow::Result<()> {
@@ -327,7 +505,9 @@ struct RiscvSmtOpts {
 
 #[cfg(test)]
 mod tests {
-    use super::reject_proven_non_terminating_main;
+    use super::{
+        reject_proven_non_terminating_main, resolve_linker_attempts_for_config, LinkerAttempt,
+    };
     use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
 
     fn temp(name: &str) -> Value {
@@ -452,5 +632,112 @@ mod tests {
         ]);
 
         reject_proven_non_terminating_main(&module).expect("unknown loops should pass");
+    }
+
+    #[test]
+    fn linker_attempts_default_to_cc_for_host_builds() {
+        let attempts =
+            resolve_linker_attempts_for_config(None, None, None, &[]).expect("attempt resolution");
+        assert_eq!(
+            attempts,
+            vec![LinkerAttempt {
+                program: "cc".to_string(),
+                args: Vec::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn linker_attempts_for_rv64_include_cross_fallbacks() {
+        let attempts = resolve_linker_attempts_for_config(Some("rv64"), None, None, &[])
+            .expect("attempt resolution");
+
+        assert_eq!(
+            attempts[0],
+            LinkerAttempt {
+                program: "cc".to_string(),
+                args: vec!["--target=riscv64-linux-gnu".to_string()],
+            }
+        );
+
+        assert!(attempts.contains(&LinkerAttempt {
+            program: "clang".to_string(),
+            args: vec!["--target=riscv64-linux-gnu".to_string()],
+        }));
+        assert!(attempts.contains(&LinkerAttempt {
+            program: "riscv64-linux-gnu-gcc".to_string(),
+            args: Vec::new(),
+        }));
+        assert!(attempts.contains(&LinkerAttempt {
+            program: "cc".to_string(),
+            args: Vec::new(),
+        }));
+    }
+
+    #[test]
+    fn configured_linker_command_is_respected() {
+        let extra_flags = vec!["-static".to_string()];
+        let attempts = resolve_linker_attempts_for_config(
+            Some("rv64"),
+            Some(("OAC_CC", "custom-cc --driver-mode=clang")),
+            None,
+            &extra_flags,
+        )
+        .expect("attempt resolution");
+
+        assert_eq!(
+            attempts,
+            vec![LinkerAttempt {
+                program: "custom-cc".to_string(),
+                args: vec!["--driver-mode=clang".to_string(), "-static".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn configured_linker_target_override_is_applied() {
+        let attempts = resolve_linker_attempts_for_config(
+            Some("rv64"),
+            Some(("OAC_CC", "clang")),
+            Some("aarch64-linux-gnu"),
+            &[],
+        )
+        .expect("attempt resolution");
+
+        assert_eq!(
+            attempts,
+            vec![LinkerAttempt {
+                program: "clang".to_string(),
+                args: vec!["--target=aarch64-linux-gnu".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn cc_env_keeps_default_fallbacks() {
+        let attempts = resolve_linker_attempts_for_config(
+            Some("rv64"),
+            Some(("CC", "clang")),
+            Some("aarch64-linux-gnu"),
+            &[],
+        )
+        .expect("attempt resolution");
+
+        assert_eq!(
+            attempts[0],
+            LinkerAttempt {
+                program: "clang".to_string(),
+                args: vec!["--target=aarch64-linux-gnu".to_string()],
+            }
+        );
+
+        assert!(attempts.contains(&LinkerAttempt {
+            program: "cc".to_string(),
+            args: vec!["--target=aarch64-linux-gnu".to_string()],
+        }));
+        assert!(attempts.contains(&LinkerAttempt {
+            program: "cc".to_string(),
+            args: Vec::new(),
+        }));
     }
 }

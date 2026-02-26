@@ -74,7 +74,9 @@ fn resolve_ast_inner(
     merged
         .trait_declarations
         .extend(parsed_ast.trait_declarations);
-    merged.impl_declarations.extend(parsed_ast.impl_declarations);
+    merged
+        .impl_declarations
+        .extend(parsed_ast.impl_declarations);
     merged.tests.extend(parsed_ast.tests);
     merged.invariants.extend(parsed_ast.invariants);
     merged

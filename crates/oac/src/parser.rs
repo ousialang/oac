@@ -1193,7 +1193,11 @@ fn parse_bracketed_type_argument_list(tokens: &mut Vec<TokenData>) -> anyhow::Re
                     }
                 }
             }
-            None => return Err(anyhow::anyhow!("unexpected end of file in type argument list")),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "unexpected end of file in type argument list"
+                ))
+            }
         }
     }
 
@@ -1277,7 +1281,11 @@ fn parse_generic_params(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Gener
                     tok
                 ))
             }
-            None => return Err(anyhow::anyhow!("unexpected end of file in generic parameter list")),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "unexpected end of file in generic parameter list"
+                ))
+            }
         }
     }
 
@@ -1765,7 +1773,9 @@ fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Gene
     })
 }
 
-fn parse_generic_specialization(tokens: &mut Vec<TokenData>) -> anyhow::Result<GenericSpecialization> {
+fn parse_generic_specialization(
+    tokens: &mut Vec<TokenData>,
+) -> anyhow::Result<GenericSpecialization> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("specialize".to_string()),
         "expected 'specialize' keyword"
@@ -1806,7 +1816,12 @@ fn parse_trait_method_signature(tokens: &mut Vec<TokenData>) -> anyhow::Result<T
     );
     let name = match tokens.remove(0) {
         TokenData::Word(name) => name,
-        token => return Err(anyhow::anyhow!("expected trait method name, got {:?}", token)),
+        token => {
+            return Err(anyhow::anyhow!(
+                "expected trait method name, got {:?}",
+                token
+            ))
+        }
     };
     anyhow::ensure!(
         tokens.remove(0)
@@ -1889,7 +1904,12 @@ fn parse_impl_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<ImplDec
     );
     let trait_name = match tokens.remove(0) {
         TokenData::Word(name) => name,
-        token => return Err(anyhow::anyhow!("expected trait name in impl, got {:?}", token)),
+        token => {
+            return Err(anyhow::anyhow!(
+                "expected trait name in impl, got {:?}",
+                token
+            ))
+        }
     };
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("for".to_string()),

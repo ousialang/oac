@@ -135,12 +135,16 @@ If behavior intentionally changes, update snapshots deliberately and review diff
 
 `oac build` path requires external tools available in environment:
 - `qbe`
-- `zig` (used as `zig cc`)
+- C compiler/linker driver (`cc`, `clang`, or target-prefixed `*-gcc`)
 - `z3` (required when struct invariant or prove obligations are present)
 
-`oac` configures `zig cc` with writable cache directories under the active target dir (`zig-global-cache` and `zig-local-cache`) and treats non-zero Zig exit status as a compilation error.
+`oac` links assembly through a fail-closed linker attempt sequence and supports env overrides:
+- `OAC_CC` to force a single explicit linker command (no default fallbacks)
+- `CC` to prefer a linker command first while still keeping default fallbacks
+- `OAC_CC_TARGET` to force `--target=<triple>`
+- `OAC_CC_FLAGS` to append extra linker flags
 
-`oac test` has the same backend dependencies as `oac build` (`qbe`, `zig`, and `z3` when obligations are present), and additionally executes the produced binary under `target/oac/test/app`.
+`oac test` has the same backend dependencies as `oac build` (`qbe`, C compiler driver, and `z3` when obligations are present), and additionally executes the produced binary under `target/oac/test/app`.
 
 VS Code extension development under `tools/vscode-ousia` requires:
 - `node` and `npm`
