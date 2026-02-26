@@ -408,6 +408,8 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     ctx.qbe_types_by_name
         .insert("Bool".to_string(), qbe::Type::Word);
     ctx.qbe_types_by_name
+        .insert("U8".to_string(), qbe::Type::Word);
+    ctx.qbe_types_by_name
         .insert("I32".to_string(), qbe::Type::Word);
     ctx.qbe_types_by_name
         .insert("I64".to_string(), qbe::Type::Long);
@@ -422,6 +424,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
 fn type_to_qbe(ty: &ir::TypeDef) -> qbe::Type {
     match ty {
         ir::TypeDef::BuiltIn(BuiltInType::Bool) => qbe::Type::Word,
+        ir::TypeDef::BuiltIn(BuiltInType::U8) => qbe::Type::Word,
         ir::TypeDef::BuiltIn(BuiltInType::I32) => qbe::Type::Word,
         ir::TypeDef::BuiltIn(BuiltInType::FP32) => qbe::Type::Single,
         ir::TypeDef::BuiltIn(BuiltInType::FP64) => qbe::Type::Double,
@@ -909,6 +912,7 @@ fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
     match ctx.resolved.type_definitions.get(ty) {
         Some(ty) => match ty {
             ir::TypeDef::BuiltIn(BuiltInType::Bool) => 4,
+            ir::TypeDef::BuiltIn(BuiltInType::U8) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::I32) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::FP32) => 4,
             ir::TypeDef::BuiltIn(BuiltInType::Void) => {
@@ -1456,6 +1460,7 @@ fn compile_expr(
             let (left_var, left_ty) = compile_expr(ctx, func, left, variables);
             let (right_var, _right_ty) = compile_expr(ctx, func, right, variables);
             let operand_qbe_ty = type_ref_to_qbe(ctx, &left_ty);
+            let use_unsigned_int_cmp = left_ty == "U8";
             let use_ordered_float_cmp =
                 matches!(operand_qbe_ty, qbe::Type::Single | qbe::Type::Double);
 
@@ -1496,6 +1501,30 @@ fn compile_expr(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
+                (Op::Lt, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Ult,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Gt, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Ugt,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Le, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Ule,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Ge, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
+                    operand_qbe_ty.clone(),
+                    qbe::Cmp::Uge,
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
                 (Op::Lt, _) => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Slt,
@@ -1529,6 +1558,10 @@ fn compile_expr(
                     qbe::Value::Temporary(right_var),
                 ),
                 (Op::Mul, _) => qbe::Instr::Mul(
+                    qbe::Value::Temporary(left_var),
+                    qbe::Value::Temporary(right_var),
+                ),
+                (Op::Div, _) if use_unsigned_int_cmp => qbe::Instr::Udiv(
                     qbe::Value::Temporary(left_var),
                     qbe::Value::Temporary(right_var),
                 ),
@@ -1779,6 +1812,38 @@ fun main() -> I32 {
         assert!(
             qbe_ir.contains("cgtd"),
             "expected fp64 ordered comparison in qbe output, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_supports_u8_unsigned_ops() {
+        let source = r#"
+fun is_lt(a: U8, b: U8) -> Bool {
+	return a < b
+}
+
+fun divide(a: U8, b: U8) -> U8 {
+	return a / b
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("cultw"),
+            "expected unsigned U8 comparison in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("udiv"),
+            "expected unsigned U8 division in qbe output, got:\n{qbe_ir}"
         );
     }
 

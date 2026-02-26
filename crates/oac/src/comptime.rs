@@ -70,6 +70,7 @@ impl TypeCatalog {
         for builtin in [
             "Int",
             "Bool",
+            "U8",
             "I32",
             "I64",
             "FP32",

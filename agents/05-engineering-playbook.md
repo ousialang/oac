@@ -35,6 +35,7 @@ Act like a compiler engineer, not a text editor:
 - Update built-in/type-resolution logic.
 - Validate match exhaustiveness and payload rules.
 - Add positive and negative fixtures.
+- For integer-width additions (for example `U8`), audit signedness-sensitive ops in codegen (`cmp`, `div/rem`) and keep resolver/codegen rules aligned.
 
 ### Backend/runtime behavior change
 - Inspect generated QBE text and runtime output snapshots.

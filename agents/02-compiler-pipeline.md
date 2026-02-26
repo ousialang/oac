@@ -96,8 +96,9 @@ Important enforced invariants include:
 - user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
 - namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
 - namespace call lowering is also used for template-instantiated helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
-- built-in `FP32`/`FP64` exist alongside integer primitives; unsuffixed decimal literals type-check as `FP32`, and `f64`-suffixed decimal literals type-check as `FP64`
-- arithmetic/comparison on numerics requires matching widths/types (`I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
+- built-in `U8`/`FP32`/`FP64` exist alongside integer primitives; unsuffixed decimal literals type-check as `FP32`, and `f64`-suffixed decimal literals type-check as `FP64`
+- arithmetic/comparison on numerics requires matching widths/types (`U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
+- `U8` comparisons/codegen are unsigned (`ult/ule/ugt/uge`), and `U8` division lowers to unsigned division (`udiv`)
 - stdlib split modules intentionally expose namespaced helper APIs for JSON/newstring (`Json.*`, `NewString.print(...)`) while keeping JSON enums as top-level types
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `std_ascii.oa`, loaded through `std.oa` like other std modules
 - stdlib split modules also include `Char` helper API in `std_char.oa`, loaded through `std.oa` like other std modules
@@ -124,6 +125,7 @@ Important enforced invariants include:
 - Handles expression lowering and control-flow generation.
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
 - Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.
+- Maps `U8` to QBE word temporaries with unsigned compare/div lowering for `U8` arithmetic relations.
 - Produces snapshots in tests for codegen and runtime behavior.
 
 ## SMT Adjacent Paths

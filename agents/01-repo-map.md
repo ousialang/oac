@@ -26,7 +26,7 @@ Editor tooling in this repository:
 - `crates/oac/src/test_framework.rs`: isolated lowering for `test "..." { ... }` declarations into runnable generated functions/main used by `oac test`.
 - `crates/oac/src/ir.rs`: type resolution, semantic checks, and resolved IR.
 - `crates/oac/src/qbe_backend.rs`: code generation to QBE IR and end-to-end execution tests.
-- `crates/oac/src/builtins.rs`: built-in scalar types (including `Void`) and builtin type parsing.
+- `crates/oac/src/builtins.rs`: built-in scalar types (including `U8`/`Void`) and builtin type parsing.
 - `crates/oac/src/riscv_smt.rs`: ELF -> SMT pipeline for bounded return-to-zero checks.
 - `crates/oac/src/prove.rs`: SMT-backed compile-time verification pass for `prove(...)` statement obligations.
 - `crates/oac/src/struct_invariants.rs`: SMT-backed compile-time struct invariant verification pass.

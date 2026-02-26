@@ -447,6 +447,12 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         })?;
     program
         .type_definitions
+        .insert("U8".to_string(), TypeDef::BuiltIn(BuiltInType::U8))
+        .map_or(Ok(()), |_| {
+            Err(anyhow::anyhow!("failed to insert U8 type definition"))
+        })?;
+    program
+        .type_definitions
         .insert("I32".to_string(), TypeDef::BuiltIn(BuiltInType::I32))
         .map_or(Ok(()), |_| {
             Err(anyhow::anyhow!("failed to insert I32 type definition"))
@@ -2464,7 +2470,9 @@ pub(crate) fn get_expression_type(
                     }
                 }
                 parser::Op::Add | parser::Op::Sub | parser::Op::Mul | parser::Op::Div => {
-                    if left_norm == "I32" && right_norm == "I32" {
+                    if left_norm == "U8" && right_norm == "U8" {
+                        Ok("U8".to_string())
+                    } else if left_norm == "I32" && right_norm == "I32" {
                         Ok("I32".to_string())
                     } else if left_norm == "I64" && right_norm == "I64" {
                         Ok("I64".to_string())
@@ -2503,7 +2511,8 @@ pub(crate) fn get_expression_type(
                     }
                 }
                 parser::Op::Lt | parser::Op::Gt | parser::Op::Le | parser::Op::Ge => {
-                    if (left_norm == "I32" && right_norm == "I32")
+                    if (left_norm == "U8" && right_norm == "U8")
+                        || (left_norm == "I32" && right_norm == "I32")
                         || (left_norm == "I64" && right_norm == "I64")
                         || (left_norm == "FP32" && right_norm == "FP32")
                         || (left_norm == "FP64" && right_norm == "FP64")
@@ -2561,6 +2570,10 @@ fun main() -> I32 {
         assert!(
             resolved.type_definitions.contains_key("PtrInt"),
             "missing PtrInt type alias from standard definitions"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("U8"),
+            "missing U8 type from standard definitions"
         );
         assert!(
             resolved.type_definitions.contains_key("Void"),
@@ -3067,6 +3080,50 @@ fun main() -> I32 {
         let tokens = tokenizer::tokenize(source).expect("tokenize source");
         let ast = parser::parse(tokens).expect("parse source");
         resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_accepts_u8_arithmetic_and_comparison() {
+        let source = r#"
+fun add_u8(a: U8, b: U8) -> U8 {
+	c = a + b
+	if c < b {
+		return c
+	}
+	return c
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_rejects_mixed_u8_and_i32_arithmetic() {
+        let source = r#"
+fun bad(a: U8, b: I32) -> U8 {
+	c = a + b
+	return c
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("mixed U8/I32 arithmetic should fail");
+        assert!(err
+            .to_string()
+            .contains("expected both operands of Add to be numeric"));
     }
 
     #[test]

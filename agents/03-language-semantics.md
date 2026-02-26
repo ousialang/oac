@@ -5,6 +5,7 @@ This describes behavior implemented in current compiler code, not aspirational d
 ## Built-In Types
 
 From `crates/oac/src/builtins.rs`:
+- `U8`
 - `I32`
 - `I64`
 - `FP32`
@@ -53,7 +54,9 @@ Observed in parser/IR implementation:
 - Function return paths must not mix incompatible return types.
 - `main` must use one of these signatures: `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`.
 - Assignments bind variable type to expression type.
-- Numeric binary ops are strict and same-type only: `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
+- Numeric binary ops are strict and same-type only: `U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
+- `U8` relational operators (`<`, `>`, `<=`, `>=`) use unsigned comparisons in codegen.
+- `U8` division lowers to unsigned integer division in codegen.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
 - Namespace bodies currently accept runtime `fun` declarations only (no `comptime` or `extern` declarations inside `namespace` blocks).
 - `extern fun` declarations are top-level-only in v1, cannot be marked `comptime`, and must not define a body.
