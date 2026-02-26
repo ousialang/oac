@@ -71,14 +71,18 @@ fn resolve_ast_inner(
     merged
         .top_level_functions
         .extend(parsed_ast.top_level_functions);
+    merged
+        .trait_declarations
+        .extend(parsed_ast.trait_declarations);
+    merged.impl_declarations.extend(parsed_ast.impl_declarations);
     merged.tests.extend(parsed_ast.tests);
     merged.invariants.extend(parsed_ast.invariants);
     merged
-        .template_definitions
-        .extend(parsed_ast.template_definitions);
+        .generic_definitions
+        .extend(parsed_ast.generic_definitions);
     merged
-        .template_instantiations
-        .extend(parsed_ast.template_instantiations);
+        .generic_specializations
+        .extend(parsed_ast.generic_specializations);
     merged.comptime_applies.extend(parsed_ast.comptime_applies);
 
     loading.pop();
@@ -117,12 +121,13 @@ fn resolve_import_path(source_dir: &Path, import_path: &str) -> anyhow::Result<P
 fn merge_flat_ast(dst: &mut parser::Ast, mut src: parser::Ast) {
     dst.type_definitions.append(&mut src.type_definitions);
     dst.top_level_functions.append(&mut src.top_level_functions);
+    dst.trait_declarations.append(&mut src.trait_declarations);
+    dst.impl_declarations.append(&mut src.impl_declarations);
     dst.tests.append(&mut src.tests);
     dst.invariants.append(&mut src.invariants);
-    dst.template_definitions
-        .append(&mut src.template_definitions);
-    dst.template_instantiations
-        .append(&mut src.template_instantiations);
+    dst.generic_definitions.append(&mut src.generic_definitions);
+    dst.generic_specializations
+        .append(&mut src.generic_specializations);
     dst.comptime_applies.append(&mut src.comptime_applies);
 }
 

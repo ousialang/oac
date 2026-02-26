@@ -1,0 +1,58 @@
+trait Hash {
+	fun hash(v: Self) -> I32
+}
+
+trait Eq {
+	fun equals(a: Self, b: Self) -> Bool
+}
+
+impl Hash for I32 {
+	fun hash(v: I32) -> I32 {
+		return v
+	}
+}
+
+impl Eq for I32 {
+	fun equals(a: I32, b: I32) -> Bool {
+		return a == b
+	}
+}
+
+impl Hash for Bool {
+	fun hash(v: Bool) -> I32 {
+		if v {
+			return 1
+		}
+		return 0
+	}
+}
+
+impl Eq for Bool {
+	fun equals(a: Bool, b: Bool) -> Bool {
+		return a == b
+	}
+}
+
+impl Hash for Char {
+	fun hash(v: Char) -> I32 {
+		return Char.code(v)
+	}
+}
+
+impl Eq for Char {
+	fun equals(a: Char, b: Char) -> Bool {
+		return Char.equals(a, b)
+	}
+}
+
+impl Hash for AsciiChar {
+	fun hash(v: AsciiChar) -> I32 {
+		return AsciiChar.code(v)
+	}
+}
+
+impl Eq for AsciiChar {
+	fun equals(a: AsciiChar, b: AsciiChar) -> Bool {
+		return AsciiChar.equals(a, b)
+	}
+}

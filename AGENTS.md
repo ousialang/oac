@@ -42,12 +42,18 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 
 ## Current Syntax Notes
 
-- Templates use square brackets for type parameters and instantiation arguments: `template Option[T] { ... }`, `instantiate OptionI32 = Option[I32]`.
+- Generics use square brackets for type parameters and specialization arguments: `generic Option[T] { ... }`, `specialize OptionI32 = Option[I32]`.
+- Traits are declaration-only method signature blocks: `trait Hash { fun hash(v: Self) -> I32 }`.
+- Trait implementations are explicit and concrete-only in v1: `impl Hash for I32 { fun hash(v: I32) -> I32 { ... } }`.
+- Generic bounds are inline on parameters: `generic HashTable[K: Hash + Eq, V] { ... }`.
+- Legacy template syntax is hard-removed: `template` and `instantiate` are parser errors with migration hints to `generic` / `specialize`.
+- Trait invocation in v1 is namespaced/static (`Trait.method(value, ...)`); calls are rewritten to concrete impl symbols during specialization and remain static dispatch only.
 - Top-level imports are flat and same-directory only: `import "helpers.oa"`. Imported declarations are merged into one global scope.
 - Namespaces are top-level and declaration-only: `namespace TypeName { fun helper(...) -> ... { ... } }` and `namespace TypeName { extern fun symbol(...) -> ... }`. Namespace calls use `TypeName.helper(...)` syntax and lower to internal lookup names using `TypeName__helper`.
 - External declarations use `extern fun name(args...) -> Type` (no body). In v1 they may appear at top level and inside `namespace` blocks (no bodies, no `comptime`).
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.
-- The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_string.oa`, `std_collections.oa`, `std_json.oa`, `std_clib.oa`).
+- The stdlib entrypoint `crates/oac/src/std.oa` is now an import aggregator over split files (`std_ascii.oa`, `std_char.oa`, `std_null.oa`, `std_string.oa`, `std_collections.oa`, `std_traits.oa`, `std_json.oa`, `std_clib.oa`).
+- `std_traits.oa` defines core traits (`Hash`, `Eq`) with concrete impls for practical key/value types used by stdlib and user generics.
 - The split stdlib now exposes namespaced helper APIs where applicable: JSON parsing helpers are called via `Json.*` (for example `Json.json_kind`, `Json.parse_json_document_result`).
 - The split stdlib collections now expose a richer persistent `LinkedList` template API: cached length via `len`/`length` (O(1) from node metadata), constructors/helpers (`empty`, `singleton`, `cons`, `push_front`), accessors (`front`, `tail`, `pop_front`, `at`, `at_or`), transforms (`append`, `reverse`, `take`, `drop`), and compatibility wrappers (`head_or`, `tail_or`, `length`).
 - The stdlib also exposes `AsciiChar` and `AsciiCharResult` with namespaced helpers (`AsciiChar.from_code`, `AsciiChar.from_string_at`, `AsciiChar.code`, `AsciiChar.is_digit`, `AsciiChar.is_whitespace`, `AsciiChar.equals`); `AsciiChar` stores a wrapped `Char`.
@@ -62,9 +68,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Runtime byte memory helpers are compiler builtins: `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`.
 - Character literals use single quotes and lower to `Char` construction (`'x'`, escapes like `'\n'` and `'\''`); parser lowers literals to `Char.from_code(...)`.
 - Identifier tokenization is EOF-safe: trailing words (including `_`) now lex as `Word` tokens instead of panicking, which keeps `oac lsp` stable on incomplete buffers.
-- `AsciiChar` range is enforced by a declaration-based struct invariant over its wrapped `Char` (`0 <= Char.code(ch) <= 127`); stdlib invariant declarations are now merged during `resolve` alongside stdlib types/functions/templates.
+- `AsciiChar` range is enforced by a declaration-based struct invariant over its wrapped `Char` (`0 <= Char.code(ch) <= 127`); stdlib invariant declarations are now merged during `resolve` alongside stdlib types/functions/generics.
 - Built-in `FP32` and `FP64` are supported end-to-end. Unsuffixed decimal literals default to `FP32` (for example `1.25`), while `f64` suffix selects `FP64` (for example `1.25f64`). Numeric arithmetic/comparisons do not perform implicit widening/coercion between integer and floating types (`U8`, `I32`, `I64`, `FP32`, `FP64` stay same-type only).
-- Template-instantiated helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
+- Generic-specialized helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
 - A VS Code extension scaffold now lives in `tools/vscode-ousia/`; it launches `oac lsp` and is configured via `ousia.server.path`, `ousia.server.args`, and `ousia.trace.server`.
@@ -98,3 +104,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `oac build` now runs a best-effort non-termination classifier on the generated QBE `main` function; when it proves a canonical while-loop is non-terminating, compilation fails early with the loop header label and proof reason.
 - Build/test Zig linking now uses per-target writable cache directories (`target/oac/zig-global-cache`, `target/oac/zig-local-cache` or test equivalents) and fails closed on non-zero `zig cc` status.
 - Execution fixture snapshots in `qbe_backend` are based on program stdout even when the process exits with a non-zero code; runtime errors are reserved for spawn failures, timeouts, invalid UTF-8, or signal termination.
+
+## Hard-Cut Migration Cheatsheet
+
+- Old: `template Option[T] { ... }` -> New: `generic Option[T] { ... }`
+- Old: `instantiate OptionI32 = Option[I32]` -> New: `specialize OptionI32 = Option[I32]`
+- Old key ops in generic hash tables: direct integer hash/`==` -> New: trait-bounded calls (`Hash.hash(k)`, `Eq.equals(a, b)`) with bounds like `[K: Hash + Eq, V]`

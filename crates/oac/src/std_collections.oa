@@ -1,4 +1,4 @@
-template LinkedList[T] {
+generic LinkedList[T] {
 	struct Node {
 		len: I32,
 		value: T,
@@ -225,10 +225,10 @@ template LinkedList[T] {
 	}
 }
 
-template HashTable[T] {
+generic HashTable[K: Hash + Eq, V] {
 	struct Entry {
-		key: I32,
-		value: T,
+		key: K,
+		value: V,
 	}
 
 	struct EntryNode {
@@ -253,7 +253,7 @@ template HashTable[T] {
 
 	enum Lookup {
 		Missing,
-		Found(T),
+		Found(V),
 	}
 
 	struct HashTable {
@@ -387,18 +387,26 @@ template HashTable[T] {
 		return r
 	}
 
-	fun bucket_index(key: I32, bucket_count: I32) -> I32 {
-		return HashTable.modulo_non_negative(key, bucket_count)
+	fun hash_key(key: K) -> I32 {
+		k = Hash.hash(key)
+		if k < 0 {
+			k = 0 - k
+		}
+		return k
 	}
 
-	fun bucket_get(bucket: Bucket, key: I32) -> Lookup {
+	fun bucket_index(key: K, bucket_count: I32) -> I32 {
+		return HashTable.modulo_non_negative(HashTable.hash_key(key), bucket_count)
+	}
+
+	fun bucket_get(bucket: Bucket, key: K) -> Lookup {
 		match bucket {
 			Bucket.Empty => {
 				return Lookup.Missing
 			}
 			Bucket.Node(node) => {
 				entry = node.entry
-				if entry.key == key {
+				if Eq.equals(entry.key, key) {
 					return Lookup.Found(entry.value)
 				}
 				return HashTable.bucket_get(node.next, key)
@@ -406,7 +414,7 @@ template HashTable[T] {
 		}
 	}
 
-	fun bucket_set(bucket: Bucket, key: I32, value: T) -> BucketSetResult {
+	fun bucket_set(bucket: Bucket, key: K, value: V) -> BucketSetResult {
 		match bucket {
 			Bucket.Empty => {
 				entry = Entry struct {
@@ -424,7 +432,7 @@ template HashTable[T] {
 			}
 			Bucket.Node(node) => {
 				entry = node.entry
-				if entry.key == key {
+				if Eq.equals(entry.key, key) {
 					replaced_entry = Entry struct {
 						key: key,
 						value: value,
@@ -452,7 +460,7 @@ template HashTable[T] {
 		}
 	}
 
-	fun bucket_remove(bucket: Bucket, key: I32) -> BucketRemoveResult {
+	fun bucket_remove(bucket: Bucket, key: K) -> BucketRemoveResult {
 		match bucket {
 			Bucket.Empty => {
 				return BucketRemoveResult struct {
@@ -462,7 +470,7 @@ template HashTable[T] {
 			}
 			Bucket.Node(node) => {
 				entry = node.entry
-				if entry.key == key {
+				if Eq.equals(entry.key, key) {
 					return BucketRemoveResult struct {
 						bucket: node.next,
 						removed: Lookup.Found(entry.value),
@@ -497,7 +505,7 @@ template HashTable[T] {
 		}
 	}
 
-	fun set_no_resize(table: HashTable, key: I32, value: T) -> SetResult {
+	fun set_no_resize(table: HashTable, key: K, value: V) -> SetResult {
 		index = HashTable.bucket_index(key, table.bucket_count)
 		bucket = HashTable.bucket_at(table.buckets, table.bucket_count, index)
 		bucket_result = HashTable.bucket_set(bucket, key, value)
@@ -571,18 +579,18 @@ template HashTable[T] {
 		return table
 	}
 
-	fun set(table: HashTable, key: I32, value: T) -> SetResult {
+	fun set(table: HashTable, key: K, value: V) -> SetResult {
 		resized = HashTable.maybe_resize_before_insert(table)
 		return HashTable.set_no_resize(resized, key, value)
 	}
 
-	fun get(table: HashTable, key: I32) -> Lookup {
+	fun get(table: HashTable, key: K) -> Lookup {
 		index = HashTable.bucket_index(key, table.bucket_count)
 		bucket = HashTable.bucket_at(table.buckets, table.bucket_count, index)
 		return HashTable.bucket_get(bucket, key)
 	}
 
-	fun remove(table: HashTable, key: I32) -> RemoveResult {
+	fun remove(table: HashTable, key: K) -> RemoveResult {
 		index = HashTable.bucket_index(key, table.bucket_count)
 		bucket = HashTable.bucket_at(table.buckets, table.bucket_count, index)
 		bucket_result = HashTable.bucket_remove(bucket, key)
@@ -619,7 +627,7 @@ template HashTable[T] {
 		}
 	}
 
-	fun contains_key(table: HashTable, key: I32) -> Bool {
+	fun contains_key(table: HashTable, key: K) -> Bool {
 		return match HashTable.get(table, key) {
 			Lookup.Missing => false
 			Lookup.Found(_value) => true

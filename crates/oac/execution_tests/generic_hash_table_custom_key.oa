@@ -1,0 +1,70 @@
+struct UserKey {
+	id: I32,
+	bucket: I32,
+}
+
+impl Hash for UserKey {
+	fun hash(v: UserKey) -> I32 {
+		return v.bucket
+	}
+}
+
+impl Eq for UserKey {
+	fun equals(a: UserKey, b: UserKey) -> Bool {
+		return a.id == b.id
+	}
+}
+
+specialize UserTable = HashTable[UserKey, I32]
+
+fun print_lookup(v: UserTable__Lookup) -> I32 {
+	match v {
+		UserTable__Lookup.Missing => {
+			print(99)
+			return 0
+		}
+		UserTable__Lookup.Found(x) => {
+			print(x)
+			return 0
+		}
+	}
+}
+
+fun main() -> I32 {
+	table = UserTable.empty()
+	print(UserTable.size(table))
+
+	a = UserKey struct {
+		id: 1,
+		bucket: 7,
+	}
+	b = UserKey struct {
+		id: 2,
+		bucket: 7,
+	}
+	missing = UserKey struct {
+		id: 3,
+		bucket: 7,
+	}
+
+	table = UserTable.put(table, a, 10)
+	table = UserTable.put(table, b, 20)
+	print(UserTable.size(table))
+
+	print_lookup(UserTable.get(table, a))
+	print_lookup(UserTable.get(table, b))
+	print_lookup(UserTable.get(table, missing))
+
+	if UserTable.contains_key(table, b) {
+		print(1)
+	} else {
+		print(0)
+	}
+	if UserTable.contains_key(table, missing) {
+		print(1)
+	} else {
+		print(0)
+	}
+
+	return 0
+}

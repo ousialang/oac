@@ -62,7 +62,7 @@ Key tests:
 - `crates/oac/src/tokenizer.rs` also has a unit regression for FP32 decimal tokenization (`TokenData::Float`).
 - `crates/oac/src/tokenizer.rs` also covers `f64` suffix tokenization (`Float` token followed by `Word(\"f64\")`).
 - `crates/oac/src/tokenizer.rs` includes EOF word-lexing regressions to prevent LSP crash loops on partial files (`tokenizes_identifier_at_eof_without_panicking`, `tokenizes_underscore_identifier_at_eof_without_panicking`).
-- `crates/oac/src/parser.rs` tests assert template bracket syntax parsing, legacy `()` rejection, struct-invariant declaration syntax (`invariant ... for (...)`, with optional identifier, including inside templates), and optional trailing commas for struct declarations/literals.
+- `crates/oac/src/parser.rs` tests assert generic bracket syntax parsing (including multi-parameter inline bounds), nested generic type arguments, trait/impl parsing, hard-cut legacy `template`/`instantiate` rejection with migration hints, struct-invariant declaration syntax (`invariant ... for (...)`, with optional identifier, including inside generics), and optional trailing commas for struct declarations/literals.
 - `crates/oac/src/parser.rs` also includes top-level test declaration parsing coverage (`test "..." { ... }`).
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
 - `crates/oac/src/parser.rs` also covers top-level `extern fun` parsing plus namespace-scoped extern parsing (`namespace Name { extern fun ... }`) including internal-name mangling and preserved extern symbol names.
@@ -73,11 +73,12 @@ Key tests:
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `std.oa` imports.
-- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), C externs (`Clib__malloc`, `Clib__free`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
+- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), C externs (`Clib__malloc`, `Clib__free`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
 - The same regression also asserts stdlib `AsciiChar` invariant registration/synthesis (`struct_invariants["AsciiChar"]` and `__struct__AsciiChar__invariant` function definition).
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()`, `main(argc: I32, argv: I64)`, and `main(argc: I32, argv: PtrInt)`).
 - `crates/oac/src/ir.rs` includes alias coverage for `PtrInt` behaving as `I64` in function calls/equality and type-definition mapping.
 - `crates/oac/src/ir.rs` also validates namespace call resolution/type-checking by lowering to mangled function names (`TypeName__helper`).
+- `crates/oac/src/ir.rs` also validates trait-system behavior: duplicate impl rejection, impl signature mismatch rejection, missing bound impl failures at specialization, and trait-call dispatch/type-check through concrete impl symbols.
 - `crates/oac/src/ir.rs` also validates `Void`/extern constraints: accepted statement calls to `Void` externs, rejection of `Void` parameters, and rejection of non-extern `Void` returns.
 - `crates/oac/src/ir.rs` also includes FP32 resolve/type-check regression coverage (FP32 arithmetic + comparison in `main`).
 - `crates/oac/src/ir.rs` also includes FP64 resolve/type-check regression coverage (FP64 arithmetic + comparison in `main`).
@@ -91,7 +92,7 @@ Key tests:
 - `crates/qbe-smt/src/lib.rs` is also the shared CHC solver entrypoint (`solve_chc_script` and `solve_chc_script_with_diagnostics`) used by struct invariant verification.
 - `crates/qbe-smt/src/lib.rs` also tests loop classification (`classify_simple_loops`) for proven non-termination patterns (identity updates, including `call $sub(..., 0)`) vs unknown/progress loops.
 - `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, and file-URI handling.
-- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, legacy function-name compatibility, template concrete-name support, obligation-site scoping, deterministic call-site ordinals, recursion rejection, and QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding and fail-closed unknown external calls).
+- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, recursion rejection, and QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding and fail-closed unknown external calls).
 - `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving (including no-op behavior when no prove sites exist).
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
@@ -116,9 +117,12 @@ Key tests:
   - `namespace_basic.oa`
 - Execution fixtures also include large-string length regression coverage:
   - `string_len_large.oa`
+- Execution fixtures now include trait-bounded generic hash table coverage:
+  - `generic_hash_table_custom_key.oa` (positive custom key + custom `Hash`/`Eq` impl)
+  - `generic_hash_table_missing_impl.oa` (negative missing bound impl diagnostic)
 - Stdlib namespacing coverage in execution fixtures:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
-  - Template stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa`.
+  - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).
   - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), result-enum accessors (`front` / `tail` / `pop_front`), and transform helpers (`append`, `reverse`, `take`, `drop`, `at`, `at_or`) in addition to compatibility wrappers.
   - `template_hash_table_i32.oa` additionally covers HashTable v2 behaviors: `set/remove/len/capacity`, insert-vs-update semantics via `inserted_new`, and resize retention for existing entries.
 

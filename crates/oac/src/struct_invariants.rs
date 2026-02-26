@@ -2090,16 +2090,16 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn supports_template_concrete_invariant_names() {
+    fn supports_generic_concrete_invariant_names() {
         let program = resolve_program(
             r#"
-template Box[T] {
+generic Box[T] {
 	struct Box {
 		value: T,
 	}
 }
 
-instantiate BoxI32 = Box[I32]
+specialize BoxI32 = Box[I32]
 
 invariant non_negative_value "value must be non-negative" for (v: BoxI32) {
 	return v.value >= 0

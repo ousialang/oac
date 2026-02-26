@@ -1,6 +1,6 @@
 ---
 source: crates/oac/src/parser.rs
-assertion_line: 1964
+assertion_line: 2340
 expression: ast
 snapshot_kind: text
 ---
@@ -61,9 +61,11 @@ snapshot_kind: text
       "is_extern": false
     }
   ],
+  "trait_declarations": [],
+  "impl_declarations": [],
   "tests": [],
   "invariants": [],
-  "template_definitions": [],
-  "template_instantiations": [],
+  "generic_definitions": [],
+  "generic_specializations": [],
   "comptime_applies": []
 }
