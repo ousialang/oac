@@ -124,7 +124,8 @@ Observed in parser/IR implementation:
 - Prove obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
 - Struct-invariant proof obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
-- `qbe-smt` currently rejects floating-point obligations fail-closed (including FP32/FP64 literals/comparisons) during prove/struct-invariant checking.
+- `qbe-smt` supports FP32 obligations during prove/struct-invariant checking for the emitted subset (FP32 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, and FP32 `loads`/`stores`) using IEEE floating-point semantics with `RNE`.
+- `qbe-smt` remains fail-closed for FP64 obligations and unsupported float conversion operations.
 - `qbe-smt` models `call $exit(code)` as a halting transition with `exit` state set from `code`.
 - `qbe-smt` also models known CLib calls (`malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`) plus variadic `printf` for builtin `print` inlined paths.
 - CLib byte-memory call models use bounded precise expansion (`limit = 16`) with sound fallback branches; unknown extern call targets remain fail-closed unsupported errors.

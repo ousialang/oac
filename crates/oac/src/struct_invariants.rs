@@ -1596,6 +1596,35 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
     }
 
     #[test]
+    fn fp32_struct_invariants_verify_in_qbe_native_flow() {
+        let program = resolve_program(
+            r#"
+struct Foo {
+	x: FP32,
+}
+
+invariant "x is bounded above by one" for (v: Foo) {
+	return v.x <= 1.0
+}
+
+fun make_foo(x: FP32) -> Foo {
+	return Foo struct { x: x, }
+}
+
+fun main() -> I32 {
+	f = make_foo(0.5)
+	return 0
+}
+"#,
+        );
+
+        let qbe_module = compile_qbe(&program);
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        verify_struct_invariants_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect("FP32 struct invariants should verify");
+    }
+
+    #[test]
     fn unknown_external_calls_fail_closed_in_qbe_native_flow() {
         let program = resolve_program(
             r#"

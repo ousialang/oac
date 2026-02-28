@@ -1,0 +1,7 @@
+fun main() -> I32 {
+	a = 1.25
+	b = 2.5
+	prove(a < b)
+	print(42)
+	return 0
+}

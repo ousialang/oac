@@ -20,7 +20,11 @@ pub(crate) fn encode_module(
     let context = build_module_encoding_context(module, entry, assumptions)?;
 
     let mut smt = String::new();
-    smt.push_str("(set-logic HORN)\n");
+    if context.uses_fp32 {
+        smt.push_str("(set-logic ALL)\n");
+    } else {
+        smt.push_str("(set-logic HORN)\n");
+    }
     smt.push_str("(set-option :fp.engine spacer)\n");
     smt.push_str("(set-info :source |qbe-smt chc fixedpoint model|)\n\n");
 
@@ -528,6 +532,7 @@ struct ModuleEncodingContext {
     global_map: HashMap<String, u64>,
     arg_invariant_assumptions: HashMap<String, Vec<ValidatedArgInvariantAssumption>>,
     max_arg_invariant_assumptions: usize,
+    uses_fp32: bool,
 }
 
 fn build_module_encoding_context(
@@ -661,6 +666,7 @@ fn build_module_encoding_context(
 
     let mut functions = HashMap::new();
     let mut globals = BTreeSet::<String>::new();
+    let mut uses_fp32 = false;
     for (function_id, function_name) in function_order.iter().enumerate() {
         let function = function_map
             .get(function_name)
@@ -706,6 +712,11 @@ fn build_module_encoding_context(
         }
         for arg_name in arg_names {
             globals.remove(&arg_name);
+        }
+        if args.iter().any(|arg| arg.ty == AssignType::Single)
+            || flattened.statements.iter().any(statement_uses_fp32)
+        {
+            uses_fp32 = true;
         }
 
         functions.insert(
@@ -755,6 +766,7 @@ fn build_module_encoding_context(
         global_map,
         arg_invariant_assumptions: encoded_arg_invariant_assumptions,
         max_arg_invariant_assumptions,
+        uses_fp32,
     })
 }
 
@@ -1414,7 +1426,7 @@ fn collect_function_args(function: &QbeFunction) -> Result<Vec<FunctionArg>, Qbe
         };
 
         let assign_ty = assign_type_from_qbe(ty);
-        if matches!(assign_ty, AssignType::Single | AssignType::Double) {
+        if matches!(assign_ty, AssignType::Double) {
             return Err(QbeSmtError::Unsupported {
                 message: format!(
                     "unsupported floating-point function argument `%{}` in CHC encoding",
@@ -1455,15 +1467,21 @@ fn validate_statement_supported(
                 | QbeInstr::Sub(..)
                 | QbeInstr::Mul(..)
                 | QbeInstr::Div(..)
-                | QbeInstr::Udiv(..)
+                | QbeInstr::Copy(..) => {
+                    if matches!(assign_ty, AssignType::Double) {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!("pc {pc}: floating-point assignments are unsupported"),
+                        });
+                    }
+                }
+                QbeInstr::Udiv(..)
                 | QbeInstr::Rem(..)
                 | QbeInstr::Urem(..)
                 | QbeInstr::And(..)
                 | QbeInstr::Or(..)
                 | QbeInstr::Shl(..)
                 | QbeInstr::Shr(..)
-                | QbeInstr::Sar(..)
-                | QbeInstr::Copy(..) => {
+                | QbeInstr::Sar(..) => {
                     if matches!(assign_ty, AssignType::Single | AssignType::Double) {
                         return Err(QbeSmtError::Unsupported {
                             message: format!("pc {pc}: floating-point assignments are unsupported"),
@@ -1472,11 +1490,40 @@ fn validate_statement_supported(
                 }
                 QbeInstr::Cmp(cmp_ty, kind, ..) => {
                     let cmp_assign_ty = assign_type_from_qbe(cmp_ty);
-                    if matches!(
-                        kind,
-                        QbeCmp::O | QbeCmp::Uo | QbeCmp::Lt | QbeCmp::Le | QbeCmp::Gt | QbeCmp::Ge
-                    ) || matches!(assign_ty, AssignType::Single | AssignType::Double)
-                        || matches!(cmp_assign_ty, AssignType::Single | AssignType::Double)
+                    let cmp_kind_supported = match cmp_assign_ty {
+                        AssignType::Single => matches!(
+                            kind,
+                            QbeCmp::Eq
+                                | QbeCmp::Ne
+                                | QbeCmp::Lt
+                                | QbeCmp::Le
+                                | QbeCmp::Gt
+                                | QbeCmp::Ge
+                                | QbeCmp::O
+                                | QbeCmp::Uo
+                        ),
+                        AssignType::Word | AssignType::Long => matches!(
+                            kind,
+                            QbeCmp::Eq
+                                | QbeCmp::Ne
+                                | QbeCmp::Slt
+                                | QbeCmp::Sle
+                                | QbeCmp::Sgt
+                                | QbeCmp::Sge
+                                | QbeCmp::Ult
+                                | QbeCmp::Ule
+                                | QbeCmp::Ugt
+                                | QbeCmp::Uge
+                        ),
+                        AssignType::Double => false,
+                    };
+                    if !cmp_kind_supported {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!("pc {pc}: unsupported compare operation"),
+                        });
+                    }
+                    if matches!(assign_ty, AssignType::Single | AssignType::Double)
+                        || matches!(cmp_assign_ty, AssignType::Double)
                     {
                         return Err(QbeSmtError::Unsupported {
                             message: format!("pc {pc}: unsupported compare operation"),
@@ -1510,8 +1557,10 @@ fn validate_statement_supported(
                 }
                 QbeInstr::Load(load_ty, ..) => {
                     let load_ty = load_store_type_from_qbe(load_ty);
-                    if matches!(assign_ty, AssignType::Single | AssignType::Double)
-                        || matches!(load_ty, LoadStoreType::Single | LoadStoreType::Double)
+                    if matches!(assign_ty, AssignType::Double)
+                        || matches!(load_ty, LoadStoreType::Double)
+                        || (matches!(assign_ty, AssignType::Single)
+                            != matches!(load_ty, LoadStoreType::Single))
                         || load_store_width_bits(load_ty).is_none()
                     {
                         return Err(QbeSmtError::Unsupported {
@@ -1572,7 +1621,7 @@ fn validate_statement_supported(
                     )?;
                 }
                 QbeInstr::Phi(label_left, _, label_right, _) => {
-                    if matches!(assign_ty, AssignType::Single | AssignType::Double) {
+                    if matches!(assign_ty, AssignType::Double) {
                         return Err(QbeSmtError::Unsupported {
                             message: format!(
                                 "pc {pc}: phi is unsupported for floating-point assignment type {:?}",
@@ -1603,7 +1652,7 @@ fn validate_statement_supported(
             QbeInstr::Store(store_ty, ..) => {
                 let store_ty = load_store_type_from_qbe(store_ty);
                 if load_store_width_bits(store_ty).is_none()
-                    || matches!(store_ty, LoadStoreType::Single | LoadStoreType::Double)
+                    || matches!(store_ty, LoadStoreType::Double)
                 {
                     return Err(QbeSmtError::Unsupported {
                         message: format!("pc {pc}: unsupported store operation"),
@@ -2531,31 +2580,58 @@ fn bounded_strcmp_result_expr(
 }
 
 fn binary_expr(instr: &QbeInstr, ty: AssignType, lhs: &str, rhs: &str) -> String {
-    let width = ty.bits();
+    match ty {
+        AssignType::Word | AssignType::Long => {
+            let width = ty.bits();
 
-    let expr_for_width = |lhs_expr: &str, rhs_expr: &str| match instr {
-        QbeInstr::Add(..) => format!("(bvadd {lhs_expr} {rhs_expr})"),
-        QbeInstr::Sub(..) => format!("(bvsub {lhs_expr} {rhs_expr})"),
-        QbeInstr::Mul(..) => format!("(bvmul {lhs_expr} {rhs_expr})"),
-        QbeInstr::Div(..) => format!("(bvsdiv {lhs_expr} {rhs_expr})"),
-        QbeInstr::Udiv(..) => format!("(bvudiv {lhs_expr} {rhs_expr})"),
-        QbeInstr::Rem(..) => format!("(bvsrem {lhs_expr} {rhs_expr})"),
-        QbeInstr::Urem(..) => format!("(bvurem {lhs_expr} {rhs_expr})"),
-        QbeInstr::And(..) => format!("(bvand {lhs_expr} {rhs_expr})"),
-        QbeInstr::Or(..) => format!("(bvor {lhs_expr} {rhs_expr})"),
-        QbeInstr::Shl(..) => format!("(bvshl {lhs_expr} {rhs_expr})"),
-        QbeInstr::Shr(..) => format!("(bvlshr {lhs_expr} {rhs_expr})"),
-        QbeInstr::Sar(..) => format!("(bvashr {lhs_expr} {rhs_expr})"),
-        _ => unreachable!("binary_expr called with non-binary instruction"),
-    };
+            let expr_for_width = |lhs_expr: &str, rhs_expr: &str| match instr {
+                QbeInstr::Add(..) => format!("(bvadd {lhs_expr} {rhs_expr})"),
+                QbeInstr::Sub(..) => format!("(bvsub {lhs_expr} {rhs_expr})"),
+                QbeInstr::Mul(..) => format!("(bvmul {lhs_expr} {rhs_expr})"),
+                QbeInstr::Div(..) => format!("(bvsdiv {lhs_expr} {rhs_expr})"),
+                QbeInstr::Udiv(..) => format!("(bvudiv {lhs_expr} {rhs_expr})"),
+                QbeInstr::Rem(..) => format!("(bvsrem {lhs_expr} {rhs_expr})"),
+                QbeInstr::Urem(..) => format!("(bvurem {lhs_expr} {rhs_expr})"),
+                QbeInstr::And(..) => format!("(bvand {lhs_expr} {rhs_expr})"),
+                QbeInstr::Or(..) => format!("(bvor {lhs_expr} {rhs_expr})"),
+                QbeInstr::Shl(..) => format!("(bvshl {lhs_expr} {rhs_expr})"),
+                QbeInstr::Shr(..) => format!("(bvlshr {lhs_expr} {rhs_expr})"),
+                QbeInstr::Sar(..) => format!("(bvashr {lhs_expr} {rhs_expr})"),
+                _ => unreachable!("binary_expr called with non-binary instruction"),
+            };
 
-    if width == 64 {
-        expr_for_width(lhs, rhs)
-    } else {
-        let lhs32 = extract_low_bits(lhs, 32);
-        let rhs32 = extract_low_bits(rhs, 32);
-        let expr32 = expr_for_width(&lhs32, &rhs32);
-        sign_extend_known_width(&expr32, 32, 64)
+            if width == 64 {
+                expr_for_width(lhs, rhs)
+            } else {
+                let lhs32 = extract_low_bits(lhs, 32);
+                let rhs32 = extract_low_bits(rhs, 32);
+                let expr32 = expr_for_width(&lhs32, &rhs32);
+                sign_extend_known_width(&expr32, 32, 64)
+            }
+        }
+        AssignType::Single => {
+            let lhs_fp = fp32_from_bv64(lhs);
+            let rhs_fp = fp32_from_bv64(rhs);
+            let fp_expr = match instr {
+                QbeInstr::Add(..) => {
+                    format!("(fp.add RNE {lhs_fp} {rhs_fp})")
+                }
+                QbeInstr::Sub(..) => {
+                    format!("(fp.sub RNE {lhs_fp} {rhs_fp})")
+                }
+                QbeInstr::Mul(..) => {
+                    format!("(fp.mul RNE {lhs_fp} {rhs_fp})")
+                }
+                QbeInstr::Div(..) => {
+                    format!("(fp.div RNE {lhs_fp} {rhs_fp})")
+                }
+                _ => unreachable!("unsupported FP32 binary instruction in binary_expr"),
+            };
+            fp32_to_bv64(&fp_expr)
+        }
+        AssignType::Double => {
+            unreachable!("FP64 assignments should be rejected")
+        }
     }
 }
 
@@ -2571,16 +2647,25 @@ fn cmp_to_smt(
     let lhs = value_to_smt(lhs, regs_curr, reg_slots, global_map);
     let rhs = value_to_smt(rhs, regs_curr, reg_slots, global_map);
 
-    if cmp_ty.bits() == 32 {
-        let lhs = extract_low_bits(&lhs, 32);
-        let rhs = extract_low_bits(&rhs, 32);
-        cmp_predicate(kind, &lhs, &rhs)
-    } else {
-        cmp_predicate(kind, &lhs, &rhs)
+    match cmp_ty {
+        AssignType::Word => {
+            let lhs = extract_low_bits(&lhs, 32);
+            let rhs = extract_low_bits(&rhs, 32);
+            cmp_predicate_int(kind, &lhs, &rhs)
+        }
+        AssignType::Long => cmp_predicate_int(kind, &lhs, &rhs),
+        AssignType::Single => {
+            let lhs_fp = fp32_from_bv64(&lhs);
+            let rhs_fp = fp32_from_bv64(&rhs);
+            cmp_predicate_fp32(kind, &lhs_fp, &rhs_fp)
+        }
+        AssignType::Double => {
+            unreachable!("FP64 compares should be rejected")
+        }
     }
 }
 
-fn cmp_predicate(kind: QbeCmp, lhs: &str, rhs: &str) -> String {
+fn cmp_predicate_int(kind: QbeCmp, lhs: &str, rhs: &str) -> String {
     match kind {
         QbeCmp::Eq => format!("(= {lhs} {rhs})"),
         QbeCmp::Ne => format!("(distinct {lhs} {rhs})"),
@@ -2595,7 +2680,28 @@ fn cmp_predicate(kind: QbeCmp, lhs: &str, rhs: &str) -> String {
         QbeCmp::Ule => format!("(bvule {lhs} {rhs})"),
         QbeCmp::Ugt => format!("(bvugt {lhs} {rhs})"),
         QbeCmp::Uge => format!("(bvuge {lhs} {rhs})"),
-        QbeCmp::O | QbeCmp::Uo => unreachable!("unsupported compares should be rejected"),
+        QbeCmp::O | QbeCmp::Uo => unreachable!("unsupported integer compares should be rejected"),
+    }
+}
+
+fn cmp_predicate_fp32(kind: QbeCmp, lhs: &str, rhs: &str) -> String {
+    match kind {
+        QbeCmp::Eq => format!("(fp.eq {lhs} {rhs})"),
+        QbeCmp::Ne => format!("(not (fp.eq {lhs} {rhs}))"),
+        QbeCmp::Lt => format!("(fp.lt {lhs} {rhs})"),
+        QbeCmp::Le => format!("(fp.leq {lhs} {rhs})"),
+        QbeCmp::Gt => format!("(fp.gt {lhs} {rhs})"),
+        QbeCmp::Ge => format!("(fp.geq {lhs} {rhs})"),
+        QbeCmp::O => format!("(and (not (fp.isNaN {lhs})) (not (fp.isNaN {rhs})))"),
+        QbeCmp::Uo => format!("(or (fp.isNaN {lhs}) (fp.isNaN {rhs}))"),
+        QbeCmp::Slt
+        | QbeCmp::Sle
+        | QbeCmp::Sgt
+        | QbeCmp::Sge
+        | QbeCmp::Ult
+        | QbeCmp::Ule
+        | QbeCmp::Ugt
+        | QbeCmp::Uge => unreachable!("unsupported FP32 compare kind"),
     }
 }
 
@@ -2663,7 +2769,8 @@ fn load_memory_expr(mem_expr: &str, address_expr: &str, load_ty: LoadStoreType) 
             zero_extend_known_width(&loaded, 16, 64)
         }
         LoadStoreType::Long => loaded,
-        LoadStoreType::Single | LoadStoreType::Double | LoadStoreType::Aggregate => {
+        LoadStoreType::Single => zero_extend_known_width(&loaded, 32, 64),
+        LoadStoreType::Double | LoadStoreType::Aggregate => {
             unreachable!("unsupported loads should be rejected")
         }
     }
@@ -2728,9 +2835,8 @@ fn normalize_to_assign_type(expr: &str, ty: AssignType) -> String {
     match ty {
         AssignType::Word => sign_extend_from_expr(expr, 32),
         AssignType::Long => expr.to_string(),
-        AssignType::Single | AssignType::Double => {
-            unreachable!("floating-point assignments should be rejected")
-        }
+        AssignType::Single => zero_extend_from_expr(expr, 32),
+        AssignType::Double => unreachable!("FP64 assignments should be rejected"),
     }
 }
 
@@ -2765,6 +2871,47 @@ fn zero_extend_known_width(expr: &str, from_bits: u32, to_bits: u32) -> String {
         expr.to_string()
     } else {
         format!("((_ zero_extend {}) {expr})", to_bits - from_bits)
+    }
+}
+
+fn fp32_from_bv64(expr: &str) -> String {
+    format!("((_ to_fp 8 24) {})", extract_low_bits(expr, 32))
+}
+
+fn fp32_to_bv64(expr: &str) -> String {
+    zero_extend_known_width(&format!("((_ fp.to_ieee_bv 8 24) {expr})"), 32, 64)
+}
+
+fn statement_uses_fp32(statement: &QbeStatement) -> bool {
+    let mut has_fp32 = false;
+    collect_values_in_statement(statement, &mut |value| {
+        if matches!(value, QbeValue::SingleConst(_)) {
+            has_fp32 = true;
+        }
+    });
+    if has_fp32 {
+        return true;
+    }
+
+    let instr = match statement {
+        QbeStatement::Assign(_, ty, instr) => {
+            if matches!(assign_type_from_qbe(ty), AssignType::Single) {
+                return true;
+            }
+            instr
+        }
+        QbeStatement::Volatile(instr) => instr,
+    };
+
+    match instr {
+        QbeInstr::Cmp(cmp_ty, _, _, _) => matches!(cmp_ty, QbeType::Single),
+        QbeInstr::Load(load_ty, _) => matches!(load_ty, QbeType::Single),
+        QbeInstr::Store(store_ty, _, _) => matches!(store_ty, QbeType::Single),
+        QbeInstr::Vaarg(va_ty, _) => matches!(va_ty, QbeType::Single),
+        QbeInstr::Call(_, args, _) => args.iter().any(|(arg_ty, arg_value)| {
+            matches!(arg_ty, QbeType::Single) || matches!(arg_value, QbeValue::SingleConst(_))
+        }),
+        _ => false,
     }
 }
 
@@ -2880,11 +3027,14 @@ fn value_to_smt(
             bv_const_u64(addr, 64)
         }
         QbeValue::Const(value) => bv_const_u64(*value, 64),
-        QbeValue::SingleConst(_) => {
-            unreachable!("floating-point constants should be rejected")
+        QbeValue::SingleConst(value) => {
+            let parsed = value
+                .parse::<f32>()
+                .unwrap_or_else(|_| panic!("invalid QBE FP32 literal: {value}"));
+            bv_const_u64(parsed.to_bits() as u64, 64)
         }
         QbeValue::DoubleConst(_) => {
-            unreachable!("floating-point constants should be rejected")
+            unreachable!("FP64 constants should be rejected")
         }
     }
 }
