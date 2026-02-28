@@ -1,11 +1,18 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use anyhow::Context;
 
+use crate::invariant_metadata::{
+    build_function_arg_invariant_assumptions, build_function_arg_invariant_assumptions_for_names,
+    build_function_arg_invariant_assumptions_with_name_overrides,
+    discover_struct_invariant_bindings, InvariantBinding,
+};
 use crate::ir::ResolvedProgram;
-use crate::parser::{Expression, Statement};
 use crate::qbe_backend::PROVE_MARKER_PREFIX;
+use crate::verification_cycles::{
+    reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+};
 
 const Z3_TIMEOUT_SECONDS: u64 = 10;
 
@@ -21,6 +28,7 @@ pub fn verify_prove_obligations_with_qbe(
     qbe_module: &qbe::Module,
     target_dir: &Path,
 ) -> anyhow::Result<()> {
+    let invariant_by_struct = discover_struct_invariant_bindings(program)?;
     let reachable = reachable_user_functions(program, "main")?;
 
     let function_map = qbe_module
@@ -34,205 +42,26 @@ pub fn verify_prove_obligations_with_qbe(
         return Ok(());
     }
 
-    reject_recursion_cycles(program, "main", &reachable)?;
-    solve_prove_sites(&function_map, &sites, target_dir)
-}
-
-fn reachable_user_functions(
-    program: &ResolvedProgram,
-    root: &str,
-) -> anyhow::Result<HashSet<String>> {
-    let mut reachable = HashSet::new();
-    let mut stack = vec![root.to_string()];
-
-    while let Some(function_name) = stack.pop() {
-        if !reachable.insert(function_name.clone()) {
-            continue;
-        }
-
-        let function = program
-            .function_definitions
-            .get(&function_name)
-            .ok_or_else(|| {
-                anyhow::anyhow!("reachable function {} is missing definition", function_name)
-            })?;
-
-        let mut callees = BTreeSet::new();
-        for statement in &function.body {
-            collect_called_user_functions_in_statement(statement, program, &mut callees);
-        }
-        for callee in callees {
-            if !reachable.contains(&callee) {
-                stack.push(callee);
-            }
-        }
-    }
-
-    Ok(reachable)
-}
-
-fn collect_called_user_functions_in_statement(
-    statement: &Statement,
-    program: &ResolvedProgram,
-    out: &mut BTreeSet<String>,
-) {
-    match statement {
-        Statement::StructDef { .. } => {}
-        Statement::Assign { value, .. } => {
-            collect_called_user_functions_in_expr(value, program, out)
-        }
-        Statement::Return { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Expression { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Prove { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Assert { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-            if let Some(else_body) = else_body {
-                for statement in else_body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-        Statement::While { condition, body } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-        }
-        Statement::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                for statement in &arm.body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-    }
-}
-
-fn collect_called_user_functions_in_expr(
-    expr: &Expression,
-    program: &ResolvedProgram,
-    out: &mut BTreeSet<String>,
-) {
-    match expr {
-        Expression::Call(name, args) => {
-            if program.function_definitions.contains_key(name) {
-                out.insert(name.clone());
-            }
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            if let Expression::FieldAccess {
-                struct_variable,
-                field,
-            } = callee.as_ref()
-            {
-                let call = crate::parser::qualify_namespace_function_name(struct_variable, field);
-                if program.function_definitions.contains_key(&call) {
-                    out.insert(call);
-                }
-            }
-            collect_called_user_functions_in_expr(callee, program, out);
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::BinOp(_, lhs, rhs) => {
-            collect_called_user_functions_in_expr(lhs, program, out);
-            collect_called_user_functions_in_expr(rhs, program, out);
-        }
-        Expression::UnaryOp(_, expr) => collect_called_user_functions_in_expr(expr, program, out),
-        Expression::StructValue { field_values, .. } => {
-            for (_, value) in field_values {
-                collect_called_user_functions_in_expr(value, program, out);
-            }
-        }
-        Expression::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                collect_called_user_functions_in_expr(&arm.value, program, out);
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
-    }
-}
-
-fn reject_recursion_cycles(
-    program: &ResolvedProgram,
-    root: &str,
-    reachable: &HashSet<String>,
-) -> anyhow::Result<()> {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum VisitState {
-        Visiting,
-        Visited,
-    }
-
-    fn dfs(
-        program: &ResolvedProgram,
-        function: &str,
-        reachable: &HashSet<String>,
-        states: &mut HashMap<String, VisitState>,
-        stack: &mut Vec<String>,
-    ) -> anyhow::Result<()> {
-        if let Some(VisitState::Visited) = states.get(function) {
-            return Ok(());
-        }
-        if let Some(VisitState::Visiting) = states.get(function) {
-            let pos = stack.iter().position(|name| name == function).unwrap_or(0);
-            let mut cycle = stack[pos..].join(" -> ");
-            if !cycle.is_empty() {
-                cycle.push_str(" -> ");
-            }
-            cycle.push_str(function);
-            return Err(anyhow::anyhow!(
-                "recursion cycles are unsupported by prove verification: {}",
-                cycle
-            ));
-        }
-
-        states.insert(function.to_string(), VisitState::Visiting);
-        stack.push(function.to_string());
-
-        let func = program
-            .function_definitions
-            .get(function)
-            .ok_or_else(|| anyhow::anyhow!("missing function definition for {}", function))?;
-        let mut callees = BTreeSet::new();
-        for statement in &func.body {
-            collect_called_user_functions_in_statement(statement, program, &mut callees);
-        }
-        for callee in callees {
-            if reachable.contains(&callee) {
-                dfs(program, &callee, reachable, states, stack)?;
-            }
-        }
-
-        stack.pop();
-        states.insert(function.to_string(), VisitState::Visited);
-        Ok(())
-    }
-
-    let mut states = HashMap::new();
-    let mut stack = Vec::new();
-    if reachable.contains(root) {
-        dfs(program, root, reachable, &mut states, &mut stack)?;
-    }
-    Ok(())
+    let reachable_names = reachable.iter().cloned().collect::<BTreeSet<_>>();
+    let arg_invariant_assumptions = build_function_arg_invariant_assumptions_for_names(
+        program,
+        &reachable_names,
+        &invariant_by_struct,
+    )?;
+    reject_recursion_cycles_with_arg_invariants(
+        program,
+        "main",
+        &reachable,
+        &arg_invariant_assumptions,
+        "prove verification",
+    )?;
+    solve_prove_sites(
+        program,
+        &invariant_by_struct,
+        &function_map,
+        &sites,
+        target_dir,
+    )
 }
 
 fn collect_prove_sites(
@@ -277,6 +106,8 @@ fn collect_prove_sites(
 }
 
 fn solve_prove_sites(
+    program: &ResolvedProgram,
+    invariant_by_struct: &HashMap<String, InvariantBinding>,
     function_map: &HashMap<String, qbe::Function>,
     sites: &[ProveSite],
     target_dir: &Path,
@@ -291,8 +122,9 @@ fn solve_prove_sites(
 
     let mut failures = Vec::new();
     for site in sites {
-        let checker_function = build_site_checker_function(function_map, site)?;
-        let checker_qbe = checker_function.to_string();
+        let (checker_module, checker_function, assumptions) =
+            build_site_checker_module(program, invariant_by_struct, function_map, site)?;
+        let checker_qbe = checker_module.to_string();
         let site_stem = format!("site_{}", sanitize_ident(&site.id));
         let qbe_filename = format!("{}.qbe", site_stem);
         let smt_filename = format!("{}.smt2", site_stem);
@@ -305,8 +137,9 @@ fn solve_prove_sites(
             )
         })?;
 
-        let smt = qbe_smt::qbe_to_smt(
-            &checker_function,
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
                     site,
@@ -314,6 +147,7 @@ fn solve_prove_sites(
                 ),
                 first_arg_i32_range: None,
             },
+            &assumptions,
         )
         .map_err(|err| {
             anyhow::anyhow!(
@@ -373,10 +207,12 @@ fn solve_prove_sites(
     }
 }
 
-fn build_site_checker_function(
+fn build_site_checker_module(
+    program: &ResolvedProgram,
+    invariant_by_struct: &HashMap<String, InvariantBinding>,
     function_map: &HashMap<String, qbe::Function>,
     site: &ProveSite,
-) -> anyhow::Result<qbe::Function> {
+) -> anyhow::Result<(qbe::Module, qbe::Function, qbe_smt::ModuleAssumptions)> {
     let caller = function_map
         .get(&site.caller)
         .ok_or_else(|| anyhow::anyhow!("missing QBE function for caller {}", site.caller))?;
@@ -387,9 +223,116 @@ fn build_site_checker_function(
 
     rewrite_returns_to_zero(&mut checker);
     inject_site_check_and_return(&mut checker, site)?;
-    crate::struct_invariants::inline_reachable_user_calls(&mut checker, function_map)?;
 
-    Ok(checker)
+    let mut checker_to_program_name = HashMap::new();
+    if site.caller != "main" {
+        checker_to_program_name.insert("main".to_string(), site.caller.clone());
+    }
+
+    let (module, assumptions) = checker_module_with_reachable_callees(
+        program,
+        invariant_by_struct,
+        function_map,
+        &checker,
+        &checker_to_program_name,
+    )?;
+    Ok((module, checker, assumptions))
+}
+
+fn checker_module_with_reachable_callees(
+    program: &ResolvedProgram,
+    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    function_map: &HashMap<String, qbe::Function>,
+    checker: &qbe::Function,
+    checker_to_program_name: &HashMap<String, String>,
+) -> anyhow::Result<(qbe::Module, qbe_smt::ModuleAssumptions)> {
+    let mut additional_roots = BTreeSet::<String>::new();
+    loop {
+        let mut module = qbe::Module::default();
+        module.functions.push(checker.clone());
+
+        let mut visited = HashSet::<String>::new();
+        let mut queue = VecDeque::<String>::new();
+        for callee in direct_user_callees(checker, function_map) {
+            queue.push_back(callee);
+        }
+        for root in &additional_roots {
+            if root != &checker.name {
+                queue.push_back(root.clone());
+            }
+        }
+
+        while let Some(callee_name) = queue.pop_front() {
+            if !visited.insert(callee_name.clone()) {
+                continue;
+            }
+            let callee = function_map.get(&callee_name).ok_or_else(|| {
+                anyhow::anyhow!("missing QBE function for callee {}", callee_name)
+            })?;
+            module.functions.push(callee.clone());
+            for nested in direct_user_callees(callee, function_map) {
+                if !visited.contains(&nested) {
+                    queue.push_back(nested);
+                }
+            }
+        }
+
+        let assumptions = if checker_to_program_name.is_empty() {
+            build_function_arg_invariant_assumptions(
+                program,
+                &module.functions,
+                invariant_by_struct,
+            )?
+        } else {
+            build_function_arg_invariant_assumptions_with_name_overrides(
+                program,
+                &module.functions,
+                invariant_by_struct,
+                checker_to_program_name,
+            )?
+        };
+        let required_invariant_functions = assumptions
+            .iter()
+            .map(|assumption| assumption.invariant_function_name.clone())
+            .collect::<BTreeSet<_>>();
+
+        let mut next_roots = additional_roots.clone();
+        next_roots.extend(required_invariant_functions);
+        if next_roots == additional_roots {
+            return Ok((
+                module,
+                qbe_smt::ModuleAssumptions {
+                    arg_invariant_assumptions: assumptions,
+                },
+            ));
+        }
+        additional_roots = next_roots;
+    }
+}
+
+fn direct_user_callees(
+    function: &qbe::Function,
+    function_map: &HashMap<String, qbe::Function>,
+) -> BTreeSet<String> {
+    let mut callees = BTreeSet::new();
+    for block in &function.blocks {
+        for item in &block.items {
+            let qbe::BlockItem::Statement(statement) = item else {
+                continue;
+            };
+            let maybe_name = match statement {
+                qbe::Statement::Assign(_, _, qbe::Instr::Call(name, _, _))
+                | qbe::Statement::Volatile(qbe::Instr::Call(name, _, _)) => Some(name),
+                _ => None,
+            };
+            if let Some(name) = maybe_name {
+                if function_map.contains_key(name) {
+                    callees.insert(name.clone());
+                }
+            }
+        }
+    }
+    callees
 }
 
 fn rewrite_returns_to_zero(function: &mut qbe::Function) {
@@ -521,8 +464,17 @@ fn summarize_solver_output(stdout: &str, stderr: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use crate::{ir, parser, qbe_backend, tokenizer};
+    use crate::verification_cycles::{
+        reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+    };
 
     use super::verify_prove_obligations_with_qbe;
+
+    fn resolve_program(source: &str) -> ir::ResolvedProgram {
+        let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        ir::resolve(ast).expect("resolve source")
+    }
 
     #[test]
     fn no_prove_sites_is_noop() {
@@ -533,12 +485,155 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenizer::tokenize(source).expect("tokenize source");
-        let ast = parser::parse(tokens).expect("parse source");
-        let program = ir::resolve(ast).expect("resolve source");
+        let program = resolve_program(&source);
         let qbe_module = qbe_backend::compile(program.clone());
         let tempdir = tempfile::tempdir().expect("tempdir");
         verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
             .expect("no prove obligations should pass");
+    }
+
+    #[test]
+    fn prove_sites_can_use_argument_invariant_preconditions() {
+        let source = r#"
+struct Foo {
+	x: I32,
+}
+
+invariant "x non-negative" for (v: Foo) {
+	return v.x >= 0
+}
+
+fun helper(v: Foo) -> I32 {
+	prove(v.x >= 0)
+	return 0
+}
+
+fun main() -> I32 {
+	f = Foo struct { x: sub(0, 1), }
+	return helper(f)
+}
+"#;
+
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect("argument-invariant preconditions should satisfy helper prove obligations");
+    }
+
+    #[test]
+    fn rejects_cycles_introduced_by_argument_invariant_edges() {
+        let source = r#"
+struct Foo {
+	x: I32,
+}
+
+invariant "foo invariant" for (v: Foo) {
+	w = helper(v)
+	return w == w
+}
+
+fun helper(v: Foo) -> I32 {
+	prove(v.x >= 0)
+	return v.x
+}
+
+fun main() -> I32 {
+	f = Foo struct { x: 1, }
+	return helper(f)
+}
+"#;
+
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let err = verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect_err("combined call graph cycles must fail closed");
+        assert!(err
+            .to_string()
+            .contains("includes arg-invariant precondition edges"));
+    }
+
+    #[test]
+    fn allows_call_only_recursion_in_verified_paths() {
+        let source = r#"
+fun a(n: I32) -> I32 {
+	if n <= 0 {
+		return 0
+	}
+	return b(n - 1)
+}
+
+fun b(n: I32) -> I32 {
+	if n <= 0 {
+		return 0
+	}
+	return a(n - 1)
+}
+
+fun main() -> I32 {
+	return a(2)
+}
+"#;
+
+        let program = resolve_program(source);
+        let reachable =
+            reachable_user_functions(&program, "main").expect("collect reachable functions");
+        reject_recursion_cycles_with_arg_invariants(
+            &program,
+            "main",
+            &reachable,
+            &[],
+            "prove verification",
+        )
+        .expect("call-only recursion should be allowed");
+    }
+
+    #[test]
+    fn rejects_mixed_cycles_with_argument_invariant_edges() {
+        let source = r#"
+fun a(n: I32) -> I32 {
+	if n <= 0 {
+		return id(n)
+	}
+	return b(n - 1)
+}
+
+fun b(n: I32) -> I32 {
+	if n <= 0 {
+		return n
+	}
+	return a(n - 1)
+}
+
+fun id(v: I32) -> I32 {
+	prove(v == v)
+	return v
+}
+
+fun main() -> I32 {
+	return id(2)
+}
+"#;
+
+        let program = resolve_program(source);
+        let reachable =
+            reachable_user_functions(&program, "main").expect("collect reachable functions");
+        let assumptions = vec![qbe_smt::FunctionArgInvariantAssumption {
+            function_name: "id".to_string(),
+            arg_index: 0,
+            invariant_function_name: "a".to_string(),
+        }];
+        let err = reject_recursion_cycles_with_arg_invariants(
+            &program,
+            "main",
+            &reachable,
+            &assumptions,
+            "prove verification",
+        )
+        .expect_err("mixed call+arg cycle should fail closed");
+        assert!(err
+            .to_string()
+            .contains("includes arg-invariant precondition edges"));
     }
 }

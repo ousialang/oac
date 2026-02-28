@@ -1,6 +1,6 @@
 use ariadne::{sources, Config, Label, Report, ReportKind};
-use qbe::Function as QbeFunction;
 use std::io::IsTerminal;
+use qbe::{Function as QbeFunction, Module as QbeModule};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -26,6 +26,20 @@ impl Default for EncodeOptions {
             first_arg_i32_range: None,
         }
     }
+}
+
+/// Assumes that a function argument satisfies a struct invariant relation.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FunctionArgInvariantAssumption {
+    pub function_name: String,
+    pub arg_index: usize,
+    pub invariant_function_name: String,
+}
+
+/// Module-level assumptions injected as function-entry preconditions.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct ModuleAssumptions {
+    pub arg_invariant_assumptions: Vec<FunctionArgInvariantAssumption>,
 }
 
 /// Errors produced by the encoder/classifier.
@@ -88,13 +102,39 @@ impl QbeSmtError {
     }
 }
 
+/// Encode a QBE module into SMT-LIB text, starting from one entry function.
+///
+/// This builds an interprocedural CHC model over the entry function and all
+/// reachable user-defined callees.
+pub fn qbe_module_to_smt(
+    module: &QbeModule,
+    entry: &str,
+    options: &EncodeOptions,
+) -> Result<String, QbeSmtError> {
+    qbe_module_to_smt_with_assumptions(module, entry, options, &ModuleAssumptions::default())
+}
+
+/// Encode a QBE module into SMT-LIB text, starting from one entry function,
+/// with explicit module-level assumptions.
+pub fn qbe_module_to_smt_with_assumptions(
+    module: &QbeModule,
+    entry: &str,
+    options: &EncodeOptions,
+    assumptions: &ModuleAssumptions,
+) -> Result<String, QbeSmtError> {
+    encode::encode_module(module, entry, options, assumptions)
+}
+
 /// Encode one QBE function body into SMT-LIB text.
 ///
-/// This encoder aims to support most integer-centric QBE IR used by Ousia:
-/// arithmetic/logic, comparisons, calls, loads/stores, alloc*, extensions,
-/// branches, and returns.
+/// This is a compatibility wrapper over module encoding.
 pub fn qbe_to_smt(function: &QbeFunction, options: &EncodeOptions) -> Result<String, QbeSmtError> {
-    encode::encode_function(function, options)
+    let module = QbeModule {
+        functions: vec![function.clone()],
+        types: vec![],
+        data: vec![],
+    };
+    qbe_module_to_smt(&module, &function.name, options)
 }
 
 /// Classify simple loops in a single QBE function body.
@@ -199,9 +239,12 @@ pub(crate) const GLOBAL_STRIDE: u64 = 0x1000;
 
 #[cfg(test)]
 mod tests {
-    use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Statement, Type, Value};
+    use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
 
-    use super::{classify_simple_loops, qbe_to_smt, EncodeOptions, LoopProofStatus};
+    use super::{
+        classify_simple_loops, qbe_module_to_smt, qbe_module_to_smt_with_assumptions, qbe_to_smt,
+        EncodeOptions, FunctionArgInvariantAssumption, LoopProofStatus, ModuleAssumptions,
+    };
 
     fn temp(name: &str) -> Value {
         Value::Temporary(name.to_string())
@@ -235,6 +278,38 @@ mod tests {
         }
     }
 
+    fn module_with(functions: Vec<Function>) -> Module {
+        Module {
+            functions,
+            types: vec![],
+            data: vec![],
+        }
+    }
+
+    fn encode_single_function(
+        function: &Function,
+        options: &EncodeOptions,
+    ) -> Result<String, super::QbeSmtError> {
+        qbe_module_to_smt(
+            &module_with(vec![function.clone()]),
+            &function.name,
+            options,
+        )
+    }
+
+    fn encode_single_function_with_assumptions(
+        function: &Function,
+        options: &EncodeOptions,
+        assumptions: &ModuleAssumptions,
+    ) -> Result<String, super::QbeSmtError> {
+        qbe_module_to_smt_with_assumptions(
+            &module_with(vec![function.clone()]),
+            &function.name,
+            options,
+            assumptions,
+        )
+    }
+
     #[test]
     fn emits_horn_script_with_bad_query() {
         let function = make_main(
@@ -248,7 +323,7 @@ mod tests {
             )],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -259,8 +334,9 @@ mod tests {
 
         assert!(smt.contains("(set-logic HORN)"));
         assert!(smt.contains("(set-option :fp.engine spacer)"));
-        assert!(smt.contains("(declare-rel pc_0"));
-        assert!(smt.contains("(declare-rel halt_state"));
+        assert!(smt.contains("(declare-rel f0_pc_0"));
+        assert!(smt.contains("(declare-rel f0_ret"));
+        assert!(smt.contains("(declare-rel f0_abort"));
         assert!(smt.contains("(declare-rel bad ())"));
         assert!(smt.contains("(query bad)"));
         assert!(smt.contains("(= exit (_ bv1 64))"));
@@ -292,7 +368,7 @@ mod tests {
             ],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -302,8 +378,12 @@ mod tests {
         .expect("encodes");
 
         assert!(smt.contains("(distinct (select regs (_ bv0 32)) (_ bv0 64))"));
-        assert!(smt.contains("(pc_1 regs_next mem_next heap_next exit_next pred_next)"));
-        assert!(smt.contains("(pc_2 regs_next mem_next heap_next exit_next pred_next)"));
+        assert!(smt.contains(
+            "(f0_pc_1 regs_next mem_next heap_next exit_next pred_next in_regs in_mem in_heap)"
+        ));
+        assert!(smt.contains(
+            "(f0_pc_2 regs_next mem_next heap_next exit_next pred_next in_regs in_mem in_heap)"
+        ));
     }
 
     #[test]
@@ -327,7 +407,7 @@ mod tests {
             ],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -336,8 +416,10 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(pc_2 regs mem heap exit pred)"));
-        assert!(smt.contains("(pc_1 regs_next mem_next heap_next exit_next pred_next)"));
+        assert!(smt.contains("(f0_pc_2 regs mem heap exit pred in_regs in_mem in_heap)"));
+        assert!(smt.contains(
+            "(f0_pc_1 regs_next mem_next heap_next exit_next pred_next in_regs in_mem in_heap)"
+        ));
     }
 
     #[test]
@@ -355,7 +437,7 @@ mod tests {
             )],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -379,7 +461,7 @@ mod tests {
             )],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: true,
@@ -401,7 +483,7 @@ mod tests {
             )],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -424,7 +506,7 @@ mod tests {
             )],
         );
 
-        let err = qbe_to_smt(
+        let err = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -449,7 +531,7 @@ mod tests {
             )],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -458,8 +540,8 @@ mod tests {
         )
         .expect("exit call should encode");
 
-        assert!(smt.contains("(= exit_next (_ bv242 64))"));
-        assert!(smt.contains("(halt_state regs_next mem_next heap_next exit_next pred_next)"));
+        assert!(smt.contains("(= code_call (_ bv242 64))"));
+        assert!(smt.contains("(f0_abort in_regs in_mem in_heap code_call mem_call heap_call)"));
     }
 
     #[test]
@@ -472,7 +554,7 @@ mod tests {
             )],
         );
 
-        let err = qbe_to_smt(
+        let err = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -510,7 +592,7 @@ mod tests {
             )],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -586,7 +668,7 @@ mod tests {
             )],
         );
 
-        qbe_to_smt(
+        encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -621,7 +703,7 @@ mod tests {
             )],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -669,7 +751,7 @@ mod tests {
             )],
         );
 
-        qbe_to_smt(
+        encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -696,7 +778,7 @@ mod tests {
             )],
         );
 
-        qbe_to_smt(
+        encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -723,7 +805,7 @@ mod tests {
             )],
         );
 
-        let err = qbe_to_smt(
+        let err = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -753,7 +835,7 @@ mod tests {
             )],
         );
 
-        let err = qbe_to_smt(
+        let err = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -762,6 +844,287 @@ mod tests {
         )
         .expect_err("unsupported call should fail");
         assert!(err.to_string().contains("unsupported call target $foo"));
+    }
+
+    #[test]
+    fn module_encoder_accepts_reachable_user_calls_without_inlining() {
+        let helper = Function {
+            linkage: Linkage::default(),
+            name: "helper".to_string(),
+            arguments: vec![(Type::Word, temp("x"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![block(
+                "entry",
+                vec![
+                    assign("y", Type::Word, Instr::Add(temp("x"), Value::Const(1))),
+                    volatile(Instr::Ret(Some(temp("y")))),
+                ],
+            )],
+        };
+
+        let main = make_main(
+            vec![(Type::Word, temp("a"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "r",
+                        Type::Word,
+                        Instr::Call("helper".to_string(), vec![(Type::Word, temp("a"))], None),
+                    ),
+                    volatile(Instr::Ret(Some(temp("r")))),
+                ],
+            )],
+        );
+
+        let module = module_with(vec![main.clone(), helper]);
+
+        let single_err = encode_single_function(
+            &main,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect_err("single-function encoder should reject unresolved user call target");
+        assert!(single_err
+            .to_string()
+            .contains("unsupported call target $helper"));
+
+        let smt = qbe_module_to_smt(
+            &module,
+            "main",
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("module encoder should accept user calls with summaries");
+        assert!(smt.contains("(declare-rel f0_ret"));
+        assert!(smt.contains("(declare-rel f1_ret"));
+        assert!(smt.contains("(query bad)"));
+    }
+
+    #[test]
+    fn module_encoder_accepts_self_recursive_user_calls() {
+        let main = make_main(
+            vec![(Type::Word, temp("a"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "r",
+                        Type::Word,
+                        Instr::Call("main".to_string(), vec![(Type::Word, temp("a"))], None),
+                    ),
+                    volatile(Instr::Ret(Some(temp("r")))),
+                ],
+            )],
+        );
+
+        let module = module_with(vec![main]);
+        let smt = qbe_module_to_smt(&module, "main", &EncodeOptions::default())
+            .expect("module encoder should accept self-recursive user calls");
+
+        assert!(smt.contains("(declare-rel f0_ret"));
+        assert!(smt.contains("(declare-rel f0_abort"));
+        assert!(smt.contains("(query bad)"));
+    }
+
+    #[test]
+    fn module_encoder_rejects_missing_entry_function() {
+        let helper = Function {
+            linkage: Linkage::default(),
+            name: "helper".to_string(),
+            arguments: vec![(Type::Word, temp("x"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        };
+        let module = module_with(vec![helper]);
+        let err = qbe_module_to_smt(
+            &module,
+            "main",
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect_err("missing module entry should fail closed");
+        assert!(err
+            .to_string()
+            .contains("entry function $main is missing from module"));
+    }
+
+    #[test]
+    fn encodes_arg_invariant_assumption_in_entry_rule() {
+        let invariant = Function {
+            linkage: Linkage::default(),
+            name: "__struct__Box__invariant".to_string(),
+            arguments: vec![(Type::Word, temp("v"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![block(
+                "entry",
+                vec![volatile(Instr::Ret(Some(Value::Const(1))))],
+            )],
+        };
+        let main = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        );
+        let module = module_with(vec![main, invariant]);
+        let assumptions = ModuleAssumptions {
+            arg_invariant_assumptions: vec![FunctionArgInvariantAssumption {
+                function_name: "main".to_string(),
+                arg_index: 0,
+                invariant_function_name: "__struct__Box__invariant".to_string(),
+            }],
+        };
+
+        let smt = qbe_module_to_smt_with_assumptions(
+            &module,
+            "main",
+            &EncodeOptions::default(),
+            &assumptions,
+        )
+        .expect("module with argument invariant assumptions should encode");
+
+        assert!(smt.contains("(declare-var regs_call_0"));
+        assert!(smt.contains("regs_call_0 mem heap ret_call_0 mem_call_0 heap_call_0"));
+        assert!(smt.contains("(distinct ret_call_0 (_ bv0 64))"));
+    }
+
+    #[test]
+    fn rejects_assumptions_for_missing_function() {
+        let function = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        );
+        let assumptions = ModuleAssumptions {
+            arg_invariant_assumptions: vec![FunctionArgInvariantAssumption {
+                function_name: "missing".to_string(),
+                arg_index: 0,
+                invariant_function_name: "main".to_string(),
+            }],
+        };
+        let err = encode_single_function_with_assumptions(
+            &function,
+            &EncodeOptions::default(),
+            &assumptions,
+        )
+        .expect_err("assumptions for missing functions must fail closed");
+        assert!(err
+            .to_string()
+            .contains("arg-invariant assumption target function $missing is missing from module"));
+    }
+
+    #[test]
+    fn rejects_assumptions_with_out_of_range_arg_index() {
+        let function = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        );
+        let assumptions = ModuleAssumptions {
+            arg_invariant_assumptions: vec![FunctionArgInvariantAssumption {
+                function_name: "main".to_string(),
+                arg_index: 1,
+                invariant_function_name: "main".to_string(),
+            }],
+        };
+        let err = encode_single_function_with_assumptions(
+            &function,
+            &EncodeOptions::default(),
+            &assumptions,
+        )
+        .expect_err("out-of-range assumption index must fail closed");
+        assert!(err
+            .to_string()
+            .contains("argument index 1 is out of range (arity=1)"));
+    }
+
+    #[test]
+    fn rejects_assumptions_with_non_unary_invariant_target() {
+        let invariant = Function {
+            linkage: Linkage::default(),
+            name: "invariant_bad_arity".to_string(),
+            arguments: vec![(Type::Word, temp("a")), (Type::Word, temp("b"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![block(
+                "entry",
+                vec![volatile(Instr::Ret(Some(Value::Const(1))))],
+            )],
+        };
+        let main = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        );
+        let module = module_with(vec![main, invariant]);
+        let assumptions = ModuleAssumptions {
+            arg_invariant_assumptions: vec![FunctionArgInvariantAssumption {
+                function_name: "main".to_string(),
+                arg_index: 0,
+                invariant_function_name: "invariant_bad_arity".to_string(),
+            }],
+        };
+
+        let err = qbe_module_to_smt_with_assumptions(
+            &module,
+            "main",
+            &EncodeOptions::default(),
+            &assumptions,
+        )
+        .expect_err("non-unary invariant assumptions must fail closed");
+        assert!(err.to_string().contains("must have arity 1, found 2"));
+    }
+
+    #[test]
+    fn assumptions_add_invariant_function_reachability() {
+        let invariant = Function {
+            linkage: Linkage::default(),
+            name: "__struct__Payload__invariant".to_string(),
+            arguments: vec![(Type::Word, temp("v"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![block(
+                "entry",
+                vec![volatile(Instr::Ret(Some(Value::Const(1))))],
+            )],
+        };
+        let helper = Function {
+            linkage: Linkage::default(),
+            name: "helper".to_string(),
+            arguments: vec![(Type::Word, temp("x"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        };
+        let main = make_main(
+            vec![(Type::Word, temp("a"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "r",
+                        Type::Word,
+                        Instr::Call("helper".to_string(), vec![(Type::Word, temp("a"))], None),
+                    ),
+                    volatile(Instr::Ret(Some(temp("r")))),
+                ],
+            )],
+        );
+        let assumptions = ModuleAssumptions {
+            arg_invariant_assumptions: vec![FunctionArgInvariantAssumption {
+                function_name: "helper".to_string(),
+                arg_index: 0,
+                invariant_function_name: "__struct__Payload__invariant".to_string(),
+            }],
+        };
+        let module = module_with(vec![main, helper, invariant]);
+
+        qbe_module_to_smt_with_assumptions(
+            &module,
+            "main",
+            &EncodeOptions::default(),
+            &assumptions,
+        )
+        .expect("assumptions should add invariant function to reachability closure");
     }
 
     #[test]
@@ -788,7 +1151,7 @@ mod tests {
             ],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -813,7 +1176,7 @@ mod tests {
             )],
         );
 
-        let err = qbe_to_smt(
+        let err = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -871,7 +1234,7 @@ mod tests {
             ],
         );
 
-        let smt = qbe_to_smt(
+        let smt = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,
@@ -906,7 +1269,7 @@ mod tests {
             )],
         );
 
-        let err = qbe_to_smt(
+        let err = encode_single_function(
             &function,
             &EncodeOptions {
                 assume_main_argc_non_negative: false,

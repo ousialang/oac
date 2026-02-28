@@ -124,11 +124,13 @@ Important enforced invariants include:
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`
 - optional struct invariants are declared as `invariant ... for (v: TypeName) { ... }` (optionally named with an identifier); the compiler synthesizes `__struct__<TypeName>__invariant` and also validates legacy explicit invariant functions using that naming/signature pattern
+- `invariant_metadata.rs` centralizes struct-invariant metadata discovery and argument-invariant assumption construction, reused by both `prove` and `struct_invariants` verification entrypoints.
+- `verification_cycles.rs` centralizes reachable user-call graph discovery plus SCC-based recursion-cycle policy checks reused by both `prove` and `struct_invariants`.
 - `prove(...)` sites reachable from `main` are verified by checker QBE synthesis: the site condition is marked in QBE, checker returns `1` when the proof condition is false at the site, and proving asks reachability of exit code `1` (`unsat` = proven, `sat` = compile failure)
 - reachable user-call return sites for struct-typed values are verified with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
-- checker generation is QBE-native: site instrumentation happens on compiled caller QBE, then reachable user calls are inlined into a single checker function before CHC encoding
-- recursion cycles on the reachable user-call graph are rejected fail-closed during struct invariant verification
-- recursion cycles on the reachable user-call graph are also rejected fail-closed when prove obligations exist
+- checker generation is QBE-native and interprocedural: site instrumentation happens on compiled caller QBE, checker artifacts include a checker entry plus reachable user callees, and CHC encoding models user calls through function-summary relations (no checker-time call inlining)
+- checker encoding adds argument preconditions for invariant-bearing parameter types in both pipelines: if a checker function argument’s semantic type has a struct invariant, encoding assumes the invariant relation returns non-zero at function entry (assumption-only; entry memory/heap state is not overwritten from invariant-call outputs)
+- call-only recursion cycles are allowed during struct invariant/prove verification; only cycles that include argument-invariant precondition edges are rejected fail-closed on the combined verification graph
 
 ## Backend (`qbe_backend.rs`)
 
@@ -152,10 +154,10 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `riscv-smt` subcommand.
 - `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
-- `qbe-smt` is used by prove verification and struct invariant verification to encode checker QBE functions into CHC/fixedpoint (Horn) constraints.
+- `qbe-smt` is used by prove verification and struct invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
-- `qbe-smt` is parser-free: it consumes in-memory `qbe::Function` directly. Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), and `crates/qbe-smt/src/classify.rs` (loop classification).
+- `qbe-smt` is parser-free: it consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`). Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), and `crates/qbe-smt/src/classify.rs` (loop classification).
 - `qbe-smt` models a broad integer + memory QBE subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - `phi` merging via predecessor-tracking state in CHC (`pred`)
@@ -171,7 +173,8 @@ Important enforced invariants include:
 - Floating-point SMT reasoning is intentionally unsupported today; FP32/FP64 values/compares in obligations are rejected fail-closed.
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
-- Struct-invariant SAT failures include a compact checker CFG witness (block path + branch directions).
+- Module-level argument assumptions are also available: `oac` now passes per-function invariant-bearing argument assumptions, and `qbe-smt` validates these references fail-closed (function exists/encoded, argument index in range, invariant target unary).
+- Struct-invariant SAT failures include a compact checker CFG witness (block path + branch directions); for `main(argc, argv)` obligations, `oac` also extracts a concrete `argc` witness via additional CHC range queries.
 - Loop classification is intentionally conservative: currently proves only a narrow canonical while-loop shape where the guard is initially true on entry and the body preserves the guard variable (`x' = x`), otherwise result is unknown and build proceeds.
 
 ## LSP Path

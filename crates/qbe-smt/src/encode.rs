@@ -1,54 +1,723 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use qbe::{
-    BlockItem, Cmp as QbeCmp, Function as QbeFunction, Instr as QbeInstr,
+    BlockItem, Cmp as QbeCmp, Function as QbeFunction, Instr as QbeInstr, Module as QbeModule,
     Statement as QbeStatement, Type as QbeType, Value as QbeValue,
 };
 
 use crate::{
-    EncodeOptions, QbeSmtError, BLIT_INLINE_LIMIT, GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
+    EncodeOptions, FunctionArgInvariantAssumption, ModuleAssumptions, QbeSmtError,
+    BLIT_INLINE_LIMIT, GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
 };
 
-pub(crate) fn encode_function(
-    function: &QbeFunction,
+pub(crate) fn encode_module(
+    module: &QbeModule,
+    entry: &str,
     options: &EncodeOptions,
+    assumptions: &ModuleAssumptions,
 ) -> Result<String, QbeSmtError> {
-    let args = collect_function_args(function)?;
+    let context = build_module_encoding_context(module, entry, assumptions)?;
 
-    let flattened = flatten_reachable_statements(function)?;
-    let flat = &flattened.statements;
-    let label_to_pc = &flattened.label_to_pc;
-    let label_to_block_id = &flattened.label_to_block_id;
-    let pc_to_block_id = &flattened.pc_to_block_id;
+    let mut smt = String::new();
+    smt.push_str("(set-logic HORN)\n");
+    smt.push_str("(set-option :fp.engine spacer)\n");
+    smt.push_str("(set-info :source |qbe-smt chc fixedpoint model|)\n\n");
 
-    if flat.is_empty() {
-        return Err(QbeSmtError::EmptyFunction);
+    for function_name in &context.function_order {
+        let function = context
+            .functions
+            .get(function_name)
+            .expect("function metadata exists");
+        for pc in 0..function.flattened.statements.len() {
+            smt.push_str(&format!(
+                "(declare-rel {} ({} {} {} {} {} {} {} {}))\n",
+                module_pc_relation_name(function.id, pc),
+                REG_STATE_SORT,
+                MEM_STATE_SORT,
+                BV64_SORT,
+                BV64_SORT,
+                BV32_SORT,
+                REG_STATE_SORT,
+                MEM_STATE_SORT,
+                BV64_SORT
+            ));
+        }
+        smt.push_str(&format!(
+            "(declare-rel {} ({} {} {} {} {} {}))\n",
+            module_ret_relation_name(function.id),
+            REG_STATE_SORT,
+            MEM_STATE_SORT,
+            BV64_SORT,
+            BV64_SORT,
+            MEM_STATE_SORT,
+            BV64_SORT
+        ));
+        smt.push_str(&format!(
+            "(declare-rel {} ({} {} {} {} {} {}))\n",
+            module_abort_relation_name(function.id),
+            REG_STATE_SORT,
+            MEM_STATE_SORT,
+            BV64_SORT,
+            BV64_SORT,
+            MEM_STATE_SORT,
+            BV64_SORT
+        ));
+    }
+    smt.push_str("(declare-rel bad ())\n\n");
+
+    smt.push_str(&format!("(declare-var regs {})\n", REG_STATE_SORT));
+    smt.push_str(&format!("(declare-var mem {})\n", MEM_STATE_SORT));
+    smt.push_str(&format!("(declare-var heap {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var exit {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var pred {})\n", BV32_SORT));
+    smt.push_str(&format!("(declare-var regs_next {})\n", REG_STATE_SORT));
+    smt.push_str(&format!("(declare-var mem_next {})\n", MEM_STATE_SORT));
+    smt.push_str(&format!("(declare-var heap_next {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var exit_next {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var pred_next {})\n", BV32_SORT));
+    smt.push_str(&format!("(declare-var in_regs {})\n", REG_STATE_SORT));
+    smt.push_str(&format!("(declare-var in_mem {})\n", MEM_STATE_SORT));
+    smt.push_str(&format!("(declare-var in_heap {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var regs_call {})\n", REG_STATE_SORT));
+    smt.push_str(&format!("(declare-var mem_call {})\n", MEM_STATE_SORT));
+    smt.push_str(&format!("(declare-var heap_call {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var ret_call {})\n", BV64_SORT));
+    smt.push_str(&format!("(declare-var code_call {})\n", BV64_SORT));
+    for assumption_index in 0..context.max_arg_invariant_assumptions {
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            assumption_regs_var(assumption_index),
+            REG_STATE_SORT
+        ));
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            assumption_mem_var(assumption_index),
+            MEM_STATE_SORT
+        ));
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            assumption_heap_var(assumption_index),
+            BV64_SORT
+        ));
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            assumption_ret_var(assumption_index),
+            BV64_SORT
+        ));
+    }
+    smt.push('\n');
+
+    for function_name in &context.function_order {
+        let function = context
+            .functions
+            .get(function_name)
+            .expect("function metadata exists");
+        let flat = &function.flattened.statements;
+        let label_to_pc = &function.flattened.label_to_pc;
+        let label_to_block_id = &function.flattened.label_to_block_id;
+        let pc_to_block_id = &function.flattened.pc_to_block_id;
+
+        let mut init_terms = vec![
+            format!("(= exit {})", bv_const_u64(0, 64)),
+            format!("(= pred {})", bv_const_u64(u32::MAX as u64, 32)),
+            "(= in_regs regs)".to_string(),
+            "(= in_mem mem)".to_string(),
+            "(= in_heap heap)".to_string(),
+        ];
+
+        let arg_names: BTreeSet<&str> = function.args.iter().map(|arg| arg.name.as_str()).collect();
+        for reg_name in &function.reg_list {
+            if !arg_names.contains(reg_name.as_str()) {
+                let slot = *function
+                    .reg_slots
+                    .get(reg_name)
+                    .expect("function reg slot exists");
+                init_terms.push(format!(
+                    "(= (select regs {}) {})",
+                    reg_slot_const(slot),
+                    bv_const_u64(0, 64)
+                ));
+            }
+        }
+
+        let function_assumptions = context
+            .arg_invariant_assumptions
+            .get(function_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        for (assumption_index, assumption) in function_assumptions.iter().enumerate() {
+            let invariant_function = context
+                .functions
+                .get(&assumption.invariant_function_name)
+                .expect("validated invariant function exists");
+            let source_arg = function
+                .args
+                .get(assumption.arg_index)
+                .expect("validated function arg index exists");
+            let source_slot = *function
+                .reg_slots
+                .get(&source_arg.name)
+                .expect("validated source argument register slot exists");
+            let source_value_expr = format!("(select regs {})", reg_slot_const(source_slot));
+            let call_regs_expr =
+                build_unary_callee_input_regs_expr(invariant_function, &source_value_expr)?;
+            let regs_var = assumption_regs_var(assumption_index);
+            let mem_var = assumption_mem_var(assumption_index);
+            let heap_var = assumption_heap_var(assumption_index);
+            let ret_var = assumption_ret_var(assumption_index);
+
+            init_terms.push(format!("(= {regs_var} {call_regs_expr})"));
+            init_terms.push(module_ret_relation_app(
+                &module_ret_relation_name(invariant_function.id),
+                &regs_var,
+                "mem",
+                "heap",
+                &ret_var,
+                &mem_var,
+                &heap_var,
+            ));
+            init_terms.push(format!("(distinct {ret_var} {})", bv_const_u64(0, 64)));
+        }
+
+        if function.name == context.entry {
+            init_terms.push(format!("(= heap {})", bv_const_u64(INITIAL_HEAP_BASE, 64)));
+            if options.assume_main_argc_non_negative {
+                if let Some(first_arg) = function.args.first() {
+                    let slot = *function
+                        .reg_slots
+                        .get(&first_arg.name)
+                        .expect("entry first arg register exists");
+                    init_terms.push(format!(
+                        "(bvsge (select regs {}) {})",
+                        reg_slot_const(slot),
+                        bv_const_u64(0, 64)
+                    ));
+                }
+            }
+
+            if let Some((lower, upper)) = options.first_arg_i32_range {
+                if let Some(first_arg) = function.args.first() {
+                    let slot = *function
+                        .reg_slots
+                        .get(&first_arg.name)
+                        .expect("entry first arg register exists");
+                    let lower_bits = lower as i64 as u64;
+                    let upper_bits = upper as i64 as u64;
+                    init_terms.push(format!(
+                        "(bvsge (select regs {}) {})",
+                        reg_slot_const(slot),
+                        bv_const_u64(lower_bits, 64)
+                    ));
+                    init_terms.push(format!(
+                        "(bvsle (select regs {}) {})",
+                        reg_slot_const(slot),
+                        bv_const_u64(upper_bits, 64)
+                    ));
+                }
+            }
+        }
+
+        smt.push_str(&format!(
+            "(rule (=> {} {}))\n\n",
+            and_terms(init_terms),
+            module_pc_relation_app(
+                &module_pc_relation_name(function.id, 0),
+                "regs",
+                "mem",
+                "heap",
+                "exit",
+                "pred",
+                "in_regs",
+                "in_mem",
+                "in_heap",
+            )
+        ));
+
+        for (pc, statement) in flat.iter().enumerate() {
+            let from_rel = module_pc_relation_name(function.id, pc);
+            let phi_guard = phi_guard_expr(statement, "pred", label_to_block_id);
+
+            if let Some(user_call) = classify_user_call(statement, &context.functions) {
+                let callee = context
+                    .functions
+                    .get(user_call.callee())
+                    .expect("validated user callee exists");
+                let call_regs_expr = build_callee_input_regs_expr(
+                    callee,
+                    user_call.args(),
+                    "regs",
+                    &function.reg_slots,
+                    &context.global_map,
+                )?;
+                let ret_relation = module_ret_relation_name(callee.id);
+                let abort_relation = module_abort_relation_name(callee.id);
+
+                let mut return_terms = vec![format!("(= regs_call {call_regs_expr})")];
+                return_terms.push(module_ret_relation_app(
+                    &ret_relation,
+                    "regs_call",
+                    "mem",
+                    "heap",
+                    "ret_call",
+                    "mem_call",
+                    "heap_call",
+                ));
+
+                let regs_after_call =
+                    regs_after_user_call(statement, "regs", &function.reg_slots, "ret_call")?;
+                let call_transition = TransitionExprs {
+                    regs_next: regs_after_call,
+                    mem_next: "mem_call".to_string(),
+                    heap_next: "heap_call".to_string(),
+                    exit_next: "exit".to_string(),
+                };
+
+                if pc + 1 < flat.len() {
+                    emit_module_transition_rule(
+                        &mut smt,
+                        &from_rel,
+                        &module_pc_relation_name(function.id, pc + 1),
+                        phi_guard.clone(),
+                        return_terms,
+                        &call_transition,
+                        &pred_update_expr("pred", pc, pc + 1, pc_to_block_id),
+                    );
+                } else {
+                    emit_module_return_rule(
+                        &mut smt,
+                        &from_rel,
+                        &module_ret_relation_name(function.id),
+                        phi_guard.clone(),
+                        return_terms,
+                        &call_transition.exit_next,
+                        &call_transition.mem_next,
+                        &call_transition.heap_next,
+                    );
+                }
+
+                let mut abort_terms = vec![format!("(= regs_call {call_regs_expr})")];
+                abort_terms.push(module_abort_relation_app(
+                    &abort_relation,
+                    "regs_call",
+                    "mem",
+                    "heap",
+                    "code_call",
+                    "mem_call",
+                    "heap_call",
+                ));
+                emit_module_abort_rule(
+                    &mut smt,
+                    &from_rel,
+                    &module_abort_relation_name(function.id),
+                    phi_guard,
+                    abort_terms,
+                    "code_call",
+                    "mem_call",
+                    "heap_call",
+                );
+                continue;
+            }
+
+            let transition = TransitionExprs {
+                regs_next: regs_update_expr(
+                    statement,
+                    "regs",
+                    "mem",
+                    "heap",
+                    "pred",
+                    &function.reg_slots,
+                    &context.global_map,
+                    label_to_block_id,
+                ),
+                mem_next: memory_update_expr(
+                    statement,
+                    "mem",
+                    "regs",
+                    &function.reg_slots,
+                    &context.global_map,
+                ),
+                heap_next: heap_update_expr(
+                    statement,
+                    "heap",
+                    "regs",
+                    &function.reg_slots,
+                    &context.global_map,
+                ),
+                exit_next: exit_update_expr(
+                    statement,
+                    "exit",
+                    "regs",
+                    &function.reg_slots,
+                    &context.global_map,
+                ),
+            };
+
+            match statement {
+                QbeStatement::Volatile(QbeInstr::Jmp(target)) => {
+                    let target_pc =
+                        *label_to_pc
+                            .get(target)
+                            .ok_or_else(|| QbeSmtError::UnknownLabel {
+                                label: target.clone(),
+                            })?;
+                    emit_module_transition_rule(
+                        &mut smt,
+                        &from_rel,
+                        &module_pc_relation_name(function.id, target_pc),
+                        phi_guard,
+                        Vec::new(),
+                        &transition,
+                        &pred_from_block(pc, pc_to_block_id),
+                    );
+                }
+                QbeStatement::Volatile(QbeInstr::Jnz(cond, if_true, if_false)) => {
+                    let true_pc =
+                        *label_to_pc
+                            .get(if_true)
+                            .ok_or_else(|| QbeSmtError::UnknownLabel {
+                                label: if_true.clone(),
+                            })?;
+                    let false_pc =
+                        *label_to_pc
+                            .get(if_false)
+                            .ok_or_else(|| QbeSmtError::UnknownLabel {
+                                label: if_false.clone(),
+                            })?;
+
+                    let cond_expr =
+                        value_to_smt(cond, "regs", &function.reg_slots, &context.global_map);
+                    emit_module_transition_rule(
+                        &mut smt,
+                        &from_rel,
+                        &module_pc_relation_name(function.id, true_pc),
+                        and_optional_guards(
+                            phi_guard.clone(),
+                            Some(format!("(distinct {} {})", cond_expr, bv_const_u64(0, 64))),
+                        ),
+                        Vec::new(),
+                        &transition,
+                        &pred_from_block(pc, pc_to_block_id),
+                    );
+                    emit_module_transition_rule(
+                        &mut smt,
+                        &from_rel,
+                        &module_pc_relation_name(function.id, false_pc),
+                        and_optional_guards(
+                            phi_guard,
+                            Some(format!("(= {} {})", cond_expr, bv_const_u64(0, 64))),
+                        ),
+                        Vec::new(),
+                        &transition,
+                        &pred_from_block(pc, pc_to_block_id),
+                    );
+                }
+                QbeStatement::Volatile(QbeInstr::Ret(_))
+                | QbeStatement::Volatile(QbeInstr::Hlt) => {
+                    emit_module_return_rule(
+                        &mut smt,
+                        &from_rel,
+                        &module_ret_relation_name(function.id),
+                        phi_guard,
+                        Vec::new(),
+                        &transition.exit_next,
+                        &transition.mem_next,
+                        &transition.heap_next,
+                    );
+                }
+                QbeStatement::Assign(_, _, QbeInstr::Call(function_name, _, _))
+                | QbeStatement::Volatile(QbeInstr::Call(function_name, _, _))
+                    if call_is_exit(function_name) =>
+                {
+                    emit_module_abort_rule(
+                        &mut smt,
+                        &from_rel,
+                        &module_abort_relation_name(function.id),
+                        phi_guard,
+                        Vec::new(),
+                        &transition.exit_next,
+                        &transition.mem_next,
+                        &transition.heap_next,
+                    );
+                }
+                _ => {
+                    if pc + 1 < flat.len() {
+                        emit_module_transition_rule(
+                            &mut smt,
+                            &from_rel,
+                            &module_pc_relation_name(function.id, pc + 1),
+                            phi_guard,
+                            Vec::new(),
+                            &transition,
+                            &pred_update_expr("pred", pc, pc + 1, pc_to_block_id),
+                        );
+                    } else {
+                        emit_module_return_rule(
+                            &mut smt,
+                            &from_rel,
+                            &module_ret_relation_name(function.id),
+                            phi_guard,
+                            Vec::new(),
+                            &transition.exit_next,
+                            &transition.mem_next,
+                            &transition.heap_next,
+                        );
+                    }
+                }
+            }
+        }
     }
 
-    for (pc, statement) in flat.iter().enumerate() {
-        validate_statement_supported(statement, pc, label_to_block_id)?;
+    let entry_function = context
+        .functions
+        .get(&context.entry)
+        .expect("entry metadata exists");
+
+    smt.push('\n');
+    smt.push_str(&format!(
+        "(rule (=> (and {} (= exit {})) bad))\n",
+        module_ret_relation_app(
+            &module_ret_relation_name(entry_function.id),
+            "regs",
+            "mem",
+            "heap",
+            "exit",
+            "mem_next",
+            "heap_next",
+        ),
+        bv_const_u64(1, 64),
+    ));
+    smt.push_str(&format!(
+        "(rule (=> (and {} (= exit {})) bad))\n",
+        module_abort_relation_app(
+            &module_abort_relation_name(entry_function.id),
+            "regs",
+            "mem",
+            "heap",
+            "exit",
+            "mem_next",
+            "heap_next",
+        ),
+        bv_const_u64(1, 64),
+    ));
+    smt.push_str("(query bad)\n");
+
+    Ok(smt)
+}
+
+struct EncodedFunction {
+    id: usize,
+    name: String,
+    args: Vec<FunctionArg>,
+    flattened: FlattenedFunction,
+    reg_list: Vec<String>,
+    reg_slots: HashMap<String, u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct ValidatedArgInvariantAssumption {
+    function_name: String,
+    arg_index: usize,
+    invariant_function_name: String,
+}
+
+struct ModuleEncodingContext {
+    entry: String,
+    function_order: Vec<String>,
+    functions: HashMap<String, EncodedFunction>,
+    global_map: HashMap<String, u64>,
+    arg_invariant_assumptions: HashMap<String, Vec<ValidatedArgInvariantAssumption>>,
+    max_arg_invariant_assumptions: usize,
+}
+
+fn build_module_encoding_context(
+    module: &QbeModule,
+    entry: &str,
+    assumptions: &ModuleAssumptions,
+) -> Result<ModuleEncodingContext, QbeSmtError> {
+    let mut function_map = HashMap::<String, QbeFunction>::new();
+    for function in &module.functions {
+        if function_map
+            .insert(function.name.clone(), function.clone())
+            .is_some()
+        {
+            return Err(QbeSmtError::Unsupported {
+                message: format!("duplicate function definition ${}", function.name),
+            });
+        }
     }
 
-    let mut regs = BTreeSet::<String>::new();
-    for arg in &args {
-        regs.insert(arg.name.clone());
-    }
-    for statement in flat {
-        collect_regs_statement(statement, &mut regs);
+    if !function_map.contains_key(entry) {
+        return Err(QbeSmtError::Unsupported {
+            message: format!("entry function ${entry} is missing from module"),
+        });
     }
 
-    let reg_list: Vec<String> = regs.into_iter().collect();
-    let mut reg_slots = HashMap::<String, u32>::new();
-    for (i, name) in reg_list.iter().enumerate() {
-        reg_slots.insert(name.clone(), i as u32);
+    let mut all_typed_args = HashMap::<String, Vec<FunctionArg>>::new();
+    for (name, function) in &function_map {
+        all_typed_args.insert(name.clone(), collect_function_args(function)?);
     }
 
+    let mut assumption_records = assumptions.arg_invariant_assumptions.clone();
+    assumption_records.sort_by(|lhs, rhs| {
+        lhs.function_name
+            .cmp(&rhs.function_name)
+            .then(lhs.arg_index.cmp(&rhs.arg_index))
+            .then(
+                lhs.invariant_function_name
+                    .cmp(&rhs.invariant_function_name),
+            )
+    });
+
+    let mut seen_assumptions = BTreeSet::<(String, usize, String)>::new();
+    let mut assumptions_by_function =
+        HashMap::<String, Vec<ValidatedArgInvariantAssumption>>::new();
+    for assumption in assumption_records {
+        let key = (
+            assumption.function_name.clone(),
+            assumption.arg_index,
+            assumption.invariant_function_name.clone(),
+        );
+        if !seen_assumptions.insert(key) {
+            continue;
+        }
+        validate_arg_invariant_assumption(&assumption, &all_typed_args)?;
+        assumptions_by_function
+            .entry(assumption.function_name.clone())
+            .or_default()
+            .push(ValidatedArgInvariantAssumption {
+                function_name: assumption.function_name,
+                arg_index: assumption.arg_index,
+                invariant_function_name: assumption.invariant_function_name,
+            });
+    }
+    for function_assumptions in assumptions_by_function.values_mut() {
+        function_assumptions.sort_by(|lhs, rhs| {
+            lhs.arg_index.cmp(&rhs.arg_index).then(
+                lhs.invariant_function_name
+                    .cmp(&rhs.invariant_function_name),
+            )
+        });
+    }
+
+    let mut reachable = HashSet::<String>::new();
+    let mut worklist = VecDeque::<String>::from([entry.to_string()]);
+    while let Some(function_name) = worklist.pop_front() {
+        if !reachable.insert(function_name.clone()) {
+            continue;
+        }
+        let function = function_map
+            .get(&function_name)
+            .expect("worklist function must exist");
+        let callees = collect_reachable_user_callees(function, &function_map)?;
+        for callee in callees {
+            if !reachable.contains(&callee) {
+                worklist.push_back(callee);
+            }
+        }
+        if let Some(function_assumptions) = assumptions_by_function.get(&function_name) {
+            for assumption in function_assumptions {
+                if !reachable.contains(&assumption.invariant_function_name) {
+                    worklist.push_back(assumption.invariant_function_name.clone());
+                }
+            }
+        }
+    }
+
+    let mut function_order = reachable.into_iter().collect::<Vec<_>>();
+    function_order.sort();
+
+    let encoded_functions = function_order.iter().cloned().collect::<HashSet<_>>();
+    for (function_name, function_assumptions) in &assumptions_by_function {
+        if !encoded_functions.contains(function_name) {
+            return Err(QbeSmtError::Unsupported {
+                message: format!(
+                    "arg-invariant assumption target function ${function_name} is not encoded from entry ${entry}"
+                ),
+            });
+        }
+        for assumption in function_assumptions {
+            if !encoded_functions.contains(&assumption.invariant_function_name) {
+                return Err(QbeSmtError::Unsupported {
+                    message: format!(
+                        "arg-invariant assumption target invariant function ${} is not encoded from entry ${entry}",
+                        assumption.invariant_function_name
+                    ),
+                });
+            }
+        }
+    }
+
+    let mut user_arity = HashMap::<String, usize>::new();
+    let mut typed_args = HashMap::<String, Vec<FunctionArg>>::new();
+    for function_name in &function_order {
+        let args = all_typed_args
+            .get(function_name)
+            .expect("reachable typed args exist")
+            .clone();
+        user_arity.insert(function_name.clone(), args.len());
+        typed_args.insert(function_name.clone(), args);
+    }
+
+    let mut functions = HashMap::new();
     let mut globals = BTreeSet::<String>::new();
-    for statement in flat {
-        collect_globals_statement(statement, &mut globals);
-    }
-    for arg in &args {
-        globals.remove(&arg.name);
+    for (function_id, function_name) in function_order.iter().enumerate() {
+        let function = function_map
+            .get(function_name)
+            .expect("reachable function exists");
+        let args = typed_args
+            .get(function_name)
+            .expect("typed args are populated")
+            .clone();
+        let flattened = flatten_reachable_statements(function)?;
+        if flattened.statements.is_empty() {
+            return Err(QbeSmtError::EmptyFunction);
+        }
+
+        for (pc, statement) in flattened.statements.iter().enumerate() {
+            validate_statement_supported(
+                statement,
+                pc,
+                &flattened.label_to_block_id,
+                Some(&user_arity),
+            )?;
+        }
+
+        let mut regs = BTreeSet::<String>::new();
+        for arg in &args {
+            regs.insert(arg.name.clone());
+        }
+        for statement in &flattened.statements {
+            collect_regs_statement(statement, &mut regs);
+        }
+
+        let reg_list: Vec<String> = regs.into_iter().collect();
+        let mut reg_slots = HashMap::<String, u32>::new();
+        for (slot, name) in reg_list.iter().enumerate() {
+            reg_slots.insert(name.clone(), slot as u32);
+        }
+
+        let arg_names = args
+            .iter()
+            .map(|arg| arg.name.clone())
+            .collect::<HashSet<_>>();
+        for statement in &flattened.statements {
+            collect_globals_statement(statement, &mut globals);
+        }
+        for arg_name in arg_names {
+            globals.remove(&arg_name);
+        }
+
+        functions.insert(
+            function_name.clone(),
+            EncodedFunction {
+                id: function_id,
+                name: function_name.clone(),
+                args,
+                flattened,
+                reg_list,
+                reg_slots,
+            },
+        );
     }
 
     let global_map = globals
@@ -62,229 +731,272 @@ pub(crate) fn encode_function(
         })
         .collect::<HashMap<_, _>>();
 
-    let halt_relation = "halt_state";
-
-    let mut smt = String::new();
-    smt.push_str("(set-logic HORN)\n");
-    smt.push_str("(set-option :fp.engine spacer)\n");
-    smt.push_str("(set-info :source |qbe-smt chc fixedpoint model|)\n\n");
-
-    for pc in 0..flat.len() {
-        smt.push_str(&format!(
-            "(declare-rel {} ({} {} {} {} {}))\n",
-            pc_relation_name(pc),
-            REG_STATE_SORT,
-            MEM_STATE_SORT,
-            BV64_SORT,
-            BV64_SORT,
-            BV32_SORT
-        ));
-    }
-    smt.push_str(&format!(
-        "(declare-rel {halt_relation} ({} {} {} {} {}))\n",
-        REG_STATE_SORT, MEM_STATE_SORT, BV64_SORT, BV64_SORT, BV32_SORT
-    ));
-    smt.push_str("(declare-rel bad ())\n\n");
-
-    smt.push_str(&format!("(declare-var regs {})\n", REG_STATE_SORT));
-    smt.push_str(&format!("(declare-var mem {})\n", MEM_STATE_SORT));
-    smt.push_str(&format!("(declare-var heap {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var exit {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var pred {})\n", BV32_SORT));
-    smt.push_str(&format!("(declare-var regs_next {})\n", REG_STATE_SORT));
-    smt.push_str(&format!("(declare-var mem_next {})\n", MEM_STATE_SORT));
-    smt.push_str(&format!("(declare-var heap_next {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var exit_next {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var pred_next {})\n", BV32_SORT));
-    smt.push('\n');
-
-    let arg_names: BTreeSet<&str> = args.iter().map(|arg| arg.name.as_str()).collect();
-    let mut init_terms = vec![
-        format!("(= exit {})", bv_const_u64(0, 64)),
-        format!("(= heap {})", bv_const_u64(INITIAL_HEAP_BASE, 64)),
-        format!("(= pred {})", bv_const_u64(u32::MAX as u64, 32)),
-    ];
-    for reg_name in &reg_list {
-        if !arg_names.contains(reg_name.as_str()) {
-            let slot = *reg_slots.get(reg_name).expect("reg slot is present");
-            init_terms.push(format!(
-                "(= (select regs {}) {})",
-                reg_slot_const(slot),
-                bv_const_u64(0, 64)
-            ));
+    let mut encoded_arg_invariant_assumptions =
+        HashMap::<String, Vec<ValidatedArgInvariantAssumption>>::new();
+    let mut max_arg_invariant_assumptions = 0usize;
+    for function_name in &function_order {
+        let function_assumptions = assumptions_by_function
+            .get(function_name)
+            .cloned()
+            .unwrap_or_default();
+        if function_assumptions.len() > max_arg_invariant_assumptions {
+            max_arg_invariant_assumptions = function_assumptions.len();
+        }
+        if !function_assumptions.is_empty() {
+            encoded_arg_invariant_assumptions.insert(function_name.clone(), function_assumptions);
         }
     }
 
-    if options.assume_main_argc_non_negative {
-        if let Some(first_arg) = args.first() {
-            let slot = *reg_slots
-                .get(&first_arg.name)
-                .expect("first arg register exists");
-            init_terms.push(format!(
-                "(bvsge (select regs {}) {})",
-                reg_slot_const(slot),
-                bv_const_u64(0, 64)
-            ));
-        }
-    }
+    Ok(ModuleEncodingContext {
+        entry: entry.to_string(),
+        function_order,
+        functions,
+        global_map,
+        arg_invariant_assumptions: encoded_arg_invariant_assumptions,
+        max_arg_invariant_assumptions,
+    })
+}
 
-    if let Some((lower, upper)) = options.first_arg_i32_range {
-        if let Some(first_arg) = args.first() {
-            let slot = *reg_slots
-                .get(&first_arg.name)
-                .expect("first arg register exists");
-            let lower_bits = lower as i64 as u64;
-            let upper_bits = upper as i64 as u64;
-            init_terms.push(format!(
-                "(bvsge (select regs {}) {})",
-                reg_slot_const(slot),
-                bv_const_u64(lower_bits, 64)
-            ));
-            init_terms.push(format!(
-                "(bvsle (select regs {}) {})",
-                reg_slot_const(slot),
-                bv_const_u64(upper_bits, 64)
-            ));
-        }
-    }
-
-    smt.push_str(&format!(
-        "(rule (=> {} {}))\n\n",
-        and_terms(init_terms),
-        relation_app(&pc_relation_name(0), "regs", "mem", "heap", "exit", "pred")
-    ));
-
-    for (pc, statement) in flat.iter().enumerate() {
-        let from_rel = pc_relation_name(pc);
-        let phi_guard = phi_guard_expr(statement, "pred", label_to_block_id);
-
-        let transition = TransitionExprs {
-            regs_next: regs_update_expr(
-                statement,
-                "regs",
-                "mem",
-                "heap",
-                "pred",
-                &reg_slots,
-                &global_map,
-                label_to_block_id,
+fn validate_arg_invariant_assumption(
+    assumption: &FunctionArgInvariantAssumption,
+    all_typed_args: &HashMap<String, Vec<FunctionArg>>,
+) -> Result<(), QbeSmtError> {
+    let Some(function_args) = all_typed_args.get(&assumption.function_name) else {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-invariant assumption target function ${} is missing from module",
+                assumption.function_name
             ),
-            mem_next: memory_update_expr(statement, "mem", "regs", &reg_slots, &global_map),
-            heap_next: heap_update_expr(statement, "heap", "regs", &reg_slots, &global_map),
-            exit_next: exit_update_expr(statement, "exit", "regs", &reg_slots, &global_map),
-        };
+        });
+    };
 
-        match statement {
-            QbeStatement::Volatile(QbeInstr::Jmp(target)) => {
-                let target_pc =
-                    *label_to_pc
-                        .get(target)
-                        .ok_or_else(|| QbeSmtError::UnknownLabel {
-                            label: target.clone(),
-                        })?;
-                emit_transition_rule(
-                    &mut smt,
-                    &from_rel,
-                    &pc_relation_name(target_pc),
-                    phi_guard.clone(),
-                    &transition,
-                    &pred_from_block(pc, pc_to_block_id),
-                );
-            }
-            QbeStatement::Volatile(QbeInstr::Jnz(cond, if_true, if_false)) => {
-                let true_pc =
-                    *label_to_pc
-                        .get(if_true)
-                        .ok_or_else(|| QbeSmtError::UnknownLabel {
-                            label: if_true.clone(),
-                        })?;
-                let false_pc =
-                    *label_to_pc
-                        .get(if_false)
-                        .ok_or_else(|| QbeSmtError::UnknownLabel {
-                            label: if_false.clone(),
-                        })?;
+    if assumption.arg_index >= function_args.len() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-invariant assumption target ${} argument index {} is out of range (arity={})",
+                assumption.function_name,
+                assumption.arg_index,
+                function_args.len()
+            ),
+        });
+    }
 
-                let cond_expr = value_to_smt(cond, "regs", &reg_slots, &global_map);
-                emit_transition_rule(
-                    &mut smt,
-                    &from_rel,
-                    &pc_relation_name(true_pc),
-                    and_optional_guards(
-                        phi_guard.clone(),
-                        Some(format!("(distinct {} {})", cond_expr, bv_const_u64(0, 64))),
-                    ),
-                    &transition,
-                    &pred_from_block(pc, pc_to_block_id),
-                );
-                emit_transition_rule(
-                    &mut smt,
-                    &from_rel,
-                    &pc_relation_name(false_pc),
-                    and_optional_guards(
-                        phi_guard.clone(),
-                        Some(format!("(= {} {})", cond_expr, bv_const_u64(0, 64))),
-                    ),
-                    &transition,
-                    &pred_from_block(pc, pc_to_block_id),
-                );
-            }
-            QbeStatement::Volatile(QbeInstr::Ret(_)) | QbeStatement::Volatile(QbeInstr::Hlt) => {
-                emit_transition_rule(
-                    &mut smt,
-                    &from_rel,
-                    halt_relation,
-                    phi_guard,
-                    &transition,
-                    "pred",
-                );
-            }
-            QbeStatement::Assign(_, _, QbeInstr::Call(function, _, _))
-            | QbeStatement::Volatile(QbeInstr::Call(function, _, _))
-                if call_is_exit(function) =>
-            {
-                emit_transition_rule(
-                    &mut smt,
-                    &from_rel,
-                    halt_relation,
-                    phi_guard,
-                    &transition,
-                    "pred",
-                );
-            }
-            _ => {
-                if pc + 1 < flat.len() {
-                    emit_transition_rule(
-                        &mut smt,
-                        &from_rel,
-                        &pc_relation_name(pc + 1),
-                        phi_guard,
-                        &transition,
-                        &pred_update_expr("pred", pc, pc + 1, pc_to_block_id),
-                    );
-                } else {
-                    emit_transition_rule(
-                        &mut smt,
-                        &from_rel,
-                        halt_relation,
-                        phi_guard,
-                        &transition,
-                        "pred",
-                    );
+    let Some(invariant_args) = all_typed_args.get(&assumption.invariant_function_name) else {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-invariant assumption invariant function ${} is missing from module",
+                assumption.invariant_function_name
+            ),
+        });
+    };
+
+    if invariant_args.len() != 1 {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-invariant assumption invariant function ${} must have arity 1, found {}",
+                assumption.invariant_function_name,
+                invariant_args.len()
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn collect_reachable_user_callees(
+    function: &QbeFunction,
+    function_map: &HashMap<String, QbeFunction>,
+) -> Result<BTreeSet<String>, QbeSmtError> {
+    let mut out = BTreeSet::new();
+    let reachable = reachable_block_indices(function)?;
+    for block_idx in reachable {
+        let block = &function.blocks[block_idx];
+        for item in &block.items {
+            let BlockItem::Statement(statement) = item else {
+                continue;
+            };
+            let call_name = match statement {
+                QbeStatement::Assign(_, _, QbeInstr::Call(name, _, _))
+                | QbeStatement::Volatile(QbeInstr::Call(name, _, _)) => Some(name),
+                _ => None,
+            };
+            if let Some(name) = call_name {
+                if function_map.contains_key(name) {
+                    out.insert(name.clone());
                 }
             }
         }
     }
+    Ok(out)
+}
 
-    smt.push('\n');
-    smt.push_str(&format!(
-        "(rule (=> (and {} (= exit {})) bad))\n",
-        relation_app(halt_relation, "regs", "mem", "heap", "exit", "pred"),
-        bv_const_u64(1, 64)
-    ));
-    smt.push_str("(query bad)\n");
+enum UserCallSite<'a> {
+    Assign {
+        callee: &'a str,
+        args: &'a [(QbeType, QbeValue)],
+    },
+    Volatile {
+        callee: &'a str,
+        args: &'a [(QbeType, QbeValue)],
+    },
+}
 
-    Ok(smt)
+impl<'a> UserCallSite<'a> {
+    fn callee(&self) -> &'a str {
+        match self {
+            UserCallSite::Assign { callee, .. } | UserCallSite::Volatile { callee, .. } => callee,
+        }
+    }
+
+    fn args(&self) -> &'a [(QbeType, QbeValue)] {
+        match self {
+            UserCallSite::Assign { args, .. } | UserCallSite::Volatile { args, .. } => args,
+        }
+    }
+}
+
+fn classify_user_call<'a>(
+    statement: &'a QbeStatement,
+    user_functions: &HashMap<String, EncodedFunction>,
+) -> Option<UserCallSite<'a>> {
+    match statement {
+        QbeStatement::Assign(_, _, QbeInstr::Call(callee, args, _))
+            if user_functions.contains_key(callee) =>
+        {
+            Some(UserCallSite::Assign {
+                callee: callee.as_str(),
+                args,
+            })
+        }
+        QbeStatement::Volatile(QbeInstr::Call(callee, args, _))
+            if user_functions.contains_key(callee) =>
+        {
+            Some(UserCallSite::Volatile {
+                callee: callee.as_str(),
+                args,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn regs_after_user_call(
+    statement: &QbeStatement,
+    regs_curr: &str,
+    reg_slots: &HashMap<String, u32>,
+    ret_expr: &str,
+) -> Result<String, QbeSmtError> {
+    match statement {
+        QbeStatement::Assign(QbeValue::Temporary(dest), ty, QbeInstr::Call(_, _, _)) => {
+            let slot = *reg_slots
+                .get(dest)
+                .ok_or_else(|| QbeSmtError::Unsupported {
+                    message: format!("missing destination register slot %{dest} for call result"),
+                })?;
+            let assign_ty = assign_type_from_qbe(ty);
+            Ok(format!(
+                "(store {regs_curr} {} {})",
+                reg_slot_const(slot),
+                normalize_to_assign_type(ret_expr, assign_ty),
+            ))
+        }
+        QbeStatement::Volatile(QbeInstr::Call(_, _, _)) => Ok(regs_curr.to_string()),
+        _ => Err(QbeSmtError::Unsupported {
+            message: "internal error: expected call statement while updating call result"
+                .to_string(),
+        }),
+    }
+}
+
+fn build_callee_input_regs_expr(
+    callee: &EncodedFunction,
+    args: &[(QbeType, QbeValue)],
+    regs_curr: &str,
+    caller_reg_slots: &HashMap<String, u32>,
+    global_map: &HashMap<String, u64>,
+) -> Result<String, QbeSmtError> {
+    if args.len() != callee.args.len() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "call target ${} requires exactly {} argument(s), got {}",
+                callee.name,
+                callee.args.len(),
+                args.len()
+            ),
+        });
+    }
+
+    let mut regs_expr = zero_regs_array_expr();
+    for ((_, value), callee_arg) in args.iter().zip(callee.args.iter()) {
+        let arg_expr = value_to_smt(value, regs_curr, caller_reg_slots, global_map);
+        let normalized = normalize_to_assign_type(&arg_expr, callee_arg.ty);
+        let slot =
+            *callee
+                .reg_slots
+                .get(&callee_arg.name)
+                .ok_or_else(|| QbeSmtError::Unsupported {
+                    message: format!(
+                        "missing callee argument register slot %{} for ${}",
+                        callee_arg.name, callee.name
+                    ),
+                })?;
+        regs_expr = format!("(store {regs_expr} {} {normalized})", reg_slot_const(slot));
+    }
+    Ok(regs_expr)
+}
+
+fn build_unary_callee_input_regs_expr(
+    callee: &EncodedFunction,
+    arg_expr: &str,
+) -> Result<String, QbeSmtError> {
+    if callee.args.len() != 1 {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-invariant assumption target ${} must accept exactly one argument",
+                callee.name
+            ),
+        });
+    }
+
+    let callee_arg = &callee.args[0];
+    let slot = *callee
+        .reg_slots
+        .get(&callee_arg.name)
+        .ok_or_else(|| QbeSmtError::Unsupported {
+            message: format!(
+                "missing callee argument register slot %{} for ${}",
+                callee_arg.name, callee.name
+            ),
+        })?;
+    let normalized = normalize_to_assign_type(arg_expr, callee_arg.ty);
+    Ok(format!(
+        "(store {} {} {normalized})",
+        zero_regs_array_expr(),
+        reg_slot_const(slot),
+    ))
+}
+
+fn zero_regs_array_expr() -> String {
+    format!(
+        "((as const (Array (_ BitVec 32) (_ BitVec 64))) {})",
+        bv_const_u64(0, 64)
+    )
+}
+
+fn assumption_regs_var(index: usize) -> String {
+    format!("regs_call_{index}")
+}
+
+fn assumption_mem_var(index: usize) -> String {
+    format!("mem_call_{index}")
+}
+
+fn assumption_heap_var(index: usize) -> String {
+    format!("heap_call_{index}")
+}
+
+fn assumption_ret_var(index: usize) -> String {
+    format!("ret_call_{index}")
 }
 
 const REG_STATE_SORT: &str = "(Array (_ BitVec 32) (_ BitVec 64))";
@@ -421,9 +1133,10 @@ impl AssignType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FunctionArg {
     name: String,
+    ty: AssignType,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -515,21 +1228,6 @@ struct TransitionExprs {
     exit_next: String,
 }
 
-fn pc_relation_name(pc: usize) -> String {
-    format!("pc_{}", pc)
-}
-
-fn relation_app(
-    relation: &str,
-    regs: &str,
-    mem: &str,
-    heap: &str,
-    exit: &str,
-    pred: &str,
-) -> String {
-    format!("({relation} {regs} {mem} {heap} {exit} {pred})")
-}
-
 fn and_terms(terms: Vec<String>) -> String {
     if terms.is_empty() {
         "true".to_string()
@@ -540,25 +1238,80 @@ fn and_terms(terms: Vec<String>) -> String {
     }
 }
 
-fn emit_transition_rule(
+fn module_pc_relation_name(function_id: usize, pc: usize) -> String {
+    format!("f{}_pc_{}", function_id, pc)
+}
+
+fn module_ret_relation_name(function_id: usize) -> String {
+    format!("f{}_ret", function_id)
+}
+
+fn module_abort_relation_name(function_id: usize) -> String {
+    format!("f{}_abort", function_id)
+}
+
+fn module_pc_relation_app(
+    relation: &str,
+    regs: &str,
+    mem: &str,
+    heap: &str,
+    exit: &str,
+    pred: &str,
+    in_regs: &str,
+    in_mem: &str,
+    in_heap: &str,
+) -> String {
+    format!("({relation} {regs} {mem} {heap} {exit} {pred} {in_regs} {in_mem} {in_heap})")
+}
+
+fn module_ret_relation_app(
+    relation: &str,
+    in_regs: &str,
+    in_mem: &str,
+    in_heap: &str,
+    ret: &str,
+    mem_out: &str,
+    heap_out: &str,
+) -> String {
+    format!("({relation} {in_regs} {in_mem} {in_heap} {ret} {mem_out} {heap_out})")
+}
+
+fn module_abort_relation_app(
+    relation: &str,
+    in_regs: &str,
+    in_mem: &str,
+    in_heap: &str,
+    code: &str,
+    mem_out: &str,
+    heap_out: &str,
+) -> String {
+    format!("({relation} {in_regs} {in_mem} {in_heap} {code} {mem_out} {heap_out})")
+}
+
+fn emit_module_transition_rule(
     smt: &mut String,
     from_relation: &str,
     to_relation: &str,
     guard: Option<String>,
+    mut extra_terms: Vec<String>,
     next: &TransitionExprs,
     pred_next_expr: &str,
 ) {
-    let mut body_terms = vec![relation_app(
+    let mut body_terms = vec![module_pc_relation_app(
         from_relation,
         "regs",
         "mem",
         "heap",
         "exit",
         "pred",
+        "in_regs",
+        "in_mem",
+        "in_heap",
     )];
     if let Some(guard) = guard {
         body_terms.push(guard);
     }
+    body_terms.append(&mut extra_terms);
     body_terms.push(format!("(= regs_next {})", next.regs_next));
     body_terms.push(format!("(= mem_next {})", next.mem_next));
     body_terms.push(format!("(= heap_next {})", next.heap_next));
@@ -566,13 +1319,114 @@ fn emit_transition_rule(
     body_terms.push(format!("(= pred_next {pred_next_expr})"));
 
     let body = and_terms(body_terms);
-    let head = relation_app(
+    let head = module_pc_relation_app(
         to_relation,
         "regs_next",
         "mem_next",
         "heap_next",
         "exit_next",
         "pred_next",
+        "in_regs",
+        "in_mem",
+        "in_heap",
+    );
+
+    smt.push_str(&format!("(rule (=> {body} {head}))\n"));
+}
+
+fn emit_module_return_rule(
+    smt: &mut String,
+    from_relation: &str,
+    to_relation: &str,
+    guard: Option<String>,
+    mut extra_terms: Vec<String>,
+    ret_expr: &str,
+    mem_expr: &str,
+    heap_expr: &str,
+) {
+    let mut body_terms = vec![module_pc_relation_app(
+        from_relation,
+        "regs",
+        "mem",
+        "heap",
+        "exit",
+        "pred",
+        "in_regs",
+        "in_mem",
+        "in_heap",
+    )];
+    if let Some(guard) = guard {
+        body_terms.push(guard);
+    }
+    body_terms.append(&mut extra_terms);
+    if ret_expr != "ret_call" {
+        body_terms.push(format!("(= ret_call {ret_expr})"));
+    }
+    if mem_expr != "mem_call" {
+        body_terms.push(format!("(= mem_call {mem_expr})"));
+    }
+    if heap_expr != "heap_call" {
+        body_terms.push(format!("(= heap_call {heap_expr})"));
+    }
+
+    let body = and_terms(body_terms);
+    let head = module_ret_relation_app(
+        to_relation,
+        "in_regs",
+        "in_mem",
+        "in_heap",
+        "ret_call",
+        "mem_call",
+        "heap_call",
+    );
+
+    smt.push_str(&format!("(rule (=> {body} {head}))\n"));
+}
+
+fn emit_module_abort_rule(
+    smt: &mut String,
+    from_relation: &str,
+    to_relation: &str,
+    guard: Option<String>,
+    mut extra_terms: Vec<String>,
+    code_expr: &str,
+    mem_expr: &str,
+    heap_expr: &str,
+) {
+    let mut body_terms = vec![module_pc_relation_app(
+        from_relation,
+        "regs",
+        "mem",
+        "heap",
+        "exit",
+        "pred",
+        "in_regs",
+        "in_mem",
+        "in_heap",
+    )];
+    if let Some(guard) = guard {
+        body_terms.push(guard);
+    }
+    body_terms.append(&mut extra_terms);
+    if code_expr != "code_call" {
+        body_terms.push(format!("(= code_call {code_expr})"));
+    }
+    if mem_expr != "mem_call" {
+        body_terms.push(format!("(= mem_call {mem_expr})"));
+    }
+    if heap_expr != "heap_call" {
+        body_terms.push(format!("(= heap_call {heap_expr})"));
+    }
+
+    let body = and_terms(body_terms);
+    let head = module_abort_relation_app(
+        to_relation,
+        "in_regs",
+        "in_mem",
+        "in_heap",
+        "code_call",
+        "mem_call",
+        "heap_call",
     );
 
     smt.push_str(&format!("(rule (=> {body} {head}))\n"));
@@ -650,7 +1504,10 @@ fn collect_function_args(function: &QbeFunction) -> Result<Vec<FunctionArg>, Qbe
             });
         }
 
-        out.push(FunctionArg { name: name.clone() });
+        out.push(FunctionArg {
+            name: name.clone(),
+            ty: assign_ty,
+        });
     }
 
     Ok(out)
@@ -660,6 +1517,7 @@ fn validate_statement_supported(
     statement: &QbeStatement,
     pc: usize,
     label_to_block_id: &HashMap<String, u32>,
+    user_call_arity: Option<&HashMap<String, usize>>,
 ) -> Result<(), QbeSmtError> {
     match statement {
         QbeStatement::Assign(dest, ty, instr) => {
@@ -785,7 +1643,14 @@ fn validate_statement_supported(
                     }
                 }
                 QbeInstr::Call(function, args, variadic_index) => {
-                    validate_call_supported(function, args, *variadic_index, pc, true)?;
+                    validate_call_supported(
+                        function,
+                        args,
+                        *variadic_index,
+                        pc,
+                        true,
+                        user_call_arity,
+                    )?;
                 }
                 QbeInstr::Phi(label_left, _, label_right, _) => {
                     if matches!(assign_ty, AssignType::Single | AssignType::Double) {
@@ -836,7 +1701,14 @@ fn validate_statement_supported(
                 }
             }
             QbeInstr::Call(function, args, variadic_index) => {
-                validate_call_supported(function, args, *variadic_index, pc, false)?;
+                validate_call_supported(
+                    function,
+                    args,
+                    *variadic_index,
+                    pc,
+                    false,
+                    user_call_arity,
+                )?;
             }
             _ => {
                 return Err(QbeSmtError::Unsupported {
@@ -855,7 +1727,29 @@ fn validate_call_supported(
     variadic_index: Option<u64>,
     pc: usize,
     in_assignment: bool,
-) -> Result<ExternCallModel, QbeSmtError> {
+    user_call_arity: Option<&HashMap<String, usize>>,
+) -> Result<(), QbeSmtError> {
+    if let Some(user_call_arity) = user_call_arity {
+        if let Some(expected) = user_call_arity.get(function) {
+            if variadic_index.is_some() {
+                return Err(QbeSmtError::Unsupported {
+                    message: format!(
+                        "pc {pc}: variadic user call target ${function} is unsupported"
+                    ),
+                });
+            }
+            if args.len() != *expected {
+                return Err(QbeSmtError::Unsupported {
+                    message: format!(
+                        "pc {pc}: call target ${function} requires exactly {expected} argument(s), got {}",
+                        args.len()
+                    ),
+                });
+            }
+            return Ok(());
+        }
+    }
+
     let Some(model) = extern_call_model(function) else {
         return Err(QbeSmtError::Unsupported {
             message: format!("pc {pc}: unsupported call target ${function}"),
@@ -911,7 +1805,7 @@ fn validate_call_supported(
         });
     }
 
-    Ok(model)
+    Ok(())
 }
 
 fn regs_update_expr(

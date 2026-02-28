@@ -77,7 +77,7 @@ Key tests:
 - `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `crates/oac/src/std/std.oa` imports.
 - That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`), ref helpers (`U8Ref`, `I32Ref`, `I64Ref`, `PtrIntRef`, `BoolRef`, and `*Ref__read` functions), C externs (`Clib__malloc`, `Clib__free`, `Clib__memcmp`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
-- The same regression also asserts stdlib `AsciiChar` invariant registration/synthesis (`struct_invariants["AsciiChar"]` and `__struct__AsciiChar__invariant` function definition).
+- The same regression also asserts stdlib invariant registration/synthesis for `AsciiChar` and `Bytes` (`struct_invariants[...]` metadata plus synthesized `__struct__*__invariant` functions).
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()`, `main(argc: I32, argv: I64)`, and `main(argc: I32, argv: PtrInt)`).
 - `crates/oac/src/ir.rs` includes alias coverage for `PtrInt` behaving as `I64` in function calls/equality and type-definition mapping.
 - `crates/oac/src/ir.rs` also validates namespace call resolution/type-checking by lowering to mangled function names (`TypeName__helper`).
@@ -89,7 +89,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also includes `U8` coverage for accepted same-type arithmetic/comparison and rejection of mixed `U8`/`I32` arithmetic.
 - `crates/oac/src/ir.rs` also includes resolve coverage for builtin pointer-memory helpers (`load_u8`, `load_i32`, `load_i64`, `load_bool`, `store_u8`) with `PtrInt` addresses.
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
-- `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, and strict rejection of unsupported operations.
+- `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` and `qbe::Module` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, interprocedural user-call summaries (including self-recursive user calls), argument-invariant precondition assumptions, and strict rejection of unsupported operations.
 - `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
 - `crates/qbe-smt/src/lib.rs` also verifies reachable-only encoding behavior (unsupported instructions inside unreachable blocks are ignored).
@@ -98,9 +98,9 @@ Key tests:
 - `crates/qbe-smt/src/lib.rs` also tests loop classification (`classify_simple_loops`) for proven non-termination patterns (identity updates, including `call $sub(..., 0)`) vs unknown/progress loops.
 - `crates/oac/src/diagnostics.rs` tests cover tokenizer span conversion, plain (no ANSI) report rendering, and no-span fallback rendering.
 - `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, and file-URI handling.
-- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, recursion rejection, and QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding and fail-closed unknown external calls).
-- `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving (including no-op behavior when no prove sites exist).
-- SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps).
+- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding and fail-closed unknown external calls).
+- `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving, including argument-invariant preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), and no-op behavior when no prove sites exist.
+- SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Compiler-error snapshots now capture Ariadne plain-report output from the shared diagnostics layer.
@@ -165,7 +165,7 @@ Missing tools can cause test/build failures unrelated to Rust logic.
 ## Debugging Flow for Compiler Regressions
 
 1. Reproduce with a minimal `.oa` fixture in `crates/oac/execution_tests`.
-2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and checker artifacts (`target/oac/prove/site_*.qbe`, `site_*.smt2`, `target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory `qbe::Function` obligations.
+2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and checker artifacts (`target/oac/prove/site_*.qbe`, `site_*.smt2`, `target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory checker modules (entry checker + reachable user callees).
 3. Isolate stage failure: tokenize, parse, resolve, codegen, or external tool invocation.
 4. Add/adjust snapshot to encode fixed behavior.
 5. Run full test suite (prefer `cargo nextest run`; use `cargo test` fallback only if nextest is unavailable).
