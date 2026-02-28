@@ -77,6 +77,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Identifier tokenization is EOF-safe: trailing words (including `_`) now lex as `Word` tokens instead of panicking, which keeps `oac lsp` stable on incomplete buffers.
 - `AsciiChar` range is enforced by a declaration-based struct invariant over its wrapped `Char` (`0 <= Char.code(ch) <= 127`); stdlib invariant declarations are now merged during `resolve` alongside stdlib types/functions/generics.
 - `Bytes` length is enforced by a declaration-based struct invariant (`len >= 0`) in `crates/oac/src/std/std_string.oa`.
+- `String.make_bytes` in `crates/oac/src/std/std_string.oa` normalizes `Bytes.len` fail-closed (`len < 0` clamps to `0`) and is used by `String.bytes`, `String.from_literal_parts`, and `String.from_heap_parts` so `Bytes` invariants remain provable at call sites.
 - Built-in `FP32` and `FP64` are supported end-to-end. Unsuffixed decimal literals default to `FP32` (for example `1.25`), while `f64` suffix selects `FP64` (for example `1.25f64`). Numeric arithmetic/comparisons do not perform implicit widening/coercion between integer and floating types (`U8`, `I32`, `I64`, `FP32`, `FP64` stay same-type only).
 - Generic-specialized helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.

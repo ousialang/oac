@@ -1,8 +1,11 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+expression: output
 snapshot_kind: text
 ---
-COMPILATION ERROR
-
-[OAC-RESOLVE-001] Error: failed to resolve/type-check program: mismatched types: expected "U8", but got "I32"
+1
+1
+1234
+1
+1
+1

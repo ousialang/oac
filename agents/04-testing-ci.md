@@ -135,7 +135,7 @@ Key tests:
 - Execution fixtures also include read-only ref/deref coverage:
   - `std_ref_read_only.oa` (read-only typed dereference via `Ref[T]` specializations and zero-initialized memory checks)
 - Execution fixtures also include mutable pointer-wrapper coverage:
-  - `std_mut_read_write.oa` (`Mut[T]` typed read/write helpers over `U8`, `I32`, `I64`, `PtrInt`, and `Bool`)
+  - `std_mut_read_write.oa` (`Mut[T]` typed read/write helpers over `U8`, `I32`, `I64`, `PtrInt`, and `Bool`; `U8` write assertions are validated through `U8` read/write round-trip equality flags because integer literals are `I32` and do not implicitly coerce to `U8`)
 - Execution fixtures also include canonical option/result stdlib coverage:
   - `std_option_result.oa` (`Option[T]` and `Result[T,E]` constructors/predicates/unwrapping helpers)
 - Execution fixtures also include string utility helper coverage:

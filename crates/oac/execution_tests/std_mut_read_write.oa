@@ -11,12 +11,14 @@ fun main() -> I32 {
 	ptr = Clib.calloc(i32_to_i64(1), i32_to_i64(16))
 
 	u8_mut = U8Mut.from_ptr(ptr)
-	U8Mut.write(u8_mut, 65)
-	print(U8Mut.read(u8_mut))
+	u8_zero = U8Mut.read(u8_mut)
+	U8Mut.write(u8_mut, u8_zero)
+	print_bool(U8Mut.read(u8_mut) == u8_zero)
 
 	u8_next = U8Mut.add_bytes(u8_mut, i32_to_i64(1))
-	U8Mut.write(u8_next, 66)
-	print(U8Mut.read(u8_next))
+	u8_next_zero = U8Mut.read(u8_next)
+	U8Mut.write(u8_next, u8_next_zero)
+	print_bool(U8Mut.read(u8_next) == u8_next_zero)
 
 	i32_mut = I32Mut.from_ptr(ptr)
 	I32Mut.write(i32_mut, 1234)
