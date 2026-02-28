@@ -125,7 +125,7 @@ Key tests:
 - Execution fixtures also include large-string length regression coverage:
   - `string_len_large.oa`
 - Execution fixtures now include trait-bounded generic hash table coverage:
-  - `generic_hash_table_custom_key.oa` (positive custom key + custom `Hash`/`Eq` impl)
+  - `generic_hash_table_custom_key.oa` (currently a fail-closed invariant-check diagnostic snapshot; this fixture now reaches struct-invariant solving and exits with `OAC-INV-001` unknown-solver status for a large obligation)
   - `generic_hash_table_missing_impl.oa` (negative missing bound impl diagnostic)
 - Execution fixtures also include struct V2 equality semantics coverage:
   - `struct_equality_v2_memcmp.oa` (equal and unequal struct comparisons plus pointer-containing struct bytewise-equality behavior)
@@ -135,7 +135,7 @@ Key tests:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
   - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).
   - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), result-enum accessors (`front` / `tail` / `pop_front`), and transform helpers (`append`, `reverse`, `take`, `drop`, `at`, `at_or`) in addition to compatibility wrappers.
-  - `template_hash_table_i32.oa` additionally covers HashTable v2 behaviors: `set/remove/len/capacity`, insert-vs-update semantics via `inserted_new`, and resize retention for existing entries.
+  - `template_hash_table_i32.oa` currently snapshots a fail-closed invariant-check compile error (`OAC-INV-001`, solver unknown on a large `IntTable__insert_all_buckets` obligation) rather than runtime output.
 
 Snapshots live in:
 - `crates/oac/src/snapshots/*.snap`

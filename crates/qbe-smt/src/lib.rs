@@ -210,15 +210,18 @@ fn run_z3_query(smt: &str, timeout_seconds: u64) -> Result<(String, String, Stri
         }
     })?;
 
-    {
+    let write_result = {
         let stdin = child.stdin.as_mut().ok_or_else(|| QbeSmtError::SolverIo {
             message: "failed to open z3 stdin".to_string(),
         })?;
-        stdin
-            .write_all(smt.as_bytes())
-            .map_err(|err| QbeSmtError::SolverIo {
+        stdin.write_all(smt.as_bytes())
+    };
+    if let Err(err) = write_result {
+        if err.kind() != std::io::ErrorKind::BrokenPipe {
+            return Err(QbeSmtError::SolverIo {
                 message: format!("failed to send SMT query to z3: {err}"),
-            })?;
+            });
+        }
     }
 
     let output = child

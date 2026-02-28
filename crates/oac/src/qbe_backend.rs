@@ -2238,6 +2238,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn compile_and_compare(fixture_name: &str) {
         let path_str = format!("crates/oac/execution_tests/{}.oa", fixture_name);
         let path = Path::new(&path_str);

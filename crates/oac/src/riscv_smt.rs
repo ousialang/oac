@@ -6,9 +6,7 @@
 use anyhow::{Context, Result};
 use goblin::elf::Elf;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 /// Maximum number of cycles to simulate
 pub const MAX_CYCLES: u32 = 1000;
@@ -22,6 +20,7 @@ pub struct RiscvInstruction {
     pub opcode: u32,
     pub rd: u8,
     pub rs1: u8,
+    #[allow(dead_code)]
     pub rs2: u8,
     pub imm: i32,
     pub address: u64,
@@ -80,9 +79,9 @@ fn decode_riscv_instruction(instruction: u32, address: u64) -> RiscvInstruction 
             let imm_4_1 = (instruction >> 8) & 0xF;
             let imm_10_5 = (instruction >> 25) & 0x3F;
             let imm_12 = (instruction >> 31) & 0x1;
-            ((((imm_12 << 12) | (imm_11 << 11) | (imm_10_5 << 5) | (imm_4_1 << 1)) as i32)
+            (((imm_12 << 12) | (imm_11 << 11) | (imm_10_5 << 5) | (imm_4_1 << 1)) as i32)
                 .wrapping_shl(19)
-                >> 19) // Sign extend
+                >> 19 // Sign extend
         }
         0x37 | 0x17 => {
             // U-type (LUI, AUIPC)
@@ -94,9 +93,9 @@ fn decode_riscv_instruction(instruction: u32, address: u64) -> RiscvInstruction 
             let imm_10_1 = (instruction >> 21) & 0x3FF;
             let imm_11 = (instruction >> 20) & 0x1;
             let imm_19_12 = (instruction >> 12) & 0xFF;
-            ((((imm_20 << 20) | (imm_19_12 << 12) | (imm_11 << 11) | (imm_10_1 << 1)) as i32)
+            (((imm_20 << 20) | (imm_19_12 << 12) | (imm_11 << 11) | (imm_10_1 << 1)) as i32)
                 .wrapping_shl(11)
-                >> 11) // Sign extend
+                >> 11 // Sign extend
         }
         _ => 0,
     };
