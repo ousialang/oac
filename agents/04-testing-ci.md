@@ -100,7 +100,7 @@ Key tests:
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `crates/oac/src/std/std.oa` imports.
-- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`, `String__equals`, `String__starts_with`, `String__ends_with`, `String__slice_clamped`), option/result generics (`Option`, `Result` generic declarations), ref/mut helpers (`U8Ref`, `I32Ref`, `I64Ref`, `PtrIntRef`, `BoolRef`, `U8Mut`, `I32Mut`, `I64Mut`, `PtrIntMut`, `BoolMut`, plus `*Ref__read` and `*Mut__write` functions), C externs (`Clib__malloc`, `Clib__free`, `Clib__memcmp`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
+- That regression currently asserts representative split-stdlib symbols including JSON (`Json__parse_json_document`), trait symbols (`Hash::hash`, `Eq::equals`, and synthesized impl functions like `Hash__I32__hash`), ASCII helpers (`AsciiChar`, `AsciiChar__from_code`), char/null/string helpers (`Char__from_code`, `Null__value`, `String__from_literal_parts`, `String__from_heap_parts`, `String__equals`, `String__starts_with`, `String__ends_with`, `String__slice_clamped`), option/result generics (`Option`, `Result` generic declarations), set/vector generics (`HashSet`, `Vec` generic declarations), IO/result types (`IoError`, `IoReadResult`, `IoWriteResult`), `Io` namespace functions (`Io__read_all`, `Io__write_all`, `Io__read_file`, `Io__write_file`), ref/mut helpers (`U8Ref`, `I32Ref`, `I64Ref`, `PtrIntRef`, `BoolRef`, `U8Mut`, `I32Mut`, `I64Mut`, `PtrIntMut`, `BoolMut`, plus `*Ref__read` and `*Mut__write` functions), C externs (`Clib__malloc`, `Clib__free`, `Clib__memcmp`), and standard aliases/types (`PtrInt`, `U8`, `Void`, `Bytes`, std-defined `String` enum).
 - The same regression also asserts stdlib invariant registration/synthesis for `AsciiChar` and `Bytes` (`struct_invariants[...]` metadata plus synthesized `__struct__*__invariant__<key>` functions).
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()`, `main(argc: I32, argv: I64)`, and `main(argc: I32, argv: PtrInt)`).
 - `crates/oac/src/ir.rs` includes alias coverage for `PtrInt` behaving as `I64` in function calls/equality and type-definition mapping.
@@ -163,6 +163,12 @@ Key tests:
   - `std_mut_read_write.oa` (`Mut[T]` typed read/write helpers over `U8`, `I32`, `I64`, `PtrInt`, and `Bool`; `U8` write assertions are validated through `U8` read/write round-trip equality flags because integer literals are `I32` and do not implicitly coerce to `U8`)
 - Execution fixtures also include canonical option/result stdlib coverage:
   - `std_option_result.oa` (`Option[T]` and `Result[T,E]` constructors/predicates/unwrapping helpers)
+- Execution fixtures also include hash-set stdlib coverage:
+  - `std_hash_set.oa` (`HashSet[K: Hash + Eq]` insertion/removal/membership plus `union`/`intersection`/`difference`)
+- Execution fixtures also include vector stdlib coverage:
+  - `std_vec.oa` (`Vec[T]` reserve/capacity behavior plus `push`/`pop`/`get`/`set`/`clear`)
+- Execution fixtures also include IO stdlib coverage:
+  - `std_io.oa` (`Io.write_all` stdout byte writes and `Io.read_file` result handling for `/dev/null` and missing paths)
 - Execution fixtures also include string utility helper coverage:
   - `std_string_helpers.oa` (`String.equals`, `String.starts_with`, `String.ends_with`, `String.char_at_or`, `String.slice_clamped`, `String.is_empty`)
 - Stdlib namespacing coverage in execution fixtures:

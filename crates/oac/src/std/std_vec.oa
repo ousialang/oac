@@ -1,0 +1,306 @@
+generic Vec[T] {
+	struct Node {
+		value: T,
+		next: List,
+	}
+
+	enum List {
+		Empty,
+		Node(Node),
+	}
+
+	struct Vec {
+		items: List,
+		len: I32,
+		capacity: I32,
+	}
+
+	struct PopValue {
+		vec: Vec,
+		value: T,
+	}
+
+	enum PopResult {
+		Empty,
+		Value(PopValue),
+	}
+
+	enum Lookup {
+		Missing,
+		Found(T),
+	}
+
+	struct SetResult {
+		vec: Vec,
+		updated: Bool,
+	}
+
+	struct ListSetResult {
+		items: List,
+		updated: Bool,
+	}
+
+	fun empty_list() -> List {
+		return List.Empty
+	}
+
+	fun normalized_capacity(requested: I32) -> I32 {
+		if requested < 0 {
+			return 0
+		}
+		return requested
+	}
+
+	fun max_i32() -> I32 {
+		return 2147483647
+	}
+
+	fun new() -> Vec {
+		return Vec.with_capacity(0)
+	}
+
+	fun with_capacity(capacity: I32) -> Vec {
+		safe_capacity = Vec.normalized_capacity(capacity)
+		return Vec struct {
+			items: Vec.empty_list(),
+			len: 0,
+			capacity: safe_capacity,
+		}
+	}
+
+	fun len(vec: Vec) -> I32 {
+		return vec.len
+	}
+
+	fun capacity(vec: Vec) -> I32 {
+		return vec.capacity
+	}
+
+	fun next_capacity(current: I32, min_needed: I32) -> I32 {
+		if min_needed <= current {
+			return current
+		}
+
+		cap = current
+		if cap < 1 {
+			cap = 1
+		}
+
+		while cap < min_needed {
+			if cap > 1073741823 {
+				return Vec.max_i32()
+			}
+			cap = cap + cap
+		}
+
+		return cap
+	}
+
+	fun reserve(vec: Vec, additional: I32) -> Vec {
+		extra = additional
+		if extra < 0 {
+			extra = 0
+		}
+
+		min_needed = vec.len + extra
+		if min_needed <= vec.capacity {
+			return vec
+		}
+
+		next_capacity = Vec.next_capacity(vec.capacity, min_needed)
+		return Vec struct {
+			items: vec.items,
+			len: vec.len,
+			capacity: next_capacity,
+		}
+	}
+
+	fun push(vec: Vec, value: T) -> Vec {
+		resized = Vec.reserve(vec, 1)
+		node = Node struct {
+			value: value,
+			next: resized.items,
+		}
+		return Vec struct {
+			items: List.Node(node),
+			len: resized.len + 1,
+			capacity: resized.capacity,
+		}
+	}
+
+	fun pop(vec: Vec) -> PopResult {
+		match vec.items {
+			List.Empty => {
+				return PopResult.Empty
+			}
+			List.Node(node) => {
+				next_vec = Vec struct {
+					items: node.next,
+					len: vec.len - 1,
+					capacity: vec.capacity,
+				}
+				payload = PopValue struct {
+					vec: next_vec,
+					value: node.value,
+				}
+				return PopResult.Value(payload)
+			}
+		}
+	}
+
+	fun get_reversed(items: List, index: I32) -> Lookup {
+		match items {
+			List.Empty => {
+				return Lookup.Missing
+			}
+			List.Node(node) => {
+				if index == 0 {
+					return Lookup.Found(node.value)
+				}
+				return Vec.get_reversed(node.next, index - 1)
+			}
+		}
+	}
+
+	fun get(vec: Vec, index: I32) -> Lookup {
+		if index < 0 || index >= vec.len {
+			return Lookup.Missing
+		}
+
+		reversed_index = (vec.len - 1) - index
+		return Vec.get_reversed(vec.items, reversed_index)
+	}
+
+	fun set_reversed(items: List, index: I32, value: T) -> ListSetResult {
+		match items {
+			List.Empty => {
+				return ListSetResult struct {
+					items: items,
+					updated: false,
+				}
+			}
+			List.Node(node) => {
+				if index == 0 {
+					replaced = Node struct {
+						value: value,
+						next: node.next,
+					}
+					return ListSetResult struct {
+						items: List.Node(replaced),
+						updated: true,
+					}
+				}
+
+				tail = Vec.set_reversed(node.next, index - 1, value)
+				rebuilt = Node struct {
+					value: node.value,
+					next: tail.items,
+				}
+				return ListSetResult struct {
+					items: List.Node(rebuilt),
+					updated: tail.updated,
+				}
+			}
+		}
+	}
+
+	fun set(vec: Vec, index: I32, value: T) -> SetResult {
+		if index < 0 || index >= vec.len {
+			return SetResult struct {
+				vec: vec,
+				updated: false,
+			}
+		}
+
+		reversed_index = (vec.len - 1) - index
+		updated = Vec.set_reversed(vec.items, reversed_index, value)
+		next_vec = Vec struct {
+			items: updated.items,
+			len: vec.len,
+			capacity: vec.capacity,
+		}
+		return SetResult struct {
+			vec: next_vec,
+			updated: updated.updated,
+		}
+	}
+
+	fun clear(vec: Vec) -> Vec {
+		return Vec struct {
+			items: Vec.empty_list(),
+			len: 0,
+			capacity: vec.capacity,
+		}
+	}
+}
+
+test "A vec MUST start empty" {
+	vec = Vec.new()
+	assert(Vec.len(vec) == 0)
+	assert(Vec.capacity(vec) == 0)
+}
+
+test "A vec push/pop MUST keep stack order" {
+	vec = Vec.new()
+	vec = Vec.push(vec, 1)
+	vec = Vec.push(vec, 2)
+	vec = Vec.push(vec, 3)
+	assert(Vec.len(vec) == 3)
+
+	match Vec.pop(vec) {
+		Vec__PopResult.Empty => {
+			assert(false)
+		}
+		Vec__PopResult.Value(v) => {
+			assert(v.value == 3)
+			assert(Vec.len(v.vec) == 2)
+		}
+	}
+}
+
+test "A vec get/set MUST index insertion order" {
+	vec = Vec.with_capacity(2)
+	vec = Vec.push(vec, 10)
+	vec = Vec.push(vec, 20)
+	vec = Vec.push(vec, 30)
+
+	match Vec.get(vec, 0) {
+		Vec__Lookup.Missing => {
+			assert(false)
+		}
+		Vec__Lookup.Found(v) => {
+			assert(v == 10)
+		}
+	}
+	match Vec.get(vec, 2) {
+		Vec__Lookup.Missing => {
+			assert(false)
+		}
+		Vec__Lookup.Found(v) => {
+			assert(v == 30)
+		}
+	}
+
+	updated = Vec.set(vec, 1, 99)
+	assert(updated.updated)
+	match Vec.get(updated.vec, 1) {
+		Vec__Lookup.Missing => {
+			assert(false)
+		}
+		Vec__Lookup.Found(v) => {
+			assert(v == 99)
+		}
+	}
+}
+
+test "A vec reserve/clear MUST preserve capacity policy" {
+	vec = Vec.new()
+	vec = Vec.reserve(vec, 5)
+	assert(Vec.capacity(vec) >= 5)
+
+	vec = Vec.push(vec, 1)
+	vec = Vec.push(vec, 2)
+	cleared = Vec.clear(vec)
+	assert(Vec.len(cleared) == 0)
+	assert(Vec.capacity(cleared) == Vec.capacity(vec))
+}

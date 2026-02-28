@@ -1,0 +1,70 @@
+fun print_read_result(v: IoReadResult) -> I32 {
+	match v {
+		IoReadResult.Ok(bytes) => {
+			print(bytes.len)
+			Clib.free(bytes.ptr)
+			return 0
+		}
+		IoReadResult.Err(err) => {
+			match err {
+				IoError.OpenFailed => {
+					print(100)
+				}
+				IoError.ReadFailed => {
+					print(101)
+				}
+				IoError.WriteFailed => {
+					print(102)
+				}
+				IoError.CloseFailed => {
+					print(103)
+				}
+				IoError.AllocFailed => {
+					print(104)
+				}
+			}
+			return 0
+		}
+	}
+}
+
+fun print_write_result(v: IoWriteResult) -> I32 {
+	match v {
+		IoWriteResult.Ok => {
+			print(1)
+			return 0
+		}
+		IoWriteResult.Err(err) => {
+			match err {
+				IoError.OpenFailed => {
+					print(200)
+				}
+				IoError.ReadFailed => {
+					print(201)
+				}
+				IoError.WriteFailed => {
+					print(202)
+				}
+				IoError.CloseFailed => {
+					print(203)
+				}
+				IoError.AllocFailed => {
+					print(204)
+				}
+			}
+			return 0
+		}
+	}
+}
+
+fun main() -> I32 {
+	payload = String.bytes("io")
+	print_write_result(Io.write_all(1, payload))
+
+	null_bytes = Io.read_file("/dev/null")
+	print_read_result(null_bytes)
+
+	missing_bytes = Io.read_file("/definitely_missing_oac_std_io_file")
+	print_read_result(missing_bytes)
+	return 0
+}

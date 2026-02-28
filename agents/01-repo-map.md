@@ -45,7 +45,10 @@ Editor tooling in this repository:
 - `crates/oac/src/std/std_option_result.oa`: core generic sum types (`Option[T]`, `Result[T,E]`) and helper methods.
 - `crates/oac/src/std/std_string.oa`: std-owned `Bytes` + `String` representation (`String` enum with literal/heap variants).
 - `crates/oac/src/std/std_ref.oa`: pointer wrappers (`Ref[T]`, `Mut[T]`) and typed read/write helper specializations.
+- `crates/oac/src/std/std_set.oa`: generic persistent `HashSet[K: Hash + Eq]` operations and set algebra helpers.
+- `crates/oac/src/std/std_vec.oa`: generic persistent `Vec[T]` API (`push`/`pop`/`get`/`set`/`reserve`/`clear`).
 - `crates/oac/src/std/std_clib.oa`: std-owned C interop declarations for `Clib.*` namespaced API via `namespace Clib { extern fun ... }` (resolver keys remain `Clib__*`; replaces compiler hardcoded libc signature JSON).
+- `crates/oac/src/std/std_io.oa`: std-owned `Io.*` wrappers over `Clib.open/read/write/close` with explicit result enums.
 - `crates/oac/execution_tests/*.oa`: language behavior fixtures (positive + negative).
 - `crates/oac/src/snapshots/*.snap`: canonical snapshots for tests.
 - `.github/workflows/ci.yml`: CI checks (`cargo check`, `cargo test`).

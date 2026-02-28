@@ -1,0 +1,570 @@
+generic HashSet[K: Hash + Eq] {
+	struct EntryNode {
+		key: K,
+		next: Bucket,
+	}
+
+	enum Bucket {
+		Empty,
+		Node(EntryNode),
+	}
+
+	struct BucketTreeNode {
+		left: Buckets,
+		right: Buckets,
+	}
+
+	enum Buckets {
+		Leaf(Bucket),
+		Branch(BucketTreeNode),
+	}
+
+	struct HashSet {
+		buckets: Buckets,
+		bucket_count: I32,
+		len: I32,
+		resize_threshold: I32,
+	}
+
+	struct InsertResult {
+		set: HashSet,
+		inserted_new: Bool,
+	}
+
+	struct RemoveResult {
+		set: HashSet,
+		removed: Bool,
+	}
+
+	struct BucketInsertResult {
+		bucket: Bucket,
+		inserted_new: Bool,
+	}
+
+	struct BucketRemoveResult {
+		bucket: Bucket,
+		removed: Bool,
+	}
+
+	fun min_bucket_count() -> I32 {
+		return 8
+	}
+
+	fun threshold_for_capacity(capacity: I32) -> I32 {
+		threshold = (capacity * 3) / 4
+		if threshold < 1 {
+			return 1
+		}
+		return threshold
+	}
+
+	fun next_power_of_two(min_capacity: I32) -> I32 {
+		n = HashSet.min_bucket_count()
+		if min_capacity <= n {
+			return n
+		}
+
+		while n < min_capacity {
+			n = n + n
+		}
+
+		return n
+	}
+
+	fun empty_buckets(count: I32) -> Buckets {
+		if count <= 1 {
+			return Buckets.Leaf(Bucket.Empty)
+		}
+
+		half = count / 2
+		left = HashSet.empty_buckets(half)
+		right = HashSet.empty_buckets(half)
+		node = BucketTreeNode struct {
+			left: left,
+			right: right,
+		}
+		return Buckets.Branch(node)
+	}
+
+	fun bucket_at(buckets: Buckets, count: I32, index: I32) -> Bucket {
+		if count <= 1 {
+			match buckets {
+				Buckets.Leaf(bucket) => {
+					return bucket
+				}
+				Buckets.Branch(node) => {
+					return HashSet.bucket_at(node.left, 1, 0)
+				}
+			}
+		}
+
+		half = count / 2
+		match buckets {
+			Buckets.Leaf(bucket) => {
+				return bucket
+			}
+			Buckets.Branch(node) => {
+				if index < half {
+					return HashSet.bucket_at(node.left, half, index)
+				}
+				return HashSet.bucket_at(node.right, half, index - half)
+			}
+		}
+	}
+
+	fun with_bucket(buckets: Buckets, count: I32, index: I32, bucket: Bucket) -> Buckets {
+		if count <= 1 {
+			return Buckets.Leaf(bucket)
+		}
+
+		half = count / 2
+		match buckets {
+			Buckets.Leaf(_old) => {
+				return Buckets.Leaf(bucket)
+			}
+			Buckets.Branch(node) => {
+				if index < half {
+					left = HashSet.with_bucket(node.left, half, index, bucket)
+					updated = BucketTreeNode struct {
+						left: left,
+						right: node.right,
+					}
+					return Buckets.Branch(updated)
+				}
+				right = HashSet.with_bucket(node.right, half, index - half, bucket)
+				updated = BucketTreeNode struct {
+					left: node.left,
+					right: right,
+				}
+				return Buckets.Branch(updated)
+			}
+		}
+	}
+
+	fun modulo_non_negative(value: I32, divisor: I32) -> I32 {
+		q = value / divisor
+		r = value - (q * divisor)
+		if r < 0 {
+			return r + divisor
+		}
+		return r
+	}
+
+	fun hash_key(key: K) -> I32 {
+		h = Hash.hash(key)
+		if h < 0 {
+			h = 0 - h
+		}
+		return h
+	}
+
+	fun bucket_index(key: K, bucket_count: I32) -> I32 {
+		return HashSet.modulo_non_negative(HashSet.hash_key(key), bucket_count)
+	}
+
+	fun bucket_contains(bucket: Bucket, key: K) -> Bool {
+		match bucket {
+			Bucket.Empty => {
+				return false
+			}
+			Bucket.Node(node) => {
+				if Eq.equals(node.key, key) {
+					return true
+				}
+				return HashSet.bucket_contains(node.next, key)
+			}
+		}
+	}
+
+	fun bucket_insert(bucket: Bucket, key: K) -> BucketInsertResult {
+		match bucket {
+			Bucket.Empty => {
+				node = EntryNode struct {
+					key: key,
+					next: Bucket.Empty,
+				}
+				return BucketInsertResult struct {
+					bucket: Bucket.Node(node),
+					inserted_new: true,
+				}
+			}
+			Bucket.Node(node) => {
+				if Eq.equals(node.key, key) {
+					return BucketInsertResult struct {
+						bucket: bucket,
+						inserted_new: false,
+					}
+				}
+
+				tail = HashSet.bucket_insert(node.next, key)
+				rebuilt = EntryNode struct {
+					key: node.key,
+					next: tail.bucket,
+				}
+				return BucketInsertResult struct {
+					bucket: Bucket.Node(rebuilt),
+					inserted_new: tail.inserted_new,
+				}
+			}
+		}
+	}
+
+	fun bucket_remove(bucket: Bucket, key: K) -> BucketRemoveResult {
+		match bucket {
+			Bucket.Empty => {
+				return BucketRemoveResult struct {
+					bucket: Bucket.Empty,
+					removed: false,
+				}
+			}
+			Bucket.Node(node) => {
+				if Eq.equals(node.key, key) {
+					return BucketRemoveResult struct {
+						bucket: node.next,
+						removed: true,
+					}
+				}
+
+				tail = HashSet.bucket_remove(node.next, key)
+				rebuilt = EntryNode struct {
+					key: node.key,
+					next: tail.bucket,
+				}
+				return BucketRemoveResult struct {
+					bucket: Bucket.Node(rebuilt),
+					removed: tail.removed,
+				}
+			}
+		}
+	}
+
+	fun new() -> HashSet {
+		return HashSet.with_capacity(HashSet.min_bucket_count())
+	}
+
+	fun with_capacity(min_capacity: I32) -> HashSet {
+		cap = HashSet.next_power_of_two(min_capacity)
+		buckets = HashSet.empty_buckets(cap)
+		return HashSet struct {
+			buckets: buckets,
+			bucket_count: cap,
+			len: 0,
+			resize_threshold: HashSet.threshold_for_capacity(cap),
+		}
+	}
+
+	fun insert_no_resize(set: HashSet, key: K) -> InsertResult {
+		index = HashSet.bucket_index(key, set.bucket_count)
+		bucket = HashSet.bucket_at(set.buckets, set.bucket_count, index)
+		inserted = HashSet.bucket_insert(bucket, key)
+		next_buckets = HashSet.with_bucket(set.buckets, set.bucket_count, index, inserted.bucket)
+
+		next_len = set.len
+		if inserted.inserted_new {
+			next_len = next_len + 1
+		}
+
+		next_set = HashSet struct {
+			buckets: next_buckets,
+			bucket_count: set.bucket_count,
+			len: next_len,
+			resize_threshold: set.resize_threshold,
+		}
+		return InsertResult struct {
+			set: next_set,
+			inserted_new: inserted.inserted_new,
+		}
+	}
+
+	fun insert_bucket_entries(dst: HashSet, bucket: Bucket) -> HashSet {
+		match bucket {
+			Bucket.Empty => {
+				return dst
+			}
+			Bucket.Node(node) => {
+				inserted = HashSet.insert_no_resize(dst, node.key)
+				return HashSet.insert_bucket_entries(inserted.set, node.next)
+			}
+		}
+	}
+
+	fun insert_all_buckets(dst: HashSet, src: Buckets, count: I32) -> HashSet {
+		if count <= 1 {
+			match src {
+				Buckets.Leaf(bucket) => {
+					return HashSet.insert_bucket_entries(dst, bucket)
+				}
+				Buckets.Branch(node) => {
+					left = HashSet.insert_all_buckets(dst, node.left, 1)
+					return HashSet.insert_all_buckets(left, node.right, 1)
+				}
+			}
+		}
+
+		half = count / 2
+		match src {
+			Buckets.Leaf(bucket) => {
+				return HashSet.insert_bucket_entries(dst, bucket)
+			}
+			Buckets.Branch(node) => {
+				left = HashSet.insert_all_buckets(dst, node.left, half)
+				return HashSet.insert_all_buckets(left, node.right, half)
+			}
+		}
+	}
+
+	fun rehash(set: HashSet, new_bucket_count: I32) -> HashSet {
+		cap = HashSet.next_power_of_two(new_bucket_count)
+		fresh = HashSet.with_capacity(cap)
+		return HashSet.insert_all_buckets(fresh, set.buckets, set.bucket_count)
+	}
+
+	fun maybe_resize_before_insert(set: HashSet) -> HashSet {
+		if set.len + 1 > set.resize_threshold {
+			return HashSet.rehash(set, set.bucket_count + set.bucket_count)
+		}
+		return set
+	}
+
+	fun insert(set: HashSet, key: K) -> InsertResult {
+		resized = HashSet.maybe_resize_before_insert(set)
+		return HashSet.insert_no_resize(resized, key)
+	}
+
+	fun remove(set: HashSet, key: K) -> RemoveResult {
+		index = HashSet.bucket_index(key, set.bucket_count)
+		bucket = HashSet.bucket_at(set.buckets, set.bucket_count, index)
+		removed = HashSet.bucket_remove(bucket, key)
+		next_buckets = HashSet.with_bucket(set.buckets, set.bucket_count, index, removed.bucket)
+
+		next_len = set.len
+		if removed.removed {
+			next_len = next_len - 1
+		}
+
+		next_set = HashSet struct {
+			buckets: next_buckets,
+			bucket_count: set.bucket_count,
+			len: next_len,
+			resize_threshold: set.resize_threshold,
+		}
+		return RemoveResult struct {
+			set: next_set,
+			removed: removed.removed,
+		}
+	}
+
+	fun contains(set: HashSet, key: K) -> Bool {
+		index = HashSet.bucket_index(key, set.bucket_count)
+		bucket = HashSet.bucket_at(set.buckets, set.bucket_count, index)
+		return HashSet.bucket_contains(bucket, key)
+	}
+
+	fun clear(set: HashSet) -> HashSet {
+		buckets = HashSet.empty_buckets(set.bucket_count)
+		return HashSet struct {
+			buckets: buckets,
+			bucket_count: set.bucket_count,
+			len: 0,
+			resize_threshold: set.resize_threshold,
+		}
+	}
+
+	fun len(set: HashSet) -> I32 {
+		return set.len
+	}
+
+	fun capacity(set: HashSet) -> I32 {
+		return set.bucket_count
+	}
+
+	fun union_bucket(dst: HashSet, bucket: Bucket) -> HashSet {
+		match bucket {
+			Bucket.Empty => {
+				return dst
+			}
+			Bucket.Node(node) => {
+				inserted = HashSet.insert(dst, node.key)
+				return HashSet.union_bucket(inserted.set, node.next)
+			}
+		}
+	}
+
+	fun union_buckets(dst: HashSet, src: Buckets, count: I32) -> HashSet {
+		if count <= 1 {
+			match src {
+				Buckets.Leaf(bucket) => {
+					return HashSet.union_bucket(dst, bucket)
+				}
+				Buckets.Branch(node) => {
+					left = HashSet.union_buckets(dst, node.left, 1)
+					return HashSet.union_buckets(left, node.right, 1)
+				}
+			}
+		}
+
+		half = count / 2
+		match src {
+			Buckets.Leaf(bucket) => {
+				return HashSet.union_bucket(dst, bucket)
+			}
+			Buckets.Branch(node) => {
+				left = HashSet.union_buckets(dst, node.left, half)
+				return HashSet.union_buckets(left, node.right, half)
+			}
+		}
+	}
+
+	fun union(left: HashSet, right: HashSet) -> HashSet {
+		return HashSet.union_buckets(left, right.buckets, right.bucket_count)
+	}
+
+	fun intersection_bucket(dst: HashSet, right: HashSet, bucket: Bucket) -> HashSet {
+		match bucket {
+			Bucket.Empty => {
+				return dst
+			}
+			Bucket.Node(node) => {
+				next = dst
+				if HashSet.contains(right, node.key) {
+					inserted = HashSet.insert(dst, node.key)
+					next = inserted.set
+				}
+				return HashSet.intersection_bucket(next, right, node.next)
+			}
+		}
+	}
+
+	fun intersection_buckets(dst: HashSet, left: Buckets, count: I32, right: HashSet) -> HashSet {
+		if count <= 1 {
+			match left {
+				Buckets.Leaf(bucket) => {
+					return HashSet.intersection_bucket(dst, right, bucket)
+				}
+				Buckets.Branch(node) => {
+					mid = HashSet.intersection_buckets(dst, node.left, 1, right)
+					return HashSet.intersection_buckets(mid, node.right, 1, right)
+				}
+			}
+		}
+
+		half = count / 2
+		match left {
+			Buckets.Leaf(bucket) => {
+				return HashSet.intersection_bucket(dst, right, bucket)
+			}
+			Buckets.Branch(node) => {
+				mid = HashSet.intersection_buckets(dst, node.left, half, right)
+				return HashSet.intersection_buckets(mid, node.right, half, right)
+			}
+		}
+	}
+
+	fun intersection(left: HashSet, right: HashSet) -> HashSet {
+		seed_capacity = left.len
+		if right.len < seed_capacity {
+			seed_capacity = right.len
+		}
+		out = HashSet.with_capacity(seed_capacity)
+		return HashSet.intersection_buckets(out, left.buckets, left.bucket_count, right)
+	}
+
+	fun difference_bucket(dst: HashSet, right: HashSet, bucket: Bucket) -> HashSet {
+		match bucket {
+			Bucket.Empty => {
+				return dst
+			}
+			Bucket.Node(node) => {
+				next = dst
+				if !HashSet.contains(right, node.key) {
+					inserted = HashSet.insert(dst, node.key)
+					next = inserted.set
+				}
+				return HashSet.difference_bucket(next, right, node.next)
+			}
+		}
+	}
+
+	fun difference_buckets(dst: HashSet, left: Buckets, count: I32, right: HashSet) -> HashSet {
+		if count <= 1 {
+			match left {
+				Buckets.Leaf(bucket) => {
+					return HashSet.difference_bucket(dst, right, bucket)
+				}
+				Buckets.Branch(node) => {
+					mid = HashSet.difference_buckets(dst, node.left, 1, right)
+					return HashSet.difference_buckets(mid, node.right, 1, right)
+				}
+			}
+		}
+
+		half = count / 2
+		match left {
+			Buckets.Leaf(bucket) => {
+				return HashSet.difference_bucket(dst, right, bucket)
+			}
+			Buckets.Branch(node) => {
+				mid = HashSet.difference_buckets(dst, node.left, half, right)
+				return HashSet.difference_buckets(mid, node.right, half, right)
+			}
+		}
+	}
+
+	fun difference(left: HashSet, right: HashSet) -> HashSet {
+		out = HashSet.with_capacity(left.len)
+		return HashSet.difference_buckets(out, left.buckets, left.bucket_count, right)
+	}
+}
+
+test "A hashset MUST have len 0 when created" {
+	set = HashSet.new()
+	assert(HashSet.len(set) == 0)
+}
+
+test "A hashset insert/remove MUST update membership" {
+	inserted = HashSet.insert(HashSet.new(), 10)
+	set = inserted.set
+	assert(inserted.inserted_new)
+	assert(HashSet.contains(set, 10))
+
+	removed = HashSet.remove(set, 10)
+	assert(removed.removed)
+	assert(HashSet.len(removed.set) == 0)
+	assert(!HashSet.contains(removed.set, 10))
+}
+
+test "A hashset duplicate insert MUST keep len stable" {
+	r1 = HashSet.insert(HashSet.new(), 1)
+	r2 = HashSet.insert(r1.set, 1)
+	assert(!r2.inserted_new)
+	assert(HashSet.len(r2.set) == 1)
+}
+
+test "A hashset set-ops MUST behave" {
+	left = HashSet.new()
+	left_r1 = HashSet.insert(left, 1)
+	left = left_r1.set
+	left_r2 = HashSet.insert(left, 2)
+	left = left_r2.set
+	left_r3 = HashSet.insert(left, 3)
+	left = left_r3.set
+
+	right = HashSet.new()
+	right_r1 = HashSet.insert(right, 3)
+	right = right_r1.set
+	right_r2 = HashSet.insert(right, 4)
+	right = right_r2.set
+
+	u = HashSet.union(left, right)
+	assert(HashSet.len(u) == 4)
+	assert(HashSet.contains(u, 4))
+
+	i = HashSet.intersection(left, right)
+	assert(HashSet.len(i) == 1)
+	assert(HashSet.contains(i, 3))
+
+	d = HashSet.difference(left, right)
+	assert(HashSet.len(d) == 2)
+	assert(HashSet.contains(d, 1))
+	assert(!HashSet.contains(d, 3))
+}

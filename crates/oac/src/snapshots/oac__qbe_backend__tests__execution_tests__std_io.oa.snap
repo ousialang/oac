@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+assertion_line: 2808
+expression: snapshot_content
+snapshot_kind: text
+---
+io1
+0
+100

@@ -84,7 +84,7 @@ Operator precedence is explicitly encoded in parser.
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
 - generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages
 - type definition graph creation
@@ -116,7 +116,10 @@ Important enforced invariants include:
 - `String` std helper surface includes structural accessors plus utility helpers (`String.equals`, `String.starts_with`, `String.ends_with`, `String.char_at_or`, `String.slice_clamped`)
 - stdlib split modules now also include generic `Option[T]` / `Result[T,E]` in `crates/oac/src/std/std_option_result.oa`
 - stdlib split modules now also include generic `Ref[T]` / `Mut[T]` in `crates/oac/src/std/std_ref.oa` with typed read helpers (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`) and mutable read/write helpers (`U8Mut.*`, `I32Mut.*`, `I64Mut.*`, `PtrIntMut.*`, `BoolMut.*`)
+- stdlib split modules now also include generic `HashSet[K: Hash + Eq]` in `crates/oac/src/std/std_set.oa` with persistent set-algebra helpers (`union`, `intersection`, `difference`) and insertion/removal result payloads (`InsertResult`, `RemoveResult`)
+- stdlib split modules now also include generic `Vec[T]` in `crates/oac/src/std/std_vec.oa` with persistent vector-style helpers (`push`, `pop`, `get`, `set`, `reserve`, `clear`) and explicit result enums/structs
 - C interop signatures are no longer compiler-injected from JSON; stdlib exposes them via `namespace Clib { extern fun ... }` in `crates/oac/src/std/std_clib.oa` (resolver keys are still mangled as `Clib__*` for namespaced-call lookup)
+- stdlib split modules now also include `namespace Io` wrappers in `crates/oac/src/std/std_io.oa` over `Clib.open/read/write/close` with explicit result enums (`IoError`, `IoReadResult`, `IoWriteResult`)
 - resolver builtins include numeric aliases `Int` -> `I32` and `PtrInt` -> `I64`
 - resolver builtins also include `Void` for procedure-like extern signatures
 - resolver builtins also include pointer-memory helpers `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, `store_u8(addr: PtrInt, value: U8) -> Void`, `store_i32(addr: PtrInt, value: I32) -> Void`, `store_i64(addr: PtrInt, value: I64) -> Void`, and `store_bool(addr: PtrInt, value: Bool) -> Void`

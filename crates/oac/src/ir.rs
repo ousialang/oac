@@ -5,14 +5,12 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use tracing::trace;
 
-use crate::{
-    ast_walk::{self, AstPathStyle},
-    builtins::BuiltInType,
-    flat_imports,
-    parser::{self, Ast, Expression, Literal, StructDef, UnaryOp},
-    symbol_keys::{
-        trait_impl_function_name, trait_impl_method_key, trait_impl_target_key, trait_method_key,
-    },
+use crate::ast_walk::{self, AstPathStyle};
+use crate::builtins::BuiltInType;
+use crate::flat_imports;
+use crate::parser::{self, Ast, Expression, Literal, StructDef, UnaryOp};
+use crate::symbol_keys::{
+    trait_impl_function_name, trait_impl_method_key, trait_impl_target_key, trait_method_key,
 };
 
 const LEGACY_INVARIANT_PREFIX: &str = "__struct__";
@@ -3243,9 +3241,9 @@ fn expression_kind(expr: &Expression) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::{builtins::BuiltInType, parser, tokenizer};
-
     use super::{resolve, TypeDef};
+    use crate::builtins::BuiltInType;
+    use crate::{parser, tokenizer};
 
     #[test]
     fn resolve_loads_split_stdlib_files() {
@@ -3380,6 +3378,50 @@ fun main() -> I32 {
                 .iter()
                 .any(|def| def.name == "Result"),
             "missing Result generic from split stdlib"
+        );
+        assert!(
+            resolved
+                .ast
+                .generic_definitions
+                .iter()
+                .any(|def| def.name == "HashSet"),
+            "missing HashSet generic from split stdlib"
+        );
+        assert!(
+            resolved
+                .ast
+                .generic_definitions
+                .iter()
+                .any(|def| def.name == "Vec"),
+            "missing Vec generic from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("IoError"),
+            "missing IoError type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("IoReadResult"),
+            "missing IoReadResult type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("IoWriteResult"),
+            "missing IoWriteResult type from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Io__read_all"),
+            "missing Io__read_all function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Io__write_all"),
+            "missing Io__write_all function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Io__read_file"),
+            "missing Io__read_file function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("Io__write_file"),
+            "missing Io__write_file function from split stdlib"
         );
         assert!(
             resolved.function_sigs.contains_key("Clib__malloc"),
