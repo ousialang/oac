@@ -59,12 +59,18 @@ Act like a compiler engineer, not a text editor:
 
 ## Pre-Commit Checklist
 
+- One-time setup per clone/worktree: `git config core.hooksPath .githooks`
 - `cargo check --all-targets --all-features`
 - `cargo nextest run --all-targets --all-features` (preferred when `cargo-nextest` is available)
 - `cargo test --all-targets --all-features` (fallback when `cargo-nextest` is unavailable)
 - Review snapshot diffs for unintended behavior changes.
 - Ensure snapshot hygiene gates pass (`*.snap.new` absent and execution snapshots aligned with fixtures).
 - Update docs in `agents/` and root `AGENTS.md` if any context changed.
+
+Local hook policy in this repository:
+- `pre-commit` auto-formats staged Rust files with nightly `rustfmt` (`rustfmt.toml`).
+- `pre-push` runs workspace tests on every push (prefer `nextest`, fallback to `cargo test`).
+- Emergency bypass is explicit via `--no-verify`.
 
 ## Autonomous Sync Rule (Mandatory)
 

@@ -56,6 +56,30 @@ npm run lint
 
 When debugging extension startup, verify the server command is exactly `oac lsp` (no extra `--stdio` argument).
 
+## Local Git Hooks
+
+This repository tracks local hooks under `.githooks/`.
+
+Enable once per clone/worktree:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Install/update formatter toolchain used by `pre-commit`:
+
+```bash
+rustup toolchain install nightly --component rustfmt
+```
+
+Hook behavior:
+- `pre-commit`: formats staged `*.rs` files with nightly `rustfmt` using `rustfmt.toml` (import sorting/grouping enabled for lower merge-conflict churn), then re-stages those files.
+- `pre-push`: runs Rust workspace tests on every push (`cargo nextest run --all-targets --all-features` preferred, `cargo test --all-targets --all-features` fallback when `cargo-nextest` is unavailable).
+
+Bypass for exceptional WIP cases:
+- `git commit --no-verify`
+- `git push --no-verify`
+
 ## Snapshot-Based Testing
 
 Key tests:
