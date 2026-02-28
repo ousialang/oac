@@ -122,6 +122,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `qbe-smt` now exposes Ariadne report helpers on `QbeSmtError` (`render_report_plain`, `render_report_terminal_auto`) and `oac` includes those reports in prove/invariant failure notes.
 - `qbe-smt` now models a wider CLib call set in CHC encoding: `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, plus `exit(code)` halting transitions (and variadic `printf` for compiler builtin `print` inlining).
 - CLib byte-effect models are bounded with deterministic inline precision (`limit = 16`) and sound fallback branches; unknown extern call targets remain strict fail-closed errors.
+- `qbe-smt` now models bounded `strlen` NUL-scan and bounded `strcmp` first-event scan (`difference` or shared NUL) with tri-state outcomes (`-1/0/1`) and fail-open fallback to constrained unknowns when precision bounds are exceeded.
+- `qbe-smt` now models `strcpy` as bounded byte copy until first NUL (including terminator) with fallback to unconstrained memory when no terminator is found within the inline bound.
+- `qbe-smt` now constrains modeled syscall-like return values: `open` returns `-1` or non-negative, `close` returns `0` or `-1`, and `read`/`write` return `-1` or a non-negative value bounded above by `count`.
 - CHC encoding only includes reachable QBE blocks from entry; unsupported instructions in unreachable blocks are ignored by design.
 - SAT struct-invariant failures now include a control-flow witness summary (checker CFG path + branch choices).
 - `oac build` no longer emits `target/oac/ir.smt2` sidecar output; SMT artifacts are only produced for struct invariant obligations under `target/oac/struct_invariants/`.

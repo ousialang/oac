@@ -128,6 +128,9 @@ Observed in parser/IR implementation:
 - `qbe-smt` models `call $exit(code)` as a halting transition with `exit` state set from `code`.
 - `qbe-smt` also models known CLib calls (`malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`) plus variadic `printf` for builtin `print` inlined paths.
 - CLib byte-memory call models use bounded precise expansion (`limit = 16`) with sound fallback branches; unknown extern call targets remain fail-closed unsupported errors.
+- String-call precision now includes bounded `strlen` NUL scanning and bounded `strcmp` first-event scanning (difference/shared NUL) with tri-state results (`-1/0/1`), each with fail-open fallback to constrained unknown results when bounds are exceeded.
+- `strcpy` effects are modeled as bounded copy-until-NUL (terminator included); if no NUL appears within the inline bound, encoding falls back to unconstrained memory.
+- Modeled syscall return values are now constrained: `open` returns `-1` or non-negative; `close` returns `0` or `-1`; `read`/`write` return `-1` or a non-negative value not exceeding `count`.
 - `qbe-smt` models `phi` by threading predecessor-block identity through CHC state and guarding predecessor-dependent merges.
 - `qbe-smt` is parser-free: proving consumes direct in-memory QBE IR (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`), not re-parsed QBE text.
 - `qbe-smt` flattens only entry-reachable blocks; unreachable unsupported instructions do not affect encoding.

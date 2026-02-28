@@ -5,8 +5,8 @@ use qbe::{
     Statement as QbeStatement, Type as QbeType, Value as QbeValue,
 };
 
+use crate::encode_extern_models::{call_is_exit, extern_call_model, ExternCallModel};
 use crate::{
-    encode_extern_models::{call_is_exit, extern_call_model, ExternCallModel},
     EncodeOptions, FunctionArgInvariantAssumption, ModuleAssumptions, QbeSmtError,
     BLIT_INLINE_LIMIT, GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
 };
@@ -1898,6 +1898,43 @@ fn call_assign_result_expr(
         | ExternCallModel::Strncpy => call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
             .map(|dest| normalize_to_assign_type(&dest, assign_ty))
             .unwrap_or(unknown_result),
+        ExternCallModel::Strlen => {
+            let Some(src_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map) else {
+                return unknown_result;
+            };
+            let fallback = constrain_to_non_negative_result(&unknown_result);
+            let len_expr = bounded_strlen_result_with_fallback_expr(
+                mem_curr,
+                &src_expr,
+                CLIB_CALL_INLINE_LIMIT,
+                &fallback,
+            );
+            normalize_to_assign_type(&len_expr, assign_ty)
+        }
+        ExternCallModel::Strcmp => {
+            let Some(left_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map) else {
+                return unknown_result;
+            };
+            let Some(right_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map) else {
+                return unknown_result;
+            };
+            let cmp_expr = bounded_strcmp_result_with_fallback_expr(
+                mem_curr,
+                &left_expr,
+                &right_expr,
+                CLIB_CALL_INLINE_LIMIT,
+                &unknown_result,
+            );
+            normalize_to_assign_type(&cmp_expr, assign_ty)
+        }
+        ExternCallModel::Open => constrain_to_neg_one_or_non_negative_result(&unknown_result),
+        ExternCallModel::Read | ExternCallModel::Write => {
+            let Some(count_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map) else {
+                return unknown_result;
+            };
+            constrain_to_neg_one_or_non_negative_le_result(&unknown_result, &count_expr)
+        }
+        ExternCallModel::Close => constrain_to_zero_or_neg_one_result(&unknown_result),
         ExternCallModel::Memcmp => {
             let Some(left_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map) else {
                 return unknown_result;
@@ -1918,15 +1955,7 @@ fn call_assign_result_expr(
             );
             normalize_to_assign_type(&cmp_expr, assign_ty)
         }
-        ExternCallModel::Exit
-        | ExternCallModel::Free
-        | ExternCallModel::Strlen
-        | ExternCallModel::Strcmp
-        | ExternCallModel::Open
-        | ExternCallModel::Read
-        | ExternCallModel::Write
-        | ExternCallModel::Close
-        | ExternCallModel::Printf => unknown_result,
+        ExternCallModel::Exit | ExternCallModel::Free | ExternCallModel::Printf => unknown_result,
     }
 }
 
@@ -2076,7 +2105,23 @@ fn memory_update_expr(
                         "mem_next",
                     )
                 }
-                ExternCallModel::Strcpy => "mem_next".to_string(),
+                ExternCallModel::Strcpy => {
+                    let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    let Some(src_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
+                    else {
+                        return "mem_next".to_string();
+                    };
+                    bounded_strcpy_with_fallback_expr(
+                        mem_curr,
+                        &src_expr,
+                        &dst_expr,
+                        CLIB_CALL_INLINE_LIMIT,
+                        "mem_next",
+                    )
+                }
                 ExternCallModel::Malloc
                 | ExternCallModel::Free
                 | ExternCallModel::Memcmp
@@ -2211,6 +2256,33 @@ fn non_zero_size_expr(size_expr: &str) -> String {
     )
 }
 
+fn constrain_to_non_negative_result(result_expr: &str) -> String {
+    let zero = bv_const_u64(0, 64);
+    format!("(ite (bvsge {result_expr} {zero}) {result_expr} {zero})")
+}
+
+fn constrain_to_neg_one_or_non_negative_result(result_expr: &str) -> String {
+    let neg_one = bv_const_u64(u64::MAX, 64);
+    let zero = bv_const_u64(0, 64);
+    let valid = format!("(or (= {result_expr} {neg_one}) (bvsge {result_expr} {zero}))");
+    format!("(ite {valid} {result_expr} {zero})")
+}
+
+fn constrain_to_zero_or_neg_one_result(result_expr: &str) -> String {
+    let neg_one = bv_const_u64(u64::MAX, 64);
+    let zero = bv_const_u64(0, 64);
+    let valid = format!("(or (= {result_expr} {zero}) (= {result_expr} {neg_one}))");
+    format!("(ite {valid} {result_expr} {zero})")
+}
+
+fn constrain_to_neg_one_or_non_negative_le_result(result_expr: &str, upper_expr: &str) -> String {
+    let neg_one = bv_const_u64(u64::MAX, 64);
+    let zero = bv_const_u64(0, 64);
+    let in_range = format!("(and (bvsge {result_expr} {zero}) (bvsle {result_expr} {upper_expr}))");
+    let valid = format!("(or (= {result_expr} {neg_one}) {in_range})");
+    format!("(ite {valid} {result_expr} {neg_one})")
+}
+
 fn bounded_copy_with_fallback_expr(
     mem_curr: &str,
     src_expr: &str,
@@ -2244,6 +2316,42 @@ fn bounded_copy_expr(
         acc = format!("(ite {cond} {write_i} {acc})");
     }
     acc
+}
+
+fn bounded_strcpy_with_fallback_expr(
+    mem_curr: &str,
+    src_expr: &str,
+    dst_expr: &str,
+    limit: u64,
+    mem_fallback: &str,
+) -> String {
+    let (precise, found_nul) = bounded_strcpy_expr(mem_curr, src_expr, dst_expr, limit);
+    format!("(ite {found_nul} {precise} {mem_fallback})")
+}
+
+fn bounded_strcpy_expr(
+    mem_curr: &str,
+    src_expr: &str,
+    dst_expr: &str,
+    limit: u64,
+) -> (String, String) {
+    let mut acc = mem_curr.to_string();
+    let mut found_nul = "false".to_string();
+    let zero = bv_const_u64(0, 8);
+
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let src_i = format!("(bvadd {src_expr} {index_expr})");
+        let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+        let byte_i = format!("(select {mem_curr} {src_i})");
+        let should_copy = format!("(not {found_nul})");
+        let write_i = format!("(store {acc} {dst_i} {byte_i})");
+        acc = format!("(ite {should_copy} {write_i} {acc})");
+        let is_nul = format!("(= {byte_i} {zero})");
+        found_nul = format!("(or {found_nul} {is_nul})");
+    }
+
+    (acc, found_nul)
 }
 
 fn bounded_set_with_fallback_expr(
@@ -2348,6 +2456,78 @@ fn bounded_memcmp_result_expr(
         bv_const_u64(0, 64),
         bv_const_u64(1, 64)
     )
+}
+
+fn bounded_strlen_result_with_fallback_expr(
+    mem_curr: &str,
+    src_expr: &str,
+    limit: u64,
+    fallback: &str,
+) -> String {
+    let (precise, found_nul) = bounded_strlen_result_expr(mem_curr, src_expr, limit);
+    format!("(ite {found_nul} {precise} {fallback})")
+}
+
+fn bounded_strlen_result_expr(mem_curr: &str, src_expr: &str, limit: u64) -> (String, String) {
+    let mut out = bv_const_u64(0, 64);
+    let mut found_nul = "false".to_string();
+    let zero_byte = bv_const_u64(0, 8);
+
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let src_i = format!("(bvadd {src_expr} {index_expr})");
+        let byte_i = format!("(select {mem_curr} {src_i})");
+        let is_nul = format!("(= {byte_i} {zero_byte})");
+        let first_match = format!("(and (not {found_nul}) {is_nul})");
+        out = format!("(ite {first_match} {index_expr} {out})");
+        found_nul = format!("(or {found_nul} {is_nul})");
+    }
+
+    (out, found_nul)
+}
+
+fn bounded_strcmp_result_with_fallback_expr(
+    mem_curr: &str,
+    left_expr: &str,
+    right_expr: &str,
+    limit: u64,
+    fallback: &str,
+) -> String {
+    let (precise, finished) = bounded_strcmp_result_expr(mem_curr, left_expr, right_expr, limit);
+    format!("(ite {finished} {precise} {fallback})")
+}
+
+fn bounded_strcmp_result_expr(
+    mem_curr: &str,
+    left_expr: &str,
+    right_expr: &str,
+    limit: u64,
+) -> (String, String) {
+    let mut out = bv_const_u64(0, 64);
+    let mut finished = "false".to_string();
+    let zero_byte = bv_const_u64(0, 8);
+
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let left_i = format!("(bvadd {left_expr} {index_expr})");
+        let right_i = format!("(bvadd {right_expr} {index_expr})");
+        let left_byte = format!("(select {mem_curr} {left_i})");
+        let right_byte = format!("(select {mem_curr} {right_i})");
+        let both_zero = format!("(and (= {left_byte} {zero_byte}) (= {right_byte} {zero_byte}))");
+        let differs = format!("(distinct {left_byte} {right_byte})");
+        let event = format!("(or {both_zero} {differs})");
+        let first_event = format!("(and (not {finished}) {event})");
+        let event_result = format!(
+            "(ite {differs} (ite (bvult {left_byte} {right_byte}) {} {}) {})",
+            bv_const_u64(u64::MAX, 64),
+            bv_const_u64(1, 64),
+            bv_const_u64(0, 64)
+        );
+        out = format!("(ite {first_event} {event_result} {out})");
+        finished = format!("(or {finished} {event})");
+    }
+
+    (out, finished)
 }
 
 fn binary_expr(instr: &QbeInstr, ty: AssignType, lhs: &str, rhs: &str) -> String {
