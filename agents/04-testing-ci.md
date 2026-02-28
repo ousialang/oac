@@ -149,8 +149,9 @@ Key tests:
 - `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags.
 - `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, and deterministic `--update-baseline` rewrites (using a mocked fixture runner).
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
-- `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Fixture compile/execute work is parallelized across worker threads, while snapshot assertions are sorted and applied deterministically afterward. Default worker count is `min(available_parallelism, 8)` and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>`. Compiler-error snapshots capture Ariadne plain-report output from the shared diagnostics layer.
+- `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Fixture compile/execute work runs through one worker-thread harness and snapshot assertions are sorted and applied deterministically afterward. Default worker count is serial (`1`) for stability and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>` for explicit parallel execution. Compiler-error snapshots capture Ariadne plain-report output from the shared diagnostics layer.
 - `crates/oac/src/qbe_backend.rs` also enforces snapshot hygiene contracts for execution snapshots: no committed `*.snap.new` files, no orphan execution snapshots without matching fixtures, and no duplicated Ariadne prefix artifacts (`Error: error[...]`) in snapshot content.
+- Snapshot metadata-only churn (for example insta header-only changes to `assertion_line` / `expression`) still requires cleanup: merge into `.snap` or delete `.snap.new` so tracked `*.snap.new` files stay empty.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts QBE emission for namespaced calls contains mangled function call symbols.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts statement-position `Void` extern calls are emitted (`call $free`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `i32_to_i64` lowering uses signed extension (`extsw`) and not byte extension (`extub`).
@@ -195,6 +196,7 @@ Snapshots live in:
 
 If behavior intentionally changes, update snapshots deliberately and review diffs for semantic regressions.
 Do not commit `.snap.new` files; accept or delete them before finishing.
+`git ls-files '*.snap.new'` should return no paths before you ship changes.
 
 ## Runtime Tooling Dependencies
 
