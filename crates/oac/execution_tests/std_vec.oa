@@ -1,0 +1,80 @@
+specialize IntVec = Vec[I32]
+
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+	} else {
+		print(0)
+	}
+	return 0
+}
+
+fun print_lookup(v: IntVec__Lookup) -> I32 {
+	match v {
+		IntVec__Lookup.Missing => {
+			print(99)
+			return 0
+		}
+		IntVec__Lookup.Found(value) => {
+			print(value)
+			return 0
+		}
+	}
+}
+
+fun print_pop(v: IntVec__PopResult) -> I32 {
+	match v {
+		IntVec__PopResult.Empty => {
+			print(99)
+			return 0
+		}
+		IntVec__PopResult.Value(payload) => {
+			print(payload.value)
+			print(IntVec.len(payload.vec))
+			return 0
+		}
+	}
+}
+
+fun main() -> I32 {
+	vec = IntVec.new()
+	print(IntVec.len(vec))
+	print(IntVec.capacity(vec))
+
+	vec = IntVec.reserve(vec, 3)
+	print(IntVec.capacity(vec))
+
+	vec = IntVec.push(vec, 10)
+	vec = IntVec.push(vec, 20)
+	vec = IntVec.push(vec, 30)
+	print(IntVec.len(vec))
+	print(IntVec.capacity(vec))
+	print_lookup(IntVec.get(vec, 0))
+	print_lookup(IntVec.get(vec, 1))
+	print_lookup(IntVec.get(vec, 2))
+	print_lookup(IntVec.get(vec, 9))
+
+	updated = IntVec.set(vec, 1, 99)
+	vec = updated.vec
+	print_bool(updated.updated)
+	print_lookup(IntVec.get(vec, 1))
+
+	miss_update = IntVec.set(vec, 9, 50)
+	print_bool(miss_update.updated)
+
+	print_pop(IntVec.pop(vec))
+	match IntVec.pop(vec) {
+		IntVec__PopResult.Empty => {
+			vec = vec
+		}
+		IntVec__PopResult.Value(payload) => {
+			vec = payload.vec
+		}
+	}
+	print(IntVec.len(vec))
+
+	vec = IntVec.clear(vec)
+	print(IntVec.len(vec))
+	print(IntVec.capacity(vec))
+	return 0
+}

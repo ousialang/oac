@@ -1,0 +1,61 @@
+specialize IntSet = HashSet[I32]
+
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+	} else {
+		print(0)
+	}
+	return 0
+}
+
+fun main() -> I32 {
+	set = IntSet.new()
+	print(IntSet.len(set))
+	print(IntSet.capacity(set))
+
+	r1 = IntSet.insert(set, 1)
+	set = r1.set
+	print_bool(r1.inserted_new)
+	r2 = IntSet.insert(set, 2)
+	set = r2.set
+	print_bool(r2.inserted_new)
+	r3 = IntSet.insert(set, 1)
+	set = r3.set
+	print_bool(r3.inserted_new)
+	print(IntSet.len(set))
+	print_bool(IntSet.contains(set, 1))
+	print_bool(IntSet.contains(set, 9))
+
+	removed = IntSet.remove(set, 2)
+	set = removed.set
+	print_bool(removed.removed)
+	print(IntSet.len(set))
+
+	left = IntSet.new()
+	left_i1 = IntSet.insert(left, 1)
+	left = left_i1.set
+	left_i2 = IntSet.insert(left, 3)
+	left = left_i2.set
+	right = IntSet.new()
+	right_i1 = IntSet.insert(right, 3)
+	right = right_i1.set
+	right_i2 = IntSet.insert(right, 4)
+	right = right_i2.set
+	u = IntSet.union(left, right)
+	print(IntSet.len(u))
+	print_bool(IntSet.contains(u, 4))
+	print_bool(IntSet.contains(u, 1))
+	i = IntSet.intersection(left, right)
+	print(IntSet.len(i))
+	print_bool(IntSet.contains(i, 3))
+	d = IntSet.difference(left, right)
+	print(IntSet.len(d))
+	print_bool(IntSet.contains(d, 1))
+	print_bool(IntSet.contains(d, 3))
+
+	set = IntSet.clear(set)
+	print(IntSet.len(set))
+	print(IntSet.capacity(set))
+	return 0
+}
