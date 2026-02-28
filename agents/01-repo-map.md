@@ -50,7 +50,7 @@ Editor tooling in this repository:
 - `crates/oac/execution_tests/*.oa`: language behavior fixtures (positive + negative).
 - `crates/oac/bench/prove_baseline.json`: committed proving benchmark baseline used by `oac bench-prove`.
 - `crates/oac/src/snapshots/*.snap`: canonical snapshots for tests.
-- `.github/workflows/ci.yml`: CI checks (`cargo check`, `cargo test`).
+- `.github/workflows/ci.yml`: CI checks (`cargo check`, `cargo nextest`) in parallel jobs.
 - `.githooks/pre-commit`: local Git hook that formats staged Rust files with nightly `rustfmt`.
 - `.githooks/pre-push`: local Git hook placeholder (no automatic test execution).
 - `rustfmt.toml`: repository Rust formatting policy (nightly import-sorting behavior).
