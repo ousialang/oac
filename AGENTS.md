@@ -40,7 +40,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - For Rust test execution, use `cargo nextest run` when `cargo-nextest` is available in the environment (it is the preferred default because it is faster).
 - Fall back to `cargo test` only when `cargo-nextest` is unavailable or when parity with CI behavior must be verified explicitly.
 - Tracked Git hooks live under `.githooks/`; enable them locally with `git config core.hooksPath .githooks`.
-- The local `pre-commit` hook formats staged Rust files with nightly `rustfmt` (using `rustfmt.toml` with nightly import-sorting options), and the local `pre-push` hook runs Rust tests (`cargo nextest run --all-targets --all-features` with `cargo test` fallback).
+- The local `pre-commit` hook formats staged Rust files with nightly `rustfmt` (using `rustfmt.toml` with nightly import-sorting options), and the local `pre-push` hook is intentionally a no-op (no automatic test execution).
 
 ## Current Syntax Notes
 
