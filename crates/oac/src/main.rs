@@ -1,3 +1,4 @@
+mod ast_walk;
 mod builtins;
 mod comptime;
 mod diagnostics;
@@ -10,8 +11,10 @@ mod prove;
 mod qbe_backend;
 mod riscv_smt; // Add the new module
 mod struct_invariants;
+mod symbol_keys;
 mod test_framework;
 mod tokenizer;
+mod verification_checker;
 mod verification_cycles;
 
 use std::collections::HashSet;
@@ -146,6 +149,92 @@ fn process_riscv_smt(
     Ok(())
 }
 
+struct FrontendPipelineCodes<'a> {
+    read_source_io_code: &'a str,
+    tokenize_code: &'a str,
+    serialize_tokens_io_code: &'a str,
+    write_tokens_io_code: &'a str,
+    parse_code: &'a str,
+    parse_message: &'a str,
+    import_code: &'a str,
+    import_message: &'a str,
+    comptime_code: &'a str,
+    comptime_message: &'a str,
+}
+
+fn parse_source_to_ast_with_artifacts(
+    source_path: &Path,
+    target_dir: &Path,
+    codes: &FrontendPipelineCodes<'_>,
+) -> Result<(String, parser::Ast), CompilerDiagnosticBundle> {
+    let source = std::fs::read_to_string(source_path).map_err(|err| {
+        io_stage_error(
+            codes.read_source_io_code,
+            format!("failed to read source {}", source_path.display()),
+            err,
+        )
+    })?;
+    trace!(source_len = source.len(), "Read source file");
+
+    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
+        CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
+            codes.tokenize_code,
+            &source,
+            Some(source_path),
+            &err,
+        ))
+    })?;
+    let tokens_path = target_dir.join("tokens.json");
+    let tokens_json = serde_json::to_string_pretty(&tokens).map_err(|err| {
+        io_stage_error(
+            codes.serialize_tokens_io_code,
+            "failed to serialize tokens",
+            err,
+        )
+    })?;
+    std::fs::write(&tokens_path, tokens_json).map_err(|err| {
+        io_stage_error(
+            codes.write_tokens_io_code,
+            format!("failed to write {}", tokens_path.display()),
+            err,
+        )
+    })?;
+    trace!(tokens_path = %tokens_path.display(), "Tokenized source file");
+
+    let root_ast = parser::parse(tokens).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Parse,
+            codes.parse_code,
+            codes.parse_message,
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+    let mut ast = flat_imports::resolve_ast(root_ast, source_path).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Import,
+            codes.import_code,
+            codes.import_message,
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+    comptime::execute_comptime_applies(&mut ast).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Comptime,
+            codes.comptime_code,
+            codes.comptime_message,
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+
+    Ok((source, ast))
+}
+
 fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBundle> {
     let target_dir = current_dir.join("target").join("oac");
     std::fs::create_dir_all(&target_dir).map_err(|err| {
@@ -157,65 +246,22 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
     })?;
 
     let source_path = Path::new(&build.source);
-    let source = std::fs::read_to_string(source_path).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-006",
-            format!("failed to read source {}", source_path.display()),
-            err,
-        )
-    })?;
-    trace!(source_len = source.len(), "Read input file");
-
-    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
-        CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
-            "OAC-TOKENIZE-001",
-            &source,
-            Some(source_path),
-            &err,
-        ))
-    })?;
-    let tokens_path = target_dir.join("tokens.json");
-    let tokens_json = serde_json::to_string_pretty(&tokens)
-        .map_err(|err| io_stage_error("OAC-IO-007", "failed to serialize tokens", err))?;
-    std::fs::write(&tokens_path, tokens_json).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-008",
-            format!("failed to write {}", tokens_path.display()),
-            err,
-        )
-    })?;
-    trace!(tokens_path = %tokens_path.display(), "Tokenized source file");
-
-    let root_ast = parser::parse(tokens).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Parse,
-            "OAC-PARSE-001",
-            "failed to parse source",
-            err,
-            Some(source_path),
-            Some(&source),
-        )
-    })?;
-    let mut ast = flat_imports::resolve_ast(root_ast, source_path).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Import,
-            "OAC-IMPORT-001",
-            "failed to resolve imports",
-            err,
-            Some(source_path),
-            Some(&source),
-        )
-    })?;
-    comptime::execute_comptime_applies(&mut ast).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Comptime,
-            "OAC-COMPTIME-001",
-            "failed to execute comptime applies",
-            err,
-            Some(source_path),
-            Some(&source),
-        )
-    })?;
+    let (source, ast) = parse_source_to_ast_with_artifacts(
+        source_path,
+        &target_dir,
+        &FrontendPipelineCodes {
+            read_source_io_code: "OAC-IO-006",
+            tokenize_code: "OAC-TOKENIZE-001",
+            serialize_tokens_io_code: "OAC-IO-007",
+            write_tokens_io_code: "OAC-IO-008",
+            parse_code: "OAC-PARSE-001",
+            parse_message: "failed to parse source",
+            import_code: "OAC-IMPORT-001",
+            import_message: "failed to resolve imports",
+            comptime_code: "OAC-COMPTIME-001",
+            comptime_message: "failed to execute comptime applies",
+        },
+    )?;
     let ast_path = target_dir.join("ast.json");
     let ast_json = serde_json::to_string_pretty(&ast)
         .map_err(|err| io_stage_error("OAC-IO-009", "failed to serialize AST", err))?;
@@ -254,65 +300,22 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
     })?;
 
     let source_path = Path::new(&test.source);
-    let source = std::fs::read_to_string(source_path).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-012",
-            format!("failed to read source {}", source_path.display()),
-            err,
-        )
-    })?;
-    trace!(source_len = source.len(), "Read test source file");
-
-    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
-        CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
-            "OAC-TOKENIZE-002",
-            &source,
-            Some(source_path),
-            &err,
-        ))
-    })?;
-    let tokens_path = target_dir.join("tokens.json");
-    let tokens_json = serde_json::to_string_pretty(&tokens)
-        .map_err(|err| io_stage_error("OAC-IO-013", "failed to serialize tokens", err))?;
-    std::fs::write(&tokens_path, tokens_json).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-014",
-            format!("failed to write {}", tokens_path.display()),
-            err,
-        )
-    })?;
-    trace!(tokens_path = %tokens_path.display(), "Tokenized test source file");
-
-    let root_ast = parser::parse(tokens).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Parse,
-            "OAC-PARSE-002",
-            "failed to parse test source",
-            err,
-            Some(source_path),
-            Some(&source),
-        )
-    })?;
-    let mut ast = flat_imports::resolve_ast(root_ast, source_path).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Import,
-            "OAC-IMPORT-002",
-            "failed to resolve test imports",
-            err,
-            Some(source_path),
-            Some(&source),
-        )
-    })?;
-    comptime::execute_comptime_applies(&mut ast).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Comptime,
-            "OAC-COMPTIME-002",
-            "failed to execute test comptime applies",
-            err,
-            Some(source_path),
-            Some(&source),
-        )
-    })?;
+    let (source, ast) = parse_source_to_ast_with_artifacts(
+        source_path,
+        &target_dir,
+        &FrontendPipelineCodes {
+            read_source_io_code: "OAC-IO-012",
+            tokenize_code: "OAC-TOKENIZE-002",
+            serialize_tokens_io_code: "OAC-IO-013",
+            write_tokens_io_code: "OAC-IO-014",
+            parse_code: "OAC-PARSE-002",
+            parse_message: "failed to parse test source",
+            import_code: "OAC-IMPORT-002",
+            import_message: "failed to resolve test imports",
+            comptime_code: "OAC-COMPTIME-002",
+            comptime_message: "failed to execute test comptime applies",
+        },
+    )?;
 
     let lowered = test_framework::lower_tests_to_program(ast).map_err(|err| {
         stage_error_from_anyhow(

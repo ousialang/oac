@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+use crate::ast_walk::{self, AstPathStyle};
 use crate::ir::ResolvedProgram;
-use crate::parser::{Expression, Statement};
+use crate::parser::Statement;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum VerificationEdgeKind {
@@ -232,99 +233,11 @@ fn collect_called_user_functions_in_statement(
     program: &ResolvedProgram,
     out: &mut BTreeSet<String>,
 ) {
-    match statement {
-        Statement::StructDef { .. } => {}
-        Statement::Assign { value, .. } => {
-            collect_called_user_functions_in_expr(value, program, out)
+    ast_walk::walk_statement_calls(statement, "", AstPathStyle::Ir, &mut |_path, call_name| {
+        if program.function_definitions.contains_key(call_name) {
+            out.insert(call_name.to_string());
         }
-        Statement::Return { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Expression { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Prove { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Assert { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-            if let Some(else_body) = else_body {
-                for statement in else_body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-        Statement::While { condition, body } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-        }
-        Statement::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                for statement in &arm.body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-    }
-}
-
-fn collect_called_user_functions_in_expr(
-    expr: &Expression,
-    program: &ResolvedProgram,
-    out: &mut BTreeSet<String>,
-) {
-    match expr {
-        Expression::Call(name, args) => {
-            if program.function_definitions.contains_key(name) {
-                out.insert(name.clone());
-            }
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            if let Expression::FieldAccess {
-                struct_variable,
-                field,
-            } = callee.as_ref()
-            {
-                let call = crate::parser::qualify_namespace_function_name(struct_variable, field);
-                if program.function_definitions.contains_key(&call) {
-                    out.insert(call);
-                }
-            }
-            collect_called_user_functions_in_expr(callee, program, out);
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::BinOp(_, lhs, rhs) => {
-            collect_called_user_functions_in_expr(lhs, program, out);
-            collect_called_user_functions_in_expr(rhs, program, out);
-        }
-        Expression::UnaryOp(_, expr) => collect_called_user_functions_in_expr(expr, program, out),
-        Expression::StructValue { field_values, .. } => {
-            for (_, value) in field_values {
-                collect_called_user_functions_in_expr(value, program, out);
-            }
-        }
-        Expression::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                collect_called_user_functions_in_expr(&arm.value, program, out);
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
-    }
+    });
 }
 
 fn sort_and_dedup_edges(edges: &mut Vec<VerificationEdge>) {

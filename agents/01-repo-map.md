@@ -18,6 +18,9 @@ Editor tooling in this repository:
 - `crates/oac/src/main.rs`: CLI entrypoint and build pipeline orchestration.
 - `crates/oac/src/diagnostics.rs`: shared compiler diagnostic model and Ariadne rendering used by CLI and LSP.
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
+- `crates/oac/src/ast_walk.rs`: shared AST traversal helpers (expression-path indexing + call walking) reused across resolve and verification passes.
+- `crates/oac/src/verification_checker.rs`: shared prove/invariant checker assembly helpers for QBE+CHC verification.
+- `crates/oac/src/symbol_keys.rs`: shared trait symbol key/mangling helpers used by resolve + codegen.
 - `crates/oac/src/lsp.rs`: stdio LSP server loop (`oac lsp`) and diagnostics publishing.
 - `tools/vscode-ousia/src/extension.ts`: VS Code client activation and `oac lsp` process launch.
 - `tools/vscode-ousia/package.json`: extension manifest, language registration, and server settings.
@@ -34,6 +37,7 @@ Editor tooling in this repository:
 - `crates/oac/src/struct_invariants.rs`: SMT-backed compile-time struct invariant verification pass.
 - `crates/qbe-smt/src/lib.rs`: public `qbe-smt` API and unit tests.
 - `crates/qbe-smt/src/encode.rs`: CHC/Horn fixedpoint encoder for `exit == 1` reachability.
+- `crates/qbe-smt/src/encode_extern_models.rs`: shared extern-call model catalog (supported symbols + arity validation metadata) consumed by CHC encoding.
 - `crates/qbe-smt/src/classify.rs`: conservative loop non-termination classifier used during `oac build`.
 - `crates/oac/src/std/std.oa`: stdlib import entrypoint injected during resolution.
 - `crates/oac/src/std/std_*.oa`: split stdlib modules imported by `std/std.oa`.

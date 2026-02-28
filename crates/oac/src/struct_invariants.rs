@@ -3,13 +3,17 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::ast_walk::{self, AstPathStyle};
 use crate::invariant_metadata::{
-    build_function_arg_invariant_assumptions, build_function_arg_invariant_assumptions_for_names,
-    build_function_arg_invariant_assumptions_with_name_overrides,
-    discover_struct_invariant_bindings, InvariantBinding,
+    build_function_arg_invariant_assumptions_for_names, discover_struct_invariant_bindings,
+    InvariantBinding,
 };
 use crate::ir::{ResolvedProgram, TypeDef};
-use crate::parser::{Expression, Statement};
+use crate::parser::Statement;
+use crate::verification_checker::{
+    checker_module_with_reachable_callees, rewrite_returns_to_zero, sanitize_ident,
+    should_assume_main_argc_non_negative, summarize_solver_output,
+};
 use crate::verification_cycles::{
     reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
 };
@@ -175,185 +179,15 @@ fn index_statement_expressions(
     next_index: &mut usize,
     out: &mut HashMap<String, usize>,
 ) {
-    match statement {
-        Statement::StructDef { .. } => {}
-        Statement::Assign { value, .. } => index_expression(
-            value,
-            &join_path(statement_path, "assign.value"),
-            next_index,
-            out,
-        ),
-        Statement::Return { expr } => index_expression(
-            expr,
-            &join_path(statement_path, "return.expr"),
-            next_index,
-            out,
-        ),
-        Statement::Expression { expr } => index_expression(
-            expr,
-            &join_path(statement_path, "expr.expr"),
-            next_index,
-            out,
-        ),
-        Statement::Prove { condition } => index_expression(
-            condition,
-            &join_path(statement_path, "prove.cond"),
-            next_index,
-            out,
-        ),
-        Statement::Assert { condition } => index_expression(
-            condition,
-            &join_path(statement_path, "assert.cond"),
-            next_index,
-            out,
-        ),
-        Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            index_expression(
-                condition,
-                &join_path(statement_path, "if.cond"),
-                next_index,
-                out,
-            );
-            let then_base = join_path(statement_path, "if.then");
-            for (i, nested) in body.iter().enumerate() {
-                index_statement_expressions(
-                    nested,
-                    &join_path(&then_base, &i.to_string()),
-                    next_index,
-                    out,
-                );
-            }
-            if let Some(else_body) = else_body {
-                let else_base = join_path(statement_path, "if.else");
-                for (i, nested) in else_body.iter().enumerate() {
-                    index_statement_expressions(
-                        nested,
-                        &join_path(&else_base, &i.to_string()),
-                        next_index,
-                        out,
-                    );
-                }
-            }
-        }
-        Statement::While { condition, body } => {
-            index_expression(
-                condition,
-                &join_path(statement_path, "while.cond"),
-                next_index,
-                out,
-            );
-            let body_base = join_path(statement_path, "while.body");
-            for (i, nested) in body.iter().enumerate() {
-                index_statement_expressions(
-                    nested,
-                    &join_path(&body_base, &i.to_string()),
-                    next_index,
-                    out,
-                );
-            }
-        }
-        Statement::Match { subject, arms } => {
-            index_expression(
-                subject,
-                &join_path(statement_path, "match.subject"),
-                next_index,
-                out,
-            );
-            for (arm_index, arm) in arms.iter().enumerate() {
-                let arm_base = join_path(statement_path, &format!("match.arm.{}", arm_index));
-                for (stmt_index, nested) in arm.body.iter().enumerate() {
-                    index_statement_expressions(
-                        nested,
-                        &join_path(&arm_base, &stmt_index.to_string()),
-                        next_index,
-                        out,
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn index_expression(
-    expression: &Expression,
-    expression_path: &str,
-    next_index: &mut usize,
-    out: &mut HashMap<String, usize>,
-) {
-    out.insert(expression_path.to_string(), *next_index);
-    *next_index += 1;
-
-    match expression {
-        Expression::Match { subject, arms } => {
-            index_expression(
-                subject,
-                &join_path(expression_path, "match.subject"),
-                next_index,
-                out,
-            );
-            for (i, arm) in arms.iter().enumerate() {
-                index_expression(
-                    &arm.value,
-                    &join_path(expression_path, &format!("match.arm.{}", i)),
-                    next_index,
-                    out,
-                );
-            }
-        }
-        Expression::Call(_, args) => {
-            for (i, arg) in args.iter().enumerate() {
-                index_expression(
-                    arg,
-                    &join_path(expression_path, &format!("call.arg.{}", i)),
-                    next_index,
-                    out,
-                );
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            index_expression(
-                callee,
-                &join_path(expression_path, "postfix.callee"),
-                next_index,
-                out,
-            );
-            for (i, arg) in args.iter().enumerate() {
-                index_expression(
-                    arg,
-                    &join_path(expression_path, &format!("postfix.arg.{}", i)),
-                    next_index,
-                    out,
-                );
-            }
-        }
-        Expression::BinOp(_, lhs, rhs) => {
-            index_expression(lhs, &join_path(expression_path, "bin.lhs"), next_index, out);
-            index_expression(rhs, &join_path(expression_path, "bin.rhs"), next_index, out);
-        }
-        Expression::UnaryOp(_, expr) => {
-            index_expression(
-                expr,
-                &join_path(expression_path, "unary.expr"),
-                next_index,
-                out,
-            );
-        }
-        Expression::StructValue { field_values, .. } => {
-            for (field_name, expr) in field_values {
-                index_expression(
-                    expr,
-                    &join_path(expression_path, &format!("struct.field.{}", field_name)),
-                    next_index,
-                    out,
-                );
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
-    }
+    ast_walk::walk_statement_expressions(
+        statement,
+        statement_path,
+        AstPathStyle::StructInvariants,
+        &mut |expression_path, _| {
+            out.insert(expression_path.to_string(), *next_index);
+            *next_index += 1;
+        },
+    );
 }
 
 fn collect_call_nodes_from_statement(
@@ -361,206 +195,14 @@ fn collect_call_nodes_from_statement(
     statement_path: &str,
     out: &mut Vec<(String, String)>,
 ) {
-    match statement {
-        Statement::StructDef { .. } => {}
-        Statement::Assign { value, .. } => collect_call_nodes_from_expression(
-            value,
-            &join_path(statement_path, "assign.value"),
-            out,
-        ),
-        Statement::Return { expr } => {
-            collect_call_nodes_from_expression(expr, &join_path(statement_path, "return.expr"), out)
-        }
-        Statement::Expression { expr } => {
-            collect_call_nodes_from_expression(expr, &join_path(statement_path, "expr.expr"), out)
-        }
-        Statement::Prove { condition } => collect_call_nodes_from_expression(
-            condition,
-            &join_path(statement_path, "prove.cond"),
-            out,
-        ),
-        Statement::Assert { condition } => collect_call_nodes_from_expression(
-            condition,
-            &join_path(statement_path, "assert.cond"),
-            out,
-        ),
-        Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            collect_call_nodes_from_expression(
-                condition,
-                &join_path(statement_path, "if.cond"),
-                out,
-            );
-            let then_base = join_path(statement_path, "if.then");
-            for (i, nested) in body.iter().enumerate() {
-                collect_call_nodes_from_statement(
-                    nested,
-                    &join_path(&then_base, &i.to_string()),
-                    out,
-                );
-            }
-            if let Some(else_body) = else_body {
-                let else_base = join_path(statement_path, "if.else");
-                for (i, nested) in else_body.iter().enumerate() {
-                    collect_call_nodes_from_statement(
-                        nested,
-                        &join_path(&else_base, &i.to_string()),
-                        out,
-                    );
-                }
-            }
-        }
-        Statement::While { condition, body } => {
-            collect_call_nodes_from_expression(
-                condition,
-                &join_path(statement_path, "while.cond"),
-                out,
-            );
-            let body_base = join_path(statement_path, "while.body");
-            for (i, nested) in body.iter().enumerate() {
-                collect_call_nodes_from_statement(
-                    nested,
-                    &join_path(&body_base, &i.to_string()),
-                    out,
-                );
-            }
-        }
-        Statement::Match { subject, arms } => {
-            collect_call_nodes_from_expression(
-                subject,
-                &join_path(statement_path, "match.subject"),
-                out,
-            );
-            for (arm_index, arm) in arms.iter().enumerate() {
-                let arm_base = join_path(statement_path, &format!("match.arm.{}", arm_index));
-                for (stmt_index, nested) in arm.body.iter().enumerate() {
-                    collect_call_nodes_from_statement(
-                        nested,
-                        &join_path(&arm_base, &stmt_index.to_string()),
-                        out,
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn collect_call_nodes_from_expression(
-    expression: &Expression,
-    expression_path: &str,
-    out: &mut Vec<(String, String)>,
-) {
-    match expression {
-        Expression::Call(name, args) => {
-            out.push((expression_path.to_string(), name.clone()));
-            for (i, arg) in args.iter().enumerate() {
-                collect_call_nodes_from_expression(
-                    arg,
-                    &join_path(expression_path, &format!("call.arg.{}", i)),
-                    out,
-                );
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            if let Expression::FieldAccess {
-                struct_variable,
-                field,
-            } = callee.as_ref()
-            {
-                let call = crate::parser::qualify_namespace_function_name(struct_variable, field);
-                out.push((expression_path.to_string(), call));
-            }
-            collect_call_nodes_from_expression(
-                callee,
-                &join_path(expression_path, "postfix.callee"),
-                out,
-            );
-            for (i, arg) in args.iter().enumerate() {
-                collect_call_nodes_from_expression(
-                    arg,
-                    &join_path(expression_path, &format!("postfix.arg.{}", i)),
-                    out,
-                );
-            }
-        }
-        Expression::BinOp(_, lhs, rhs) => {
-            collect_call_nodes_from_expression(lhs, &join_path(expression_path, "bin.lhs"), out);
-            collect_call_nodes_from_expression(rhs, &join_path(expression_path, "bin.rhs"), out);
-        }
-        Expression::UnaryOp(_, expr) => {
-            collect_call_nodes_from_expression(
-                expr,
-                &join_path(expression_path, "unary.expr"),
-                out,
-            );
-        }
-        Expression::StructValue { field_values, .. } => {
-            for (field_name, expr) in field_values {
-                collect_call_nodes_from_expression(
-                    expr,
-                    &join_path(expression_path, &format!("struct.field.{}", field_name)),
-                    out,
-                );
-            }
-        }
-        Expression::Match { subject, arms } => {
-            collect_call_nodes_from_expression(
-                subject,
-                &join_path(expression_path, "match.subject"),
-                out,
-            );
-            for (i, arm) in arms.iter().enumerate() {
-                collect_call_nodes_from_expression(
-                    &arm.value,
-                    &join_path(expression_path, &format!("match.arm.{}", i)),
-                    out,
-                );
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
-    }
-}
-
-fn join_path(prefix: &str, segment: &str) -> String {
-    if prefix.is_empty() {
-        segment.to_string()
-    } else {
-        format!("{}.{}", prefix, segment)
-    }
-}
-
-fn sanitize_ident(input: &str) -> String {
-    let mut out = String::new();
-    for (i, ch) in input.chars().enumerate() {
-        let keep = ch.is_ascii_alphanumeric() || ch == '_';
-        if keep {
-            if i == 0 && ch.is_ascii_digit() {
-                out.push('_');
-            }
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    if out.is_empty() {
-        "_sym".to_string()
-    } else {
-        out
-    }
-}
-
-fn should_assume_main_argc_non_negative(site: &ObligationSite, checker: &qbe::Function) -> bool {
-    if site.caller != "main" {
-        return false;
-    }
-    if checker.arguments.len() != 2 {
-        return false;
-    }
-    matches!(checker.arguments[0].0, qbe::Type::Word)
-        && matches!(checker.arguments[1].0, qbe::Type::Long)
+    ast_walk::walk_statement_calls(
+        statement,
+        statement_path,
+        AstPathStyle::StructInvariants,
+        &mut |expression_path, call_name| {
+            out.push((expression_path.to_string(), call_name.to_string()));
+        },
+    );
 }
 
 fn solve_obligations_qbe(
@@ -604,7 +246,7 @@ fn solve_obligations_qbe(
             "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    site,
+                    &site.caller,
                     &checker_function,
                 ),
                 first_arg_i32_range: None,
@@ -769,33 +411,6 @@ fn is_sat_for_main_argc_range(
 }
 fn escape_diagnostic_value(value: &str) -> String {
     value.replace('"', "\\\"")
-}
-
-fn summarize_solver_output(stdout: &str, stderr: &str) -> Option<String> {
-    let mut snippets = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .skip(1)
-        .take(2)
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>();
-
-    if snippets.is_empty() {
-        snippets = stderr
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .take(1)
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>();
-    }
-
-    if snippets.is_empty() {
-        None
-    } else {
-        Some(snippets.join(" | "))
-    }
 }
 
 fn sat_cfg_witness_summary(function: &qbe::Function) -> Option<String> {
@@ -1019,115 +634,6 @@ fn build_site_checker_module(
         &checker_to_program_name,
     )?;
     Ok((module, checker, assumptions))
-}
-
-fn checker_module_with_reachable_callees(
-    program: &ResolvedProgram,
-    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
-    function_map: &HashMap<String, qbe::Function>,
-    checker: &qbe::Function,
-    checker_to_program_name: &HashMap<String, String>,
-) -> anyhow::Result<(qbe::Module, qbe_smt::ModuleAssumptions)> {
-    let mut additional_roots = BTreeSet::<String>::new();
-    loop {
-        let mut module = qbe::Module::default();
-        module.functions.push(checker.clone());
-
-        let mut visited = HashSet::<String>::new();
-        let mut queue = VecDeque::<String>::new();
-        for callee in direct_user_callees(checker, function_map) {
-            queue.push_back(callee);
-        }
-        for root in &additional_roots {
-            if root != &checker.name {
-                queue.push_back(root.clone());
-            }
-        }
-
-        while let Some(callee_name) = queue.pop_front() {
-            if !visited.insert(callee_name.clone()) {
-                continue;
-            }
-            let callee = function_map.get(&callee_name).ok_or_else(|| {
-                anyhow::anyhow!("missing QBE function for callee {}", callee_name)
-            })?;
-            module.functions.push(callee.clone());
-            for nested in direct_user_callees(callee, function_map) {
-                if !visited.contains(&nested) {
-                    queue.push_back(nested);
-                }
-            }
-        }
-
-        let assumptions = if checker_to_program_name.is_empty() {
-            build_function_arg_invariant_assumptions(
-                program,
-                &module.functions,
-                invariant_by_struct,
-            )?
-        } else {
-            build_function_arg_invariant_assumptions_with_name_overrides(
-                program,
-                &module.functions,
-                invariant_by_struct,
-                checker_to_program_name,
-            )?
-        };
-        let required_invariant_functions = assumptions
-            .iter()
-            .map(|assumption| assumption.invariant_function_name.clone())
-            .collect::<BTreeSet<_>>();
-
-        let mut next_roots = additional_roots.clone();
-        next_roots.extend(required_invariant_functions);
-        if next_roots == additional_roots {
-            return Ok((
-                module,
-                qbe_smt::ModuleAssumptions {
-                    arg_invariant_assumptions: assumptions,
-                },
-            ));
-        }
-        additional_roots = next_roots;
-    }
-}
-
-fn direct_user_callees(
-    function: &qbe::Function,
-    function_map: &HashMap<String, qbe::Function>,
-) -> BTreeSet<String> {
-    let mut callees = BTreeSet::new();
-    for block in &function.blocks {
-        for item in &block.items {
-            let qbe::BlockItem::Statement(statement) = item else {
-                continue;
-            };
-            let maybe_name = match statement {
-                qbe::Statement::Assign(_, _, qbe::Instr::Call(name, _, _))
-                | qbe::Statement::Volatile(qbe::Instr::Call(name, _, _)) => Some(name),
-                _ => None,
-            };
-            if let Some(name) = maybe_name {
-                if function_map.contains_key(name) {
-                    callees.insert(name.clone());
-                }
-            }
-        }
-    }
-    callees
-}
-
-fn rewrite_returns_to_zero(function: &mut qbe::Function) {
-    for block in &mut function.blocks {
-        for item in &mut block.items {
-            let qbe::BlockItem::Statement(qbe::Statement::Volatile(instr)) = item else {
-                continue;
-            };
-            if matches!(instr, qbe::Instr::Ret(_)) {
-                *instr = qbe::Instr::Ret(Some(qbe::Value::Const(0)));
-            }
-        }
-    }
 }
 
 fn inject_site_check_and_return(
@@ -1725,7 +1231,8 @@ fun main() -> I32 {
             "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    &sites[0], &checker,
+                    &sites[0].caller,
+                    &checker,
                 ),
                 first_arg_i32_range: None,
             },
@@ -1773,7 +1280,8 @@ fun main() -> I32 {
             "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    &sites[0], &checker,
+                    &sites[0].caller,
+                    &checker,
                 ),
                 first_arg_i32_range: None,
             },
@@ -2001,7 +1509,8 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
             "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    &sites[0], &checker,
+                    &sites[0].caller,
+                    &checker,
                 ),
                 first_arg_i32_range: None,
             },
@@ -2051,7 +1560,8 @@ fun main() -> I32 {
             "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    &sites[0], &checker,
+                    &sites[0].caller,
+                    &checker,
                 ),
                 first_arg_i32_range: None,
             },
@@ -2098,7 +1608,8 @@ fun main(argc: I32, argv: I64) -> I32 {
             "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    &sites[0], &checker,
+                    &sites[0].caller,
+                    &checker,
                 ),
                 first_arg_i32_range: None,
             },
