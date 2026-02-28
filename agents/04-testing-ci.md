@@ -74,7 +74,7 @@ rustup toolchain install nightly --component rustfmt
 
 Hook behavior:
 - `pre-commit`: formats staged `*.rs` files with nightly `rustfmt` using `rustfmt.toml` (import sorting/grouping enabled for lower merge-conflict churn), then re-stages those files.
-- `pre-push`: runs Rust workspace tests on every push (`cargo nextest run --all-targets --all-features` preferred, `cargo test --all-targets --all-features` fallback when `cargo-nextest` is unavailable).
+- `pre-push`: no-op placeholder (does not run tests automatically).
 
 Bypass for exceptional WIP cases:
 - `git commit --no-verify`

@@ -69,7 +69,7 @@ Act like a compiler engineer, not a text editor:
 
 Local hook policy in this repository:
 - `pre-commit` auto-formats staged Rust files with nightly `rustfmt` (`rustfmt.toml`).
-- `pre-push` runs workspace tests on every push (prefer `nextest`, fallback to `cargo test`).
+- `pre-push` is an intentional no-op placeholder (no automatic test execution on push).
 - Emergency bypass is explicit via `--no-verify`.
 
 ## Autonomous Sync Rule (Mandatory)
