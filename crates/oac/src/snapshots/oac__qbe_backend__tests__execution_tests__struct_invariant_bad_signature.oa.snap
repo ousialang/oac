@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-[OAC-RESOLVE-001] Error: error[resolve:OAC-RESOLVE-001]: failed to resolve/type-check program: invariant __struct__Counter__invariant must have signature fun __struct__Counter__invariant(v: Counter) -> Bool
+[OAC-RESOLVE-001] Error: failed to resolve/type-check program: invariant __struct__Counter__invariant must have signature fun __struct__Counter__invariant(v: Counter) -> Bool

@@ -20,7 +20,7 @@ pub enum DiagnosticStage {
     StructInvariant,
     LoopClassifier,
     Qbe,
-    Zig,
+    Linker,
     Io,
     Internal,
 }
@@ -37,7 +37,7 @@ impl fmt::Display for DiagnosticStage {
             DiagnosticStage::StructInvariant => "struct-invariant",
             DiagnosticStage::LoopClassifier => "loop-classifier",
             DiagnosticStage::Qbe => "qbe",
-            DiagnosticStage::Zig => "zig",
+            DiagnosticStage::Linker => "linker",
             DiagnosticStage::Io => "io",
             DiagnosticStage::Internal => "internal",
         };
@@ -136,20 +136,15 @@ impl CompilerDiagnostic {
             ("<unknown>".to_string(), 0..1)
         };
 
-        let severity_prefix = match self.severity {
-            DiagnosticSeverity::Error => "error",
+        let report_kind = match self.severity {
+            DiagnosticSeverity::Error => ReportKind::Error,
         };
 
-        let mut report = Report::build(
-            ReportKind::Error,
-            (primary_file_id.clone(), primary_span.clone()),
-        )
-        .with_code(self.code.clone())
-        .with_message(format!(
-            "{severity_prefix}[{}:{}]: {}",
-            self.stage, self.code, self.message
-        ))
-        .with_config(Config::default().with_color(use_color));
+        let mut report =
+            Report::build(report_kind, (primary_file_id.clone(), primary_span.clone()))
+                .with_code(self.code.clone())
+                .with_message(self.message.clone())
+                .with_config(Config::default().with_color(use_color));
 
         for label in &self.labels {
             report = report.with_label(
@@ -280,13 +275,31 @@ pub fn diagnostic_from_anyhow(
 
     let mut causes = error.chain();
     if let Some(primary) = causes.next() {
-        diagnostic.message = format!("{}: {}", diagnostic.message, primary);
+        diagnostic.message = merge_primary_cause_message(&diagnostic.message, &primary.to_string());
     }
     for cause in causes {
         diagnostic = diagnostic.with_note(format!("caused by: {cause}"));
     }
 
     diagnostic
+}
+
+fn merge_primary_cause_message(base_message: &str, primary_cause: &str) -> String {
+    let base = base_message.trim();
+    let primary = primary_cause.trim();
+    if base.is_empty() {
+        return primary.to_string();
+    }
+    if primary.is_empty() {
+        return base.to_string();
+    }
+    if primary == base || primary.starts_with(&format!("{base}:")) {
+        return primary.to_string();
+    }
+    if base.starts_with(&format!("{primary}:")) {
+        return base.to_string();
+    }
+    format!("{base}: {primary}")
 }
 
 pub fn diagnostic_from_tokenizer_error(
@@ -384,8 +397,8 @@ pub fn next_char_boundary(source: &str, start: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        diagnostic_from_tokenizer_error, CompilerDiagnostic, CompilerDiagnosticBundle,
-        DiagnosticStage,
+        diagnostic_from_anyhow, diagnostic_from_tokenizer_error, CompilerDiagnostic,
+        CompilerDiagnosticBundle, DiagnosticStage,
     };
     use crate::tokenizer::tokenize;
 
@@ -431,5 +444,40 @@ mod tests {
         let text = diagnostic.render_plain();
         assert!(text.contains("import failed"));
         assert!(text.contains("OAC-IMPORT-001"));
+    }
+
+    #[test]
+    fn plain_rendering_avoids_double_error_prefix_headline() {
+        let diagnostic = CompilerDiagnostic::new(
+            "OAC-RESOLVE-001",
+            DiagnosticStage::Resolve,
+            "failed to resolve/type-check program: unknown type Foo",
+        );
+        let text = diagnostic.render_plain();
+        assert!(
+            !text.contains("Error: error["),
+            "plain render should not duplicate error prefix: {text}"
+        );
+        assert!(
+            text.contains("Error: failed to resolve/type-check program: unknown type Foo"),
+            "unexpected plain render headline: {text}"
+        );
+    }
+
+    #[test]
+    fn diagnostic_from_anyhow_deduplicates_primary_cause_prefix() {
+        let err = anyhow::anyhow!("failed to parse source: unexpected token ')' in function body");
+        let diagnostic = diagnostic_from_anyhow(
+            DiagnosticStage::Parse,
+            "OAC-PARSE-001",
+            "failed to parse source",
+            &err,
+            None,
+            None,
+        );
+        assert_eq!(
+            diagnostic.message,
+            "failed to parse source: unexpected token ')' in function body"
+        );
     }
 }

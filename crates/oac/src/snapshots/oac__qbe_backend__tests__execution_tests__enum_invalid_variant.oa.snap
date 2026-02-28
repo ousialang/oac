@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-[OAC-RESOLVE-001] Error: error[resolve:OAC-RESOLVE-001]: failed to resolve/type-check program: variant Blue not found in enum Color
+[OAC-RESOLVE-001] Error: failed to resolve/type-check program: variant Blue not found in enum Color

@@ -2242,7 +2242,7 @@ mod tests {
     use crate::{compile, ir, parser::parse, tokenizer::tokenize, Build};
     use std::{
         fs,
-        path::Path,
+        path::{Path, PathBuf},
         process::{Command, Stdio},
         thread::sleep,
         time::{Duration, Instant},
@@ -2250,6 +2250,40 @@ mod tests {
 
     use super::compile as compile_qbe;
     const EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
+    const EXECUTION_SNAPSHOT_PREFIX: &str = "oac__qbe_backend__tests__execution_tests__";
+    const SNAPSHOT_EXTENSION: &str = ".snap";
+
+    fn execution_snapshot_files() -> Vec<PathBuf> {
+        let mut files = fs::read_dir("src/snapshots")
+            .expect("read snapshots directory")
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                let file_name = path.file_name()?.to_string_lossy();
+                if file_name.starts_with(EXECUTION_SNAPSHOT_PREFIX)
+                    && file_name.ends_with(SNAPSHOT_EXTENSION)
+                {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        files.sort();
+        files
+    }
+
+    fn fixture_name_for_snapshot(snapshot_path: &Path) -> Option<String> {
+        let file_name = snapshot_path.file_name()?.to_string_lossy();
+        if !file_name.starts_with(EXECUTION_SNAPSHOT_PREFIX)
+            || !file_name.ends_with(SNAPSHOT_EXTENSION)
+        {
+            return None;
+        }
+        let stem = file_name
+            .strip_prefix(EXECUTION_SNAPSHOT_PREFIX)?
+            .strip_suffix(SNAPSHOT_EXTENSION)?;
+        Some(stem.to_string())
+    }
 
     fn run_executable_with_timeout(workdir: &Path) -> Result<String, String> {
         let mut child = Command::new("./target/oac/app")
@@ -2719,5 +2753,51 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
                 }
             }
         }
+    }
+
+    #[test]
+    fn execution_snapshot_hygiene_contract() {
+        let pending = fs::read_dir("src/snapshots")
+            .expect("read snapshots directory")
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                let file_name = path.file_name()?.to_string_lossy();
+                if file_name.ends_with(".snap.new") {
+                    Some(file_name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            pending.is_empty(),
+            "committed .snap.new files are not allowed: {pending:?}"
+        );
+
+        let mut missing_fixtures = Vec::new();
+        let mut duplicated_prefix = Vec::new();
+        for snapshot_path in execution_snapshot_files() {
+            let fixture_name =
+                fixture_name_for_snapshot(&snapshot_path).expect("valid execution snapshot path");
+            let fixture_path = Path::new("execution_tests").join(&fixture_name);
+            if !fixture_path.exists() {
+                missing_fixtures.push(fixture_name);
+            }
+
+            let snapshot = fs::read_to_string(&snapshot_path)
+                .unwrap_or_else(|_| panic!("read snapshot {}", snapshot_path.display()));
+            if snapshot.contains("Error: error[") {
+                duplicated_prefix.push(snapshot_path.display().to_string());
+            }
+        }
+
+        assert!(
+            missing_fixtures.is_empty(),
+            "execution snapshots without matching fixtures: {missing_fixtures:?}"
+        );
+        assert!(
+            duplicated_prefix.is_empty(),
+            "diagnostics with duplicated error prefix found in snapshots: {duplicated_prefix:?}"
+        );
     }
 }

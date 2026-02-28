@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-[OAC-PARSE-001] Error: error[parse:OAC-PARSE-001]: failed to parse source: template syntax was removed; use `generic Name[T, ...] { ... }` instead
+[OAC-PARSE-001] Error: failed to parse source: template syntax was removed; use `generic Name[T, ...] { ... }` instead

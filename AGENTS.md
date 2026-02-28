@@ -82,7 +82,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
 - Compiler diagnostics are centralized in `crates/oac/src/diagnostics.rs` and rendered with Ariadne for both CLI output and `oac lsp` diagnostic conversion.
-- `oac build` / `oac test` stage failures are now mapped to stable diagnostic codes (for example `OAC-PARSE-001`, `OAC-RESOLVE-001`) and emitted as Ariadne reports; execution fixture compilation-error snapshots therefore reflect Ariadne plain-report text.
+- `oac build` / `oac test` stage failures are now mapped to stable diagnostic codes (for example `OAC-PARSE-001`, `OAC-RESOLVE-001`, `OAC-LINK-001`, `OAC-LINK-002`) and emitted as Ariadne reports; execution fixture compilation-error snapshots therefore reflect Ariadne plain-report text.
 - A VS Code extension scaffold now lives in `tools/vscode-ousia/`; it launches `oac lsp` and is configured via `ousia.server.path`, `ousia.server.args`, and `ousia.trace.server`.
 - The VS Code extension must launch `oac lsp` without appending `--stdio`; `ousia.server.args` are sanitized to ignore `--stdio`.
 - Top-level tests use declaration syntax: `test "Name" { ... }`.
@@ -120,7 +120,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Build/test environments that hit prove obligations also require `z3`; debug SMT artifacts are emitted under `target/oac/prove/`.
 - `oac build` now runs a best-effort non-termination classifier on the generated QBE `main` function; when it proves a canonical while-loop is non-terminating, compilation fails early with the loop header label and proof reason.
 - Build/test linking now uses C compiler drivers (`cc`/`clang`/target-prefixed `*-gcc`) instead of Zig. Link step is fail-closed and supports `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS`.
+- Linker-stage diagnostics now use `DiagnosticStage::Linker` and stable codes `OAC-LINK-001` / `OAC-LINK-002` (legacy `OAC-ZIG-*` names are removed).
 - Execution fixture snapshots in `qbe_backend` are based on program stdout even when the process exits with a non-zero code; runtime errors are reserved for spawn failures, timeouts, invalid UTF-8, or signal termination.
+- Snapshot hygiene is test-gated: committed `*.snap.new` files, execution snapshots without matching `execution_tests/*.oa` fixtures, and duplicated Ariadne prefixes (`Error: error[...]`) are treated as test failures.
 - GitHub Actions CI now provisions backend test/build dependencies before Rust checks (`z3`, Zig via `goto-bus-stop/setup-zig@v2` pinned to `0.13.0`, and `qbe` built from upstream `qbe-1.2` source tarball in `.github/workflows/ci.yml`).
 
 ## Hard-Cut Migration Cheatsheet
