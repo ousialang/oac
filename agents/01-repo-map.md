@@ -29,6 +29,7 @@ Editor tooling in this repository:
 - `crates/oac/src/qbe_backend.rs`: code generation to QBE IR and end-to-end execution tests.
 - `crates/oac/src/builtins.rs`: built-in scalar types (including `U8`/`Void`) and builtin type parsing.
 - `crates/oac/src/riscv_smt.rs`: ELF -> SMT pipeline for bounded return-to-zero checks.
+- `crates/oac/src/verification.rs`: shared proof/invariant verification entrypoint that sequences prove verification before struct-invariant verification.
 - `crates/oac/src/prove.rs`: SMT-backed compile-time verification pass for `prove(...)` statement obligations.
 - `crates/oac/src/struct_invariants.rs`: SMT-backed compile-time struct invariant verification pass.
 - `crates/qbe-smt/src/lib.rs`: public `qbe-smt` API and unit tests.
