@@ -147,7 +147,8 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `crates/oac/src/qbe_backend.rs` execution fixtures compile/execute inside one worker-thread harness and snapshot assertions stay deterministic by sorting fixture paths/results before asserting; worker count defaults to serial (`1`) for stability and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>` for explicit parallel runs.
 - Snapshot hygiene is test-gated: committed `*.snap.new` files, execution snapshots without matching `execution_tests/*.oa` fixtures, and duplicated Ariadne prefixes (`Error: error[...]`) are treated as test failures.
 - Treat metadata-only insta churn (`assertion_line` / `expression` header updates) the same way: accept into the canonical `.snap` or delete the `.snap.new` artifact so no tracked `*.snap.new` files remain.
-- GitHub Actions CI now provisions backend test/build dependencies before Rust checks (`z3`, Zig via `goto-bus-stop/setup-zig@v2` pinned to `0.13.0`, and `qbe` built from upstream `qbe-1.2` source tarball in `.github/workflows/ci.yml`).
+- GitHub Actions CI now runs Rust checks in parallel jobs in `.github/workflows/ci.yml`: `cargo check --all-targets --all-features` (`check`) and `cargo nextest run --all-targets --all-features` (`nextest`).
+- The `nextest` CI job provisions backend test/build dependencies (`z3`, Zig via `goto-bus-stop/setup-zig@v2` pinned to `0.13.0`, and `qbe` built from upstream `qbe-1.2` source tarball) and installs `cargo-nextest` via `taiki-e/install-action@nextest`.
 
 ## Hard-Cut Migration Cheatsheet
 
