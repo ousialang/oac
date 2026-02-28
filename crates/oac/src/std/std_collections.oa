@@ -278,10 +278,6 @@ generic HashTable[K: Hash + Eq, V] {
 		resize_threshold: I32,
 	}
 
-	invariant coherent_state "hashtable metadata and structure must stay coherent" for (v: HashTable) {
-		return true
-	}
-
 	struct SetResult {
 		table: HashTable,
 		inserted_new: Bool,
@@ -547,48 +543,42 @@ generic HashTable[K: Hash + Eq, V] {
 		}
 	}
 
-	fun insert_bucket_entries(dst: HashTable, bucket: Bucket) -> HashTable {
-		match bucket {
-			Bucket.Empty => {
-				return dst
-			}
-			Bucket.Node(node) => {
-				entry = node.entry
-				set_result = HashTable.set_no_resize(dst, entry.key, entry.value)
-				return HashTable.insert_bucket_entries(set_result.table, node.next)
-			}
+	fun bucket_is_empty(bucket: Bucket) -> Bool {
+		return match bucket {
+			Bucket.Empty => true
+			Bucket.Node(_node) => false
 		}
 	}
 
-	fun insert_all_buckets(dst: HashTable, src: Buckets, count: I32) -> HashTable {
-		if count <= 1 {
-			match src {
-				Buckets.Leaf(bucket) => {
-					return HashTable.insert_bucket_entries(dst, bucket)
+	fun insert_bucket_entries(dst: HashTable, bucket: Bucket) -> HashTable {
+		cursor = bucket
+		out = dst
+		while !HashTable.bucket_is_empty(cursor) {
+			match cursor {
+				Bucket.Empty => {
+					return out
 				}
-				Buckets.Branch(node) => {
-					left = HashTable.insert_all_buckets(dst, node.left, 1)
-					return HashTable.insert_all_buckets(left, node.right, 1)
+				Bucket.Node(node) => {
+					entry = node.entry
+					set_result = HashTable.set_no_resize(out, entry.key, entry.value)
+					out = set_result.table
+					cursor = node.next
 				}
 			}
 		}
-
-		half = count / 2
-		match src {
-			Buckets.Leaf(bucket) => {
-				return HashTable.insert_bucket_entries(dst, bucket)
-			}
-			Buckets.Branch(node) => {
-				left = HashTable.insert_all_buckets(dst, node.left, half)
-				return HashTable.insert_all_buckets(left, node.right, half)
-			}
-		}
+		return out
 	}
 
 	fun rehash(table: HashTable, new_bucket_count: I32) -> HashTable {
 		cap = HashTable.next_power_of_two(new_bucket_count)
-		fresh = HashTable.with_capacity(cap)
-		return HashTable.insert_all_buckets(fresh, table.buckets, table.bucket_count)
+		out = HashTable.with_capacity(cap)
+		i = 0
+		while i < table.bucket_count {
+			bucket = HashTable.bucket_at(table.buckets, table.bucket_count, i)
+			out = HashTable.insert_bucket_entries(out, bucket)
+			i = i + 1
+		}
+		return out
 	}
 
 	fun maybe_resize_before_insert(table: HashTable) -> HashTable {
