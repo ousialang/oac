@@ -1,14 +1,14 @@
-use std::{collections::HashMap, sync::Arc, vec};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::vec;
 
 use qbe::*;
 use tracing::trace;
 
-use crate::{
-    builtins::BuiltInType,
-    ir::{self, ResolvedProgram},
-    parser::{self, Op, StructDef, UnaryOp},
-    symbol_keys::{trait_impl_method_key, trait_method_key},
-};
+use crate::builtins::BuiltInType;
+use crate::ir::{self, ResolvedProgram};
+use crate::parser::{self, Op, StructDef, UnaryOp};
+use crate::symbol_keys::{trait_impl_method_key, trait_method_key};
 
 type QbeAssignName = String;
 type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
@@ -2295,16 +2295,18 @@ fn compile_expr(
 
 #[cfg(test)]
 mod tests {
-    use crate::{compile, ir, parser::parse, tokenizer::tokenize, Build};
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        process::{Command, Stdio},
-        thread::sleep,
-        time::{Duration, Instant},
-    };
+    use std::collections::VecDeque;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::thread::{self, sleep};
+    use std::time::{Duration, Instant};
 
     use super::compile as compile_qbe;
+    use crate::parser::parse;
+    use crate::tokenizer::tokenize;
+    use crate::{compile, ir, Build};
     const EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
     const EXECUTION_SNAPSHOT_PREFIX: &str = "oac__qbe_backend__tests__execution_tests__";
     const SNAPSHOT_EXTENSION: &str = ".snap";
@@ -2394,6 +2396,23 @@ mod tests {
         let ir = ir::resolve(program).expect("resolve source");
         let qbe_module = compile_qbe(ir);
         format!("{qbe_module}")
+    }
+
+    fn execution_test_worker_count(total_fixtures: usize) -> usize {
+        if total_fixtures <= 1 {
+            return 1;
+        }
+
+        let available = thread::available_parallelism().map_or(1, |n| n.get());
+        let configured = std::env::var("OAC_EXECUTION_TEST_JOBS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .filter(|jobs| *jobs > 0);
+
+        configured
+            .unwrap_or_else(|| available.min(8))
+            .min(total_fixtures)
+            .max(1)
     }
 
     #[test]
@@ -2729,40 +2748,64 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
 
     #[test]
     fn execution_tests() {
-        let test_files = fs::read_dir("execution_tests").unwrap();
+        let mut paths = fs::read_dir("execution_tests")
+            .expect("read execution_tests directory")
+            .map(|entry| entry.expect("read execution fixture entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "oa"))
+            .collect::<Vec<_>>();
+        paths.sort();
 
-        for path in test_files {
-            println!("Testing {}", path.as_ref().unwrap().path().display());
+        let worker_count = execution_test_worker_count(paths.len());
+        let queue = Arc::new(Mutex::new(VecDeque::from(paths)));
+        let results = Arc::new(Mutex::new(Vec::new()));
 
-            let path = path.unwrap().path();
-            let tmp = tempfile::tempdir().unwrap();
+        thread::scope(|scope| {
+            for _ in 0..worker_count {
+                let queue = Arc::clone(&queue);
+                let results = Arc::clone(&results);
 
-            match compile(
-                &tmp.path(),
-                Build {
-                    source: path.to_string_lossy().to_string(),
-                    arch: None,
-                },
-            ) {
-                Ok(()) => (),
-                Err(err) => {
-                    insta::assert_snapshot!(
-                        path.display().to_string(),
-                        format!("COMPILATION ERROR\n\n{err}")
-                    );
-                    continue;
-                }
-            };
+                scope.spawn(move || loop {
+                    let path = {
+                        let mut queue = queue.lock().expect("lock execution fixture queue");
+                        queue.pop_front()
+                    };
+                    let Some(path) = path else {
+                        break;
+                    };
 
-            match run_executable_with_timeout(tmp.path()) {
-                Ok(output) => insta::assert_snapshot!(path.display().to_string(), output),
-                Err(err) => {
-                    insta::assert_snapshot!(
-                        path.display().to_string(),
-                        format!("RUNTIME ERROR\n\n{err}")
-                    );
-                }
+                    println!("Testing {}", path.display());
+                    let tmp = tempfile::tempdir().expect("create execution tempdir");
+
+                    let snapshot_content = match compile(
+                        &tmp.path(),
+                        Build {
+                            source: path.to_string_lossy().to_string(),
+                            arch: None,
+                        },
+                    ) {
+                        Ok(()) => match run_executable_with_timeout(tmp.path()) {
+                            Ok(output) => output,
+                            Err(err) => format!("RUNTIME ERROR\n\n{err}"),
+                        },
+                        Err(err) => format!("COMPILATION ERROR\n\n{err}"),
+                    };
+
+                    results
+                        .lock()
+                        .expect("lock execution fixture results")
+                        .push((path, snapshot_content));
+                });
             }
+        });
+
+        let mut results = Arc::into_inner(results)
+            .expect("execution fixture results still shared")
+            .into_inner()
+            .expect("consume execution fixture results");
+        results.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+        for (path, snapshot_content) in results {
+            insta::assert_snapshot!(path.display().to_string(), snapshot_content);
         }
     }
 
