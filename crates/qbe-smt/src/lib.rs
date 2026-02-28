@@ -477,6 +477,48 @@ mod tests {
     }
 
     #[test]
+    fn models_memcmp_with_symbolic_length_and_fallback_branch() {
+        let function = make_main(
+            vec![
+                (Type::Long, temp("lhs")),
+                (Type::Long, temp("rhs")),
+                (Type::Long, temp("n")),
+            ],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "cmp",
+                        Type::Word,
+                        Instr::Call(
+                            "memcmp".to_string(),
+                            vec![
+                                (Type::Long, temp("lhs")),
+                                (Type::Long, temp("rhs")),
+                                (Type::Long, temp("n")),
+                            ],
+                            None,
+                        ),
+                    ),
+                    volatile(Instr::Ret(Some(temp("cmp")))),
+                ],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("memcmp should encode");
+
+        assert!(smt.contains("(bvule (select regs (_ bv2 32))"));
+        assert!(smt.contains("(select mem (bvadd"));
+    }
+
+    #[test]
     fn models_memmove_overlap_case() {
         let function = make_main(
             vec![(Type::Long, temp("dst")), (Type::Long, temp("n"))],

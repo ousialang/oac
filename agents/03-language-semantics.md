@@ -44,7 +44,7 @@ Observed in parser/IR implementation:
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
-- Runtime byte-memory builtins: `load_u8(addr: PtrInt) -> U8` and `store_u8(addr: PtrInt, value: U8) -> Void`.
+- Runtime pointer-memory builtins: `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, and `store_u8(addr: PtrInt, value: U8) -> Void`.
 - Top-level test declarations: `test "Name" { ... }`.
 - Legacy syntax `template` / `instantiate` is hard-cut and rejected with migration diagnostics.
 
@@ -60,12 +60,16 @@ Observed in parser/IR implementation:
 - Function return paths must not mix incompatible return types.
 - `main` must use one of these signatures: `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`.
 - Assignments bind variable type to expression type.
+- Struct literals are zero-initialized before field stores (`calloc`) so bytewise struct equality has deterministic padding bytes.
+- Struct values use by-value byte-copy semantics at assignment/call/return boundaries (implemented with clone barriers in codegen, not pointer-identity semantics).
+- Struct `==` / `!=` are universal bytewise comparisons (`memcmp` over struct size), including pointer-containing structs.
 - Numeric binary ops are strict and same-type only: `U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
 - `U8` relational operators (`<`, `>`, `<=`, `>=`) use unsigned comparisons in codegen.
 - `U8` division lowers to unsigned integer division in codegen.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
 - Namespace bodies accept `fun` and `extern fun` declarations; `comptime` declarations inside namespace blocks are rejected.
 - `extern fun` declarations cannot be marked `comptime` and must not define a body.
+- In v2 ABI, `extern fun` declarations cannot use struct parameter types or struct return types; use `PtrInt` wrappers for manual ABI bridging.
 - `Void` cannot be used as a function parameter type.
 - In v1, only `extern fun` may return `Void`.
 - Assignment statements cannot bind variables to `Void`-typed expressions.
@@ -81,9 +85,10 @@ Observed in parser/IR implementation:
 - Generic expansion is ahead-of-type-checking and ahead-of-codegen: backend/proving/invariant passes still operate on concrete non-generic IR/function symbols.
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `crates/oac/src/std/std.oa` into split sibling files under `crates/oac/src/std/` (including `std_clib.oa` extern bindings and `std_traits.oa` trait/impl declarations), then merged into one global scope before user type-checking (including stdlib invariant declarations).
+- The split stdlib includes generic `Ref[T]` (in `crates/oac/src/std/std_ref.oa`) for pointer-wrapper value semantics (`from_ptr`, `ptr`, `is_null`, `add_bytes`), with read-only dereference helpers exposed via concrete specializations (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`).
 - Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Eq, V]`) and preserves probing/table semantics while routing key hashing/equality through `Hash.hash(k)` and `Eq.equals(a, b)`.
 - `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive.
-- C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
+- C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }` (including `memcmp`); namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - The split stdlib `LinkedList[T]` template (in `crates/oac/src/std/std_collections.oa`) is persistent/value-based and now includes richer namespaced helpers (`empty`, `singleton`, `cons`, `push_front`, `is_empty`, `len`, `length`, `front`, `tail`, `pop_front`, `append`, `reverse`, `take`, `drop`, `at`, `at_or`) with result enums (`FrontResult`, `TailResult`, `PopFrontResult`); `length`, `head_or`, and `tail_or` are retained as compatibility wrappers.
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs). `AsciiChar` wraps `Char` and has an invariant requiring `0 <= Char.code(ch) <= 127`.
@@ -114,12 +119,12 @@ Observed in parser/IR implementation:
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
 - `qbe-smt` currently rejects floating-point obligations fail-closed (including FP32/FP64 literals/comparisons) during prove/struct-invariant checking.
 - `qbe-smt` models `call $exit(code)` as a halting transition with `exit` state set from `code`.
-- `qbe-smt` also models known CLib calls (`malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`) plus variadic `printf` for builtin `print` inlined paths.
+- `qbe-smt` also models known CLib calls (`malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`) plus variadic `printf` for builtin `print` inlined paths.
 - CLib byte-memory call models use bounded precise expansion (`limit = 16`) with sound fallback branches; unknown extern call targets remain fail-closed unsupported errors.
 - `qbe-smt` models `phi` by threading predecessor-block identity through CHC state and guarding predecessor-dependent merges.
 - `qbe-smt` is parser-free: proving consumes direct `qbe::Function` IR, not re-parsed QBE text.
 - `qbe-smt` flattens only entry-reachable blocks; unreachable unsupported instructions do not affect encoding.
-- When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions) plus, when the site is in `main(argc, argv)`, a concrete solver-derived `argc` witness (`program_input` field).
+- When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions).
 - `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced only for struct invariant obligations under `target/oac/struct_invariants/`.
 - `oac build` emits prove artifacts under `target/oac/prove/` when prove obligations exist.
 - `oac build` runs a conservative non-termination classifier over QBE `main` loops and rejects builds only when non-termination is proven (current proof shape: canonical while-loop with initially true guard and identity body update on guard variable, including simple `sub(x, 0)` forms). Unproven loops are treated as unknown and allowed.

@@ -7,7 +7,6 @@ use crate::ir::{ResolvedProgram, TypeDef};
 use crate::parser::{Expression, Statement};
 
 const Z3_TIMEOUT_SECONDS: u64 = 10;
-const COUNTEREXAMPLE_SEARCH_TIMEOUT_SECONDS: u64 = 2;
 
 pub fn verify_struct_invariants(
     program: &ResolvedProgram,
@@ -912,46 +911,8 @@ fn try_find_program_input_counterexample(
 
     match checker.arguments.as_slice() {
         [] => Some("main() has no inputs (counterexample is input-independent)".to_string()),
-        [(qbe::Type::Word, _), (qbe::Type::Long, _)] => find_main_argc_counterexample(checker),
+        [(qbe::Type::Word, _), (qbe::Type::Long, _)] => None,
         _ => None,
-    }
-}
-
-fn find_main_argc_counterexample(checker: &qbe::Function) -> Option<String> {
-    // Find one concrete argc in [0, i32::MAX] by querying satisfiable signed ranges.
-    let mut lo = 0i32;
-    let mut hi = i32::MAX;
-
-    if !is_sat_for_main_argc_range(checker, lo, hi)? {
-        return None;
-    }
-
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        if is_sat_for_main_argc_range(checker, lo, mid)? {
-            hi = mid;
-        } else {
-            lo = mid + 1;
-        }
-    }
-
-    Some(format!("argc={} (solver witness for main(argc, argv))", lo))
-}
-
-fn is_sat_for_main_argc_range(checker: &qbe::Function, lower: i32, upper: i32) -> Option<bool> {
-    let smt = qbe_smt::qbe_to_smt(
-        checker,
-        &qbe_smt::EncodeOptions {
-            assume_main_argc_non_negative: true,
-            first_arg_i32_range: Some((lower, upper)),
-        },
-    )
-    .ok()?;
-
-    match qbe_smt::solve_chc_script(&smt, COUNTEREXAMPLE_SEARCH_TIMEOUT_SECONDS).ok()? {
-        qbe_smt::SolverResult::Sat => Some(true),
-        qbe_smt::SolverResult::Unsat => Some(false),
-        qbe_smt::SolverResult::Unknown => None,
     }
 }
 

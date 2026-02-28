@@ -201,6 +201,71 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     {
         let mut f = Function::new(
             Linkage::public(),
+            "load_i32".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+        let value = new_id(&["load", "i32"]);
+        f.assign_instr(
+            Value::Temporary(value.clone()),
+            qbe::Type::Word,
+            Instr::Load(Type::Word, Value::Temporary("addr".to_string())),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(value))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "load_i64".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
+            Some(Type::Long),
+        );
+        f.add_block("start".to_string());
+        let value = new_id(&["load", "i64"]);
+        f.assign_instr(
+            Value::Temporary(value.clone()),
+            qbe::Type::Long,
+            Instr::Load(Type::Long, Value::Temporary("addr".to_string())),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(value))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "load_bool".to_string(),
+            vec![(qbe::Type::Long, qbe::Value::Temporary("addr".to_string()))],
+            Some(Type::Word),
+        );
+        f.add_block("start".to_string());
+        let raw = new_id(&["load", "bool", "raw"]);
+        f.assign_instr(
+            Value::Temporary(raw.clone()),
+            qbe::Type::Word,
+            Instr::Load(Type::Word, Value::Temporary("addr".to_string())),
+        );
+        let value = new_id(&["load", "bool", "value"]);
+        f.assign_instr(
+            Value::Temporary(value.clone()),
+            qbe::Type::Word,
+            Instr::Cmp(
+                Type::Word,
+                qbe::Cmp::Ne,
+                Value::Temporary(raw),
+                Value::Const(0),
+            ),
+        );
+        f.add_instr(Instr::Ret(Some(Value::Temporary(value))));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
             "store_u8".to_string(),
             vec![
                 (qbe::Type::Long, qbe::Value::Temporary("addr".to_string())),
@@ -984,9 +1049,10 @@ fn compile_statement(
             qbe_func.add_block(&end_block_label);
         }
         parser::Statement::Return { expr } => {
-            let expr_var = compile_expr(ctx, qbe_func, &expr, variables).0;
+            let (expr_var, expr_ty) = compile_expr(ctx, qbe_func, &expr, variables);
+            let return_var = maybe_clone_struct_value(ctx, qbe_func, &expr_var, &expr_ty);
             trace!(%expr_var, "Emitting return instruction");
-            qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
+            qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(return_var))));
         }
         parser::Statement::Expression { expr } => {
             if compile_void_call_statement(ctx, qbe_func, expr, variables) {
@@ -1030,6 +1096,8 @@ fn compile_statement(
 
             let value_var = compile_expr(ctx, qbe_func, &value, variables);
             if let Some(existing_var) = variables.get(variable.as_str()) {
+                let assigned_var =
+                    maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &existing_var.1);
                 let existing_type = ctx
                     .resolved
                     .type_definitions
@@ -1038,10 +1106,12 @@ fn compile_statement(
                 qbe_func.assign_instr(
                     qbe::Value::Temporary(existing_var.0.clone()),
                     type_to_qbe(existing_type),
-                    qbe::Instr::Copy(qbe::Value::Temporary(value_var.0.clone())),
+                    qbe::Instr::Copy(qbe::Value::Temporary(assigned_var)),
                 );
             } else {
-                variables.insert(variable.clone(), value_var);
+                let assigned_var =
+                    maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &value_var.1);
+                variables.insert(variable.clone(), (assigned_var, value_var.1));
             }
         }
     }
@@ -1180,6 +1250,109 @@ fn struct_size_bytes(ctx: &CodegenCtx, struct_def: &StructDef) -> u64 {
         .sum()
 }
 
+fn struct_size_bytes_by_name(ctx: &CodegenCtx, struct_name: &str) -> u64 {
+    let type_def = ctx
+        .resolved
+        .type_definitions
+        .get(struct_name)
+        .unwrap_or_else(|| panic!("Unknown struct type {}", struct_name));
+    let ir::TypeDef::Struct(struct_def) = type_def else {
+        panic!("Type {} is not a struct", struct_name);
+    };
+    struct_size_bytes(ctx, struct_def)
+}
+
+fn non_zero_allocation_size(size: u64) -> u64 {
+    if size == 0 {
+        1
+    } else {
+        size
+    }
+}
+
+fn alloc_struct_zeroed(func: &mut qbe::Function, size: u64) -> QbeAssignName {
+    let id = new_id(&["struct", "alloc"]);
+    func.assign_instr(
+        Value::Temporary(id.clone()),
+        qbe::Type::Long,
+        Instr::Call(
+            "calloc".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Const(1)),
+                (
+                    qbe::Type::Long,
+                    qbe::Value::Const(non_zero_allocation_size(size)),
+                ),
+            ],
+            None,
+        ),
+    );
+    id
+}
+
+fn clone_struct_bytes(
+    ctx: &CodegenCtx,
+    func: &mut qbe::Function,
+    source_ptr: &str,
+    struct_name: &str,
+) -> QbeAssignName {
+    let size = struct_size_bytes_by_name(ctx, struct_name);
+    let cloned_ptr = alloc_struct_zeroed(func, size);
+    func.add_instr(Instr::Call(
+        "memcpy".to_string(),
+        vec![
+            (qbe::Type::Long, qbe::Value::Temporary(cloned_ptr.clone())),
+            (
+                qbe::Type::Long,
+                qbe::Value::Temporary(source_ptr.to_string()),
+            ),
+            (qbe::Type::Long, qbe::Value::Const(size)),
+        ],
+        None,
+    ));
+    cloned_ptr
+}
+
+fn maybe_clone_struct_value(
+    ctx: &CodegenCtx,
+    func: &mut qbe::Function,
+    value_var: &str,
+    value_ty: &str,
+) -> QbeAssignName {
+    match ctx.resolved.type_definitions.get(value_ty) {
+        Some(ir::TypeDef::Struct(_)) => clone_struct_bytes(ctx, func, value_var, value_ty),
+        _ => value_var.to_string(),
+    }
+}
+
+fn emit_struct_memcmp(
+    ctx: &CodegenCtx,
+    func: &mut qbe::Function,
+    left_ptr: &str,
+    right_ptr: &str,
+    struct_name: &str,
+) -> QbeAssignName {
+    let size = struct_size_bytes_by_name(ctx, struct_name);
+    let id = new_id(&["struct", "memcmp"]);
+    func.assign_instr(
+        qbe::Value::Temporary(id.clone()),
+        qbe::Type::Word,
+        qbe::Instr::Call(
+            "memcmp".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary(left_ptr.to_string())),
+                (
+                    qbe::Type::Long,
+                    qbe::Value::Temporary(right_ptr.to_string()),
+                ),
+                (qbe::Type::Long, qbe::Value::Const(size)),
+            ],
+            None,
+        ),
+    );
+    id
+}
+
 fn std_bytes_struct(ctx: &CodegenCtx) -> StructDef {
     match ctx.resolved.type_definitions.get("Bytes") {
         Some(ir::TypeDef::Struct(def)) => def.clone(),
@@ -1250,6 +1423,7 @@ fn compile_void_call_statement(
     let mut lowered_args = vec![];
     for arg in args {
         let (arg_var, arg_ty) = compile_expr(ctx, func, arg, variables);
+        let lowered_var = maybe_clone_struct_value(ctx, func, &arg_var, &arg_ty);
         let arg_type_def = ctx
             .resolved
             .type_definitions
@@ -1257,7 +1431,7 @@ fn compile_void_call_statement(
             .expect("call argument type should exist");
         lowered_args.push((
             type_to_qbe(arg_type_def),
-            qbe::Value::Temporary(arg_var.clone()),
+            qbe::Value::Temporary(lowered_var),
         ));
     }
 
@@ -1298,8 +1472,9 @@ fn compile_named_call(
     let id = new_id(&["call", function_name]);
     let mut arg_vars = vec![];
     for arg in args {
-        let arg_var = compile_expr(ctx, func, arg, variables);
-        arg_vars.push(arg_var);
+        let (arg_var, arg_ty) = compile_expr(ctx, func, arg, variables);
+        let lowered_var = maybe_clone_struct_value(ctx, func, &arg_var, &arg_ty);
+        arg_vars.push((lowered_var, arg_ty));
     }
 
     let sig = ctx
@@ -1630,25 +1805,12 @@ fn compile_expr(
             struct_name,
             field_values,
         } => {
-            let id = new_id(&["struct", struct_name]);
             let resolved = ctx.resolved.clone();
             let typedef = resolved.type_definitions.get(struct_name).unwrap();
             let ir::TypeDef::Struct(structdef) = typedef else {
                 panic!("Not really a struct: {struct_name}");
             };
-
-            func.assign_instr(
-                Value::Temporary(id.clone()),
-                qbe::Type::Long,
-                Instr::Call(
-                    "malloc".to_string(),
-                    vec![(
-                        qbe::Type::Long,
-                        qbe::Value::Const(struct_size_bytes(ctx, structdef)),
-                    )],
-                    None,
-                ),
-            );
+            let id = alloc_struct_zeroed(func, struct_size_bytes(ctx, structdef));
 
             for (field_name, field_value) in field_values {
                 let (field_var, _) = compile_expr(ctx, func, field_value, variables);
@@ -1853,6 +2015,30 @@ fn compile_expr(
             let id = new_id(&["bin_op"]);
             let (left_var, left_ty) = compile_expr(ctx, func, left, variables);
             let (right_var, _right_ty) = compile_expr(ctx, func, right, variables);
+            if matches!(op, Op::Eq | Op::Neq)
+                && matches!(
+                    ctx.resolved.type_definitions.get(&left_ty),
+                    Some(ir::TypeDef::Struct(_))
+                )
+            {
+                let memcmp_result = emit_struct_memcmp(ctx, func, &left_var, &right_var, &left_ty);
+                let cmp_kind = if matches!(op, Op::Eq) {
+                    qbe::Cmp::Eq
+                } else {
+                    qbe::Cmp::Ne
+                };
+                func.assign_instr(
+                    qbe::Value::Temporary(id.clone()),
+                    qbe::Type::Word,
+                    qbe::Instr::Cmp(
+                        qbe::Type::Word,
+                        cmp_kind,
+                        qbe::Value::Temporary(memcmp_result),
+                        qbe::Value::Const(0),
+                    ),
+                );
+                return (id, "Bool".to_string());
+            }
             let operand_qbe_ty = type_ref_to_qbe(ctx, &left_ty);
             let use_unsigned_int_cmp = left_ty == "U8";
             let use_ordered_float_cmp =
@@ -2146,6 +2332,52 @@ fun main() -> I32 {
     }
 
     #[test]
+    fn qbe_codegen_structs_use_copy_barriers_and_memcmp_equality() {
+        let source = r#"
+struct Box {
+	value: I32,
+}
+
+fun id(v: Box) -> Box {
+	return v
+}
+
+fun consume(v: Box) -> I32 {
+	return v.value
+}
+
+fun main() -> I32 {
+	a = Box struct { value: 7 }
+	b = a
+	c = id(b)
+	if a == c {
+		return consume(c)
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
+        let qbe_module = compile_qbe(ir);
+        let qbe_ir = format!("{qbe_module}");
+        assert!(
+            qbe_ir.contains("call $memcmp"),
+            "expected struct equality lowering via memcmp, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.matches("call $memcpy").count() >= 4,
+            "expected struct copy barriers to emit memcpy calls, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.matches("call $calloc").count() >= 3,
+            "expected struct allocations/clones to emit calloc calls, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
     fn qbe_codegen_i32_to_i64_uses_signed_extension() {
         let source = r#"
 fun main() -> I32 {
@@ -2275,11 +2507,17 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn qbe_codegen_supports_load_store_u8_builtins() {
+    fn qbe_codegen_supports_pointer_load_and_store_builtins() {
         let source = r#"
 fun main(argc: I32, argv: PtrInt) -> I32 {
 	b = load_u8(argv)
+	w = load_i32(argv)
+	l = load_i64(argv)
+	flag = load_bool(argv)
 	store_u8(argv, b)
+	if flag {
+		return w
+	}
 	return argc
 }
 "#
@@ -2303,8 +2541,40 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
             "expected call to load_u8 in qbe output, got:\n{qbe_ir}"
         );
         assert!(
+            qbe_ir.contains("function w $load_i32"),
+            "expected load_i32 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $load_i32"),
+            "expected call to load_i32 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("function l $load_i64"),
+            "expected load_i64 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $load_i64"),
+            "expected call to load_i64 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("function w $load_bool"),
+            "expected load_bool builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $load_bool"),
+            "expected call to load_bool in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
             qbe_ir.contains("call $store_u8"),
             "expected call to store_u8 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("loadw %addr"),
+            "expected load_i32/load_bool lowering to loadw in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("loadl %addr"),
+            "expected load_i64 lowering to loadl in qbe output, got:\n{qbe_ir}"
         );
         assert!(
             qbe_ir.contains("loadub %addr"),

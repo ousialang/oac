@@ -624,6 +624,39 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         },
     );
     program.function_sigs.insert(
+        "load_i32".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "addr".to_string(),
+                ty: "PtrInt".to_string(),
+            }],
+            return_type: "I32".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
+        "load_i64".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "addr".to_string(),
+                ty: "PtrInt".to_string(),
+            }],
+            return_type: "I64".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
+        "load_bool".to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "addr".to_string(),
+                ty: "PtrInt".to_string(),
+            }],
+            return_type: "Bool".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
         "store_u8".to_string(),
         FunctionSignature {
             parameters: vec![
@@ -993,15 +1026,16 @@ fn validate_function_signature_types(
     type_definitions: &HashMap<String, TypeDef>,
     allow_void_return: bool,
 ) -> anyhow::Result<()> {
+    let is_extern = allow_void_return;
     for param in &sig.parameters {
-        if !type_definitions.contains_key(&param.ty) {
+        let Some(param_type) = type_definitions.get(&param.ty) else {
             return Err(anyhow::anyhow!(
                 "function {} has parameter {} with unknown type {}",
                 function_name,
                 param.name,
                 param.ty
             ));
-        }
+        };
         if param.ty == "Void" {
             return Err(anyhow::anyhow!(
                 "function {} cannot use Void as parameter type ({})",
@@ -1009,11 +1043,27 @@ fn validate_function_signature_types(
                 param.name
             ));
         }
+        if is_extern && matches!(param_type, TypeDef::Struct(_)) {
+            return Err(anyhow::anyhow!(
+                "extern function {} cannot use struct parameter type {} ({}) in v2 ABI; use PtrInt wrappers for C interop",
+                function_name,
+                param.ty,
+                param.name
+            ));
+        }
     }
 
-    if !type_definitions.contains_key(&sig.return_type) {
+    let Some(return_type) = type_definitions.get(&sig.return_type) else {
         return Err(anyhow::anyhow!(
             "function {} has unknown return type {}",
+            function_name,
+            sig.return_type
+        ));
+    };
+
+    if is_extern && matches!(return_type, TypeDef::Struct(_)) {
+        return Err(anyhow::anyhow!(
+            "extern function {} cannot return struct type {} in v2 ABI; use PtrInt wrappers for C interop",
             function_name,
             sig.return_type
         ));
@@ -3377,6 +3427,10 @@ fun main() -> I32 {
             resolved.function_sigs.contains_key("Clib__free"),
             "missing Clib__free extern function from split stdlib"
         );
+        assert!(
+            resolved.function_sigs.contains_key("Clib__memcmp"),
+            "missing Clib__memcmp extern function from split stdlib"
+        );
         assert_eq!(
             resolved
                 .function_sigs
@@ -3385,13 +3439,73 @@ fun main() -> I32 {
             Some("free"),
             "missing extern link symbol metadata for Clib__free"
         );
+        assert_eq!(
+            resolved
+                .function_sigs
+                .get("Clib__memcmp")
+                .and_then(|sig| sig.extern_symbol_name.as_deref()),
+            Some("memcmp"),
+            "missing extern link symbol metadata for Clib__memcmp"
+        );
         assert!(
             resolved.function_sigs.contains_key("load_u8"),
             "missing load_u8 builtin signature"
         );
         assert!(
+            resolved.function_sigs.contains_key("load_i32"),
+            "missing load_i32 builtin signature"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("load_i64"),
+            "missing load_i64 builtin signature"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("load_bool"),
+            "missing load_bool builtin signature"
+        );
+        assert!(
             resolved.function_sigs.contains_key("store_u8"),
             "missing store_u8 builtin signature"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("U8Ref"),
+            "missing U8Ref type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("I32Ref"),
+            "missing I32Ref type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("I64Ref"),
+            "missing I64Ref type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("PtrIntRef"),
+            "missing PtrIntRef type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("BoolRef"),
+            "missing BoolRef type from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("U8Ref__read"),
+            "missing U8Ref__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("I32Ref__read"),
+            "missing I32Ref__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("I64Ref__read"),
+            "missing I64Ref__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("PtrIntRef__read"),
+            "missing PtrIntRef__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("BoolRef__read"),
+            "missing BoolRef__read function from split stdlib"
         );
         assert!(
             resolved.struct_invariants.contains_key("AsciiChar"),
@@ -3472,6 +3586,52 @@ fun main() -> I32 {
         assert!(err
             .to_string()
             .contains("only extern functions may return Void"));
+    }
+
+    #[test]
+    fn resolve_rejects_extern_struct_parameter_type() {
+        let source = r#"
+struct Packet {
+	value: I32,
+}
+
+extern fun read_packet(packet: Packet) -> I32
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("extern struct parameter should fail");
+        assert!(err.to_string().contains(
+            "cannot use struct parameter type Packet (packet) in v2 ABI; use PtrInt wrappers for C interop"
+        ));
+    }
+
+    #[test]
+    fn resolve_rejects_extern_struct_return_type() {
+        let source = r#"
+struct Packet {
+	value: I32,
+}
+
+extern fun read_packet() -> Packet
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("extern struct return should fail");
+        assert!(err.to_string().contains(
+            "cannot return struct type Packet in v2 ABI; use PtrInt wrappers for C interop"
+        ));
     }
 
     #[test]
@@ -4009,13 +4169,16 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn resolve_accepts_load_u8_and_store_u8_builtins() {
+    fn resolve_accepts_pointer_load_and_store_builtins() {
         let source = r#"
 fun main(argc: I32, argv: PtrInt) -> I32 {
 	b = load_u8(argv)
+	w = load_i32(argv)
+	l = load_i64(argv)
+	flag = load_bool(argv)
 	store_u8(argv, b)
-	if b == b {
-		return argc
+	if flag {
+		return w
 	}
 	return 0
 }

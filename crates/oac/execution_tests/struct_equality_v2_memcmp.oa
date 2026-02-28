@@ -1,0 +1,58 @@
+struct Pair {
+	a: I32,
+	b: I32,
+}
+
+struct PtrBox {
+	ptr: PtrInt,
+	tag: I32,
+}
+
+fun main() -> I32 {
+	x = Pair struct { a: 7, b: 9 }
+	y = Pair struct { a: 7, b: 9 }
+	z = Pair struct { a: 7, b: 10 }
+
+	if x == y {
+		print(11)
+	} else {
+		print(12)
+	}
+
+	if x != z {
+		print(21)
+	} else {
+		print(22)
+	}
+
+	heap_a = Clib.malloc(i32_to_i64(1))
+	heap_b = Clib.malloc(i32_to_i64(1))
+	p_same_1 = PtrBox struct { ptr: heap_a, tag: 1 }
+	p_same_2 = PtrBox struct { ptr: heap_a, tag: 1 }
+	p_diff = PtrBox struct { ptr: heap_b, tag: 1 }
+
+	if p_same_1 == p_same_2 {
+		print(31)
+	} else {
+		print(32)
+	}
+
+	if p_same_1 != p_diff {
+		print(41)
+	} else {
+		print(42)
+	}
+
+	boxed_a = PtrBox struct { ptr: heap_a, tag: 2 }
+	boxed_b = PtrBox struct { ptr: heap_b, tag: 2 }
+
+	if boxed_a == boxed_b {
+		print(51)
+	} else {
+		print(52)
+	}
+
+	Clib.free(heap_a)
+	Clib.free(heap_b)
+	return 0
+}

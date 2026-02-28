@@ -1,0 +1,10 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: output
+snapshot_kind: text
+---
+11
+21
+31
+41
+52
