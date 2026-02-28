@@ -179,11 +179,12 @@ Important enforced invariants include:
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
 - `qbe-smt` is parser-free: it consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`). Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), `crates/qbe-smt/src/encode_extern_models.rs` (extern-call model/arity catalog), and `crates/qbe-smt/src/classify.rs` (loop classification).
-- `qbe-smt` models a broad integer + memory QBE subset:
+- `qbe-smt` models a broad integer + memory QBE subset plus an FP32 proving subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
+  - FP32 ALU/comparison ops (`add/sub/mul/div`, `eq/ne/lt/le/gt/ge/o/uo`) with IEEE semantics (`RNE`)
   - `phi` merging via predecessor-tracking state in CHC (`pred`)
   - `call` modeling for `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, `exit(code)`, and variadic `printf` (for builtin `print` lowering)
-  - `load*`/`store*` byte-addressed memory operations
+  - `load*`/`store*` byte-addressed memory operations (including FP32 `loads`/`stores`)
   - `alloc4/alloc8/alloc16` heap-pointer modeling
   - control flow via Horn transition rules (`jnz`, `jmp`, `ret`, halt relation)
 - Register state is encoded as an SMT array and threaded through relation arguments.
@@ -194,7 +195,8 @@ Important enforced invariants include:
 - Bounded string-call details: `strlen` scans for NUL up to the inline limit and otherwise falls back to constrained unknown non-negative length; `strcmp` performs bounded first-event scan (`difference` or shared NUL) with tri-state results (`-1/0/1`) and otherwise falls back to unconstrained return.
 - `strcpy` memory effects are modeled as bounded byte copy until first NUL (including terminator); if no NUL is found within the inline limit, memory falls back to unconstrained `mem_next`.
 - Syscall-like modeled return constraints are explicit: `open` -> `-1 | >=0`, `close` -> `0 | -1`, `read`/`write` -> `-1 | (0 <= ret <= count)`.
-- Floating-point SMT reasoning is intentionally unsupported today; FP32/FP64 values/compares in obligations are rejected fail-closed.
+- FP32/FP64 obligations are supported in checker encoding for the emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, and FP32/FP64 `loads`/`stores`), and force `(set-logic ALL)` in the emitted SMT script.
+- Unsupported float conversion operations remain fail-closed in checker encoding (`Unsupported` errors).
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
 - Module-level argument assumptions are also available: `oac` now passes per-function invariant-bearing argument assumptions, and `qbe-smt` validates these references fail-closed (function exists/encoded, argument index in range, invariant target unary).

@@ -1369,6 +1369,130 @@ mod tests {
     }
 
     #[test]
+    fn encodes_fp32_arithmetic_and_compares_with_all_logic() {
+        let function = make_main(
+            vec![(Type::Single, temp("a")), (Type::Single, temp("b"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign("sum", Type::Single, Instr::Add(temp("a"), temp("b"))),
+                    assign(
+                        "is_lt",
+                        Type::Word,
+                        Instr::Cmp(Type::Single, Cmp::Lt, temp("sum"), temp("b")),
+                    ),
+                    volatile(Instr::Ret(Some(temp("is_lt")))),
+                ],
+            )],
+        );
+
+        let smt = encode_single_function(&function, &EncodeOptions::default())
+            .expect("FP32 arithmetic and compare should encode");
+
+        assert!(smt.contains("(set-logic ALL)"));
+        assert!(smt.contains("(fp.add RNE"));
+        assert!(smt.contains("(fp.lt"));
+    }
+
+    #[test]
+    fn encodes_fp32_loads_and_stores() {
+        let function = make_main(
+            vec![(Type::Long, temp("p")), (Type::Single, temp("x"))],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Store(Type::Single, temp("p"), temp("x"))),
+                    assign("loaded", Type::Single, Instr::Load(Type::Single, temp("p"))),
+                    assign(
+                        "eq",
+                        Type::Word,
+                        Instr::Cmp(Type::Single, Cmp::Eq, temp("loaded"), temp("x")),
+                    ),
+                    volatile(Instr::Ret(Some(temp("eq")))),
+                ],
+            )],
+        );
+
+        let smt = encode_single_function(&function, &EncodeOptions::default())
+            .expect("FP32 load/store should encode");
+        assert!(smt.contains("(set-logic ALL)"));
+        assert!(smt.contains("(store mem"));
+        assert!(smt.contains("(select mem"));
+    }
+
+    #[test]
+    fn encodes_fp64_arithmetic_and_compares_with_all_logic() {
+        let function = make_main(
+            vec![(Type::Double, temp("a")), (Type::Double, temp("b"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign("sum", Type::Double, Instr::Add(temp("a"), temp("b"))),
+                    assign(
+                        "is_lt",
+                        Type::Word,
+                        Instr::Cmp(Type::Double, Cmp::Lt, temp("sum"), temp("b")),
+                    ),
+                    volatile(Instr::Ret(Some(temp("is_lt")))),
+                ],
+            )],
+        );
+
+        let smt = encode_single_function(&function, &EncodeOptions::default())
+            .expect("FP64 arithmetic and compare should encode");
+
+        assert!(smt.contains("(set-logic ALL)"));
+        assert!(smt.contains("(fp.add RNE"));
+        assert!(smt.contains("(fp.lt"));
+    }
+
+    #[test]
+    fn encodes_fp64_loads_and_stores() {
+        let function = make_main(
+            vec![(Type::Long, temp("p")), (Type::Double, temp("x"))],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Store(Type::Double, temp("p"), temp("x"))),
+                    assign("loaded", Type::Double, Instr::Load(Type::Double, temp("p"))),
+                    assign(
+                        "eq",
+                        Type::Word,
+                        Instr::Cmp(Type::Double, Cmp::Eq, temp("loaded"), temp("x")),
+                    ),
+                    volatile(Instr::Ret(Some(temp("eq")))),
+                ],
+            )],
+        );
+
+        let smt = encode_single_function(&function, &EncodeOptions::default())
+            .expect("FP64 load/store should encode");
+        assert!(smt.contains("(set-logic ALL)"));
+        assert!(smt.contains("(store mem"));
+        assert!(smt.contains("(select mem"));
+    }
+
+    #[test]
+    fn rejects_fp64_conversion_ops_fail_closed() {
+        let function = make_main(
+            vec![(Type::Double, temp("x"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign("y", Type::Single, Instr::Truncd(temp("x"))),
+                    volatile(Instr::Ret(Some(temp("y")))),
+                ],
+            )],
+        );
+
+        let err = encode_single_function(&function, &EncodeOptions::default())
+            .expect_err("FP64 conversion ops should remain unsupported");
+        assert!(err
+            .to_string()
+            .contains("unsupported unary operation truncd"));
+    }
+
+    #[test]
     fn encodes_phi_with_predecessor_guard() {
         let function = make_main(
             vec![(Type::Word, temp("cond"))],
