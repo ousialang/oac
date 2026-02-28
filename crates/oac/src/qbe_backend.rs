@@ -2403,16 +2403,12 @@ mod tests {
             return 1;
         }
 
-        let available = thread::available_parallelism().map_or(1, |n| n.get());
         let configured = std::env::var("OAC_EXECUTION_TEST_JOBS")
             .ok()
             .and_then(|raw| raw.parse::<usize>().ok())
             .filter(|jobs| *jobs > 0);
 
-        configured
-            .unwrap_or_else(|| available.min(8))
-            .min(total_fixtures)
-            .max(1)
+        configured.unwrap_or(1).min(total_fixtures).max(1)
     }
 
     #[test]
