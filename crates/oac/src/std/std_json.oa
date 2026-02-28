@@ -20,6 +20,66 @@ enum JsonKind {
 	Invalid,
 }
 
+enum JsonValue {
+	Object(JsonMembers),
+	Array(JsonValues),
+	String(String),
+	Number(String),
+	True,
+	False,
+	Null,
+}
+
+struct JsonMember {
+	key: String,
+	value: JsonValue,
+}
+
+struct JsonMembersNode {
+	member: JsonMember,
+	next: JsonMembers,
+}
+
+enum JsonMembers {
+	Empty,
+	Node(JsonMembersNode),
+}
+
+struct JsonValuesNode {
+	value: JsonValue,
+	next: JsonValues,
+}
+
+enum JsonValues {
+	Empty,
+	Node(JsonValuesNode),
+}
+
+struct ParsedJsonValue {
+	value: JsonValue,
+	end: I32,
+}
+
+enum JsonValueParseResult {
+	Ok(ParsedJsonValue),
+	Err(ParseErr),
+}
+
+enum JsonDocumentValueResult {
+	Ok(JsonValue),
+	Err(ParseErr),
+}
+
+enum JsonValueLookup {
+	Missing,
+	Found(JsonValue),
+}
+
+enum JsonStringLookup {
+	Missing,
+	Found(String),
+}
+
 namespace Json {
 	fun string_eq(a: String, b: String) -> Bool {
 		return String.equals(a, b)
@@ -27,6 +87,19 @@ namespace Json {
 
 	fun char_is_digit(ch: I32) -> Bool {
 		return ch >= 48 && ch <= 57
+	}
+
+	fun char_is_hex_digit(ch: I32) -> Bool {
+		if Json.char_is_digit(ch) {
+			return true
+		}
+		if ch >= 65 && ch <= 70 {
+			return true
+		}
+		if ch >= 97 && ch <= 102 {
+			return true
+		}
+		return false
 	}
 
 	fun char_is_ws(ch: I32) -> Bool {
@@ -87,7 +160,7 @@ namespace Json {
 	}
 
 	fun is_json_escape(ch: I32) -> Bool {
-		return ch == 34 || ch == 92 || ch == 47 || ch == 98 || ch == 102 || ch == 110 || ch == 114 || ch == 116
+		return ch == 34 || ch == 92 || ch == 47 || ch == 98 || ch == 102 || ch == 110 || ch == 114 || ch == 116 || ch == 117
 	}
 
 	fun consume_json_string(s: String, start: I32) -> I32 {
@@ -114,7 +187,27 @@ namespace Json {
 				if !Json.is_json_escape(esc) {
 					return Json.parse_fail()
 				}
-				i = i + 2
+
+				if esc == 117 {
+					if i + 5 >= n {
+						return Json.parse_fail()
+					}
+					if !Json.char_is_hex_digit(char_at(s, i + 2)) {
+						return Json.parse_fail()
+					}
+					if !Json.char_is_hex_digit(char_at(s, i + 3)) {
+						return Json.parse_fail()
+					}
+					if !Json.char_is_hex_digit(char_at(s, i + 4)) {
+						return Json.parse_fail()
+					}
+					if !Json.char_is_hex_digit(char_at(s, i + 5)) {
+						return Json.parse_fail()
+					}
+					i = i + 6
+				} else {
+					i = i + 2
+				}
 			} else {
 				if ch < 32 {
 					return Json.parse_fail()
@@ -183,128 +276,449 @@ namespace Json {
 		return i
 	}
 
-	fun consume_json_array(s: String, start: I32) -> I32 {
+	fun json_values_empty() -> JsonValues {
+		return JsonValues.Empty
+	}
+
+	fun json_values_push_front(value: JsonValue, values: JsonValues) -> JsonValues {
+		node = JsonValuesNode struct {
+			value: value,
+			next: values,
+		}
+		return JsonValues.Node(node)
+	}
+
+	fun json_values_reverse(values: JsonValues) -> JsonValues {
+		cursor = values
+		out = Json.json_values_empty()
+		while true {
+			match cursor {
+				JsonValues.Empty => {
+					return out
+				}
+				JsonValues.Node(node) => {
+					out = Json.json_values_push_front(node.value, out)
+					cursor = node.next
+				}
+			}
+		}
+
+		return out
+	}
+
+	fun json_members_empty() -> JsonMembers {
+		return JsonMembers.Empty
+	}
+
+	fun json_members_push_front(member: JsonMember, members: JsonMembers) -> JsonMembers {
+		node = JsonMembersNode struct {
+			member: member,
+			next: members,
+		}
+		return JsonMembers.Node(node)
+	}
+
+	fun json_members_reverse(members: JsonMembers) -> JsonMembers {
+		cursor = members
+		out = Json.json_members_empty()
+		while true {
+			match cursor {
+				JsonMembers.Empty => {
+					return out
+				}
+				JsonMembers.Node(node) => {
+					out = Json.json_members_push_front(node.member, out)
+					cursor = node.next
+				}
+			}
+		}
+
+		return out
+	}
+
+	fun parsed_json_value_ok(value: JsonValue, end: I32) -> JsonValueParseResult {
+		parsed = ParsedJsonValue struct {
+			value: value,
+			end: end,
+		}
+		return JsonValueParseResult.Ok(parsed)
+	}
+
+	fun parse_json_array_value_at(s: String, start: I32) -> JsonValueParseResult {
 		i = Json.skip_ws(s, start)
 		n = string_len(s)
 
 		if i >= n || char_at(s, i) != 91 {
-			return Json.parse_fail()
+			return JsonValueParseResult.Err(ParseErr.InvalidValue)
 		}
 
 		i = Json.skip_ws(s, i + 1)
 		if i < n && char_at(s, i) == 93 {
-			return i + 1
+			return Json.parsed_json_value_ok(JsonValue.Array(Json.json_values_empty()), i + 1)
 		}
 
+		values_rev = Json.json_values_empty()
 		while true {
-			value_end = Json.parse_value_end(s, i)
-			if value_end == Json.parse_fail() {
-				return Json.parse_fail()
-			}
+			value_result = Json.parse_json_value_at_result(s, i)
+			match value_result {
+				JsonValueParseResult.Err(err) => {
+					return JsonValueParseResult.Err(err)
+				}
+				JsonValueParseResult.Ok(parsed) => {
+					values_rev = Json.json_values_push_front(parsed.value, values_rev)
+					i = Json.skip_ws(s, parsed.end)
+					if i >= n {
+						return JsonValueParseResult.Err(ParseErr.InvalidValue)
+					}
 
-			i = Json.skip_ws(s, value_end)
-			if i >= n {
-				return Json.parse_fail()
-			}
-
-			ch = char_at(s, i)
-			if ch == 44 {
-				i = Json.skip_ws(s, i + 1)
-			} else if ch == 93 {
-				return i + 1
-			} else {
-				return Json.parse_fail()
+					ch = char_at(s, i)
+					if ch == 44 {
+						i = Json.skip_ws(s, i + 1)
+					} else if ch == 93 {
+						values = Json.json_values_reverse(values_rev)
+						return Json.parsed_json_value_ok(JsonValue.Array(values), i + 1)
+					} else {
+						return JsonValueParseResult.Err(ParseErr.InvalidValue)
+					}
+				}
 			}
 		}
 
-		return Json.parse_fail()
+		return JsonValueParseResult.Err(ParseErr.InvalidValue)
 	}
 
-	fun consume_json_object(s: String, start: I32) -> I32 {
+	fun parse_json_object_value_at(s: String, start: I32) -> JsonValueParseResult {
 		i = Json.skip_ws(s, start)
 		n = string_len(s)
 
 		if i >= n || char_at(s, i) != 123 {
-			return Json.parse_fail()
+			return JsonValueParseResult.Err(ParseErr.InvalidValue)
 		}
 
 		i = Json.skip_ws(s, i + 1)
 		if i < n && char_at(s, i) == 125 {
-			return i + 1
+			return Json.parsed_json_value_ok(JsonValue.Object(Json.json_members_empty()), i + 1)
 		}
 
+		members_rev = Json.json_members_empty()
 		while true {
 			key_end = Json.consume_json_string(s, i)
 			if key_end == Json.parse_fail() {
-				return Json.parse_fail()
+				return JsonValueParseResult.Err(ParseErr.InvalidValue)
 			}
 
+			key_len = key_end - i
+			key_len = key_len - 2
+			key = slice(s, i + 1, key_len)
 			i = Json.skip_ws(s, key_end)
 			if i >= n || char_at(s, i) != 58 {
-				return Json.parse_fail()
+				return JsonValueParseResult.Err(ParseErr.InvalidValue)
 			}
 
 			i = Json.skip_ws(s, i + 1)
-			value_end = Json.parse_value_end(s, i)
-			if value_end == Json.parse_fail() {
-				return Json.parse_fail()
-			}
+			value_result = Json.parse_json_value_at_result(s, i)
+			match value_result {
+				JsonValueParseResult.Err(err) => {
+					return JsonValueParseResult.Err(err)
+				}
+				JsonValueParseResult.Ok(parsed) => {
+					member = JsonMember struct {
+						key: key,
+						value: parsed.value,
+					}
+					members_rev = Json.json_members_push_front(member, members_rev)
+					i = Json.skip_ws(s, parsed.end)
+					if i >= n {
+						return JsonValueParseResult.Err(ParseErr.InvalidValue)
+					}
 
-			i = Json.skip_ws(s, value_end)
-			if i >= n {
-				return Json.parse_fail()
-			}
-
-			ch = char_at(s, i)
-			if ch == 44 {
-				i = Json.skip_ws(s, i + 1)
-			} else if ch == 125 {
-				return i + 1
-			} else {
-				return Json.parse_fail()
+					ch = char_at(s, i)
+					if ch == 44 {
+						i = Json.skip_ws(s, i + 1)
+					} else if ch == 125 {
+						members = Json.json_members_reverse(members_rev)
+						return Json.parsed_json_value_ok(JsonValue.Object(members), i + 1)
+					} else {
+						return JsonValueParseResult.Err(ParseErr.InvalidValue)
+					}
+				}
 			}
 		}
 
-		return Json.parse_fail()
+		return JsonValueParseResult.Err(ParseErr.InvalidValue)
 	}
 
-	fun parse_value_end(s: String, start: I32) -> I32 {
+	fun parse_json_value_at_result(s: String, start: I32) -> JsonValueParseResult {
 		i = Json.skip_ws(s, start)
 		n = string_len(s)
 
 		if i >= n {
-			return Json.parse_fail()
+			return JsonValueParseResult.Err(ParseErr.InvalidValue)
 		}
 
 		keyword_end = Json.parse_keyword_at(s, "true", i)
 		if keyword_end != Json.parse_fail() {
-			return keyword_end
-		}
-		keyword_end = Json.parse_keyword_at(s, "false", i)
-		if keyword_end != Json.parse_fail() {
-			return keyword_end
-		}
-		keyword_end = Json.parse_keyword_at(s, "null", i)
-		if keyword_end != Json.parse_fail() {
-			return keyword_end
+			return Json.parsed_json_value_ok(JsonValue.True, keyword_end)
 		}
 
-		if char_at(s, i) == 34 {
-			return Json.consume_json_string(s, i)
+		keyword_end = Json.parse_keyword_at(s, "false", i)
+		if keyword_end != Json.parse_fail() {
+			return Json.parsed_json_value_ok(JsonValue.False, keyword_end)
 		}
-		if char_at(s, i) == 91 {
-			return Json.consume_json_array(s, i)
+
+		keyword_end = Json.parse_keyword_at(s, "null", i)
+		if keyword_end != Json.parse_fail() {
+			return Json.parsed_json_value_ok(JsonValue.Null, keyword_end)
 		}
-		if char_at(s, i) == 123 {
-			return Json.consume_json_object(s, i)
+
+		ch = char_at(s, i)
+		if ch == 34 {
+			end = Json.consume_json_string(s, i)
+			if end == Json.parse_fail() {
+				return JsonValueParseResult.Err(ParseErr.InvalidValue)
+			}
+
+			text_len = end - i
+			text_len = text_len - 2
+			return Json.parsed_json_value_ok(JsonValue.String(slice(s, i + 1, text_len)), end)
+		}
+
+		if ch == 91 {
+			return Json.parse_json_array_value_at(s, i)
+		}
+
+		if ch == 123 {
+			return Json.parse_json_object_value_at(s, i)
 		}
 
 		number_end = Json.consume_json_number(s, i)
 		if number_end != Json.parse_fail() {
-			return number_end
+			return Json.parsed_json_value_ok(JsonValue.Number(slice(s, i, number_end - i)), number_end)
 		}
 
-		return Json.parse_fail()
+		return JsonValueParseResult.Err(ParseErr.InvalidValue)
+	}
+
+	fun json_values_len(values: JsonValues) -> I32 {
+		cursor = values
+		len = 0
+		while true {
+			match cursor {
+				JsonValues.Empty => {
+					return len
+				}
+				JsonValues.Node(node) => {
+					len = len + 1
+					cursor = node.next
+				}
+			}
+		}
+
+		return len
+	}
+
+	fun json_members_len(members: JsonMembers) -> I32 {
+		cursor = members
+		len = 0
+		while true {
+			match cursor {
+				JsonMembers.Empty => {
+					return len
+				}
+				JsonMembers.Node(node) => {
+					len = len + 1
+					cursor = node.next
+				}
+			}
+		}
+
+		return len
+	}
+
+	fun json_values_get(values: JsonValues, index: I32) -> JsonValueLookup {
+		if index < 0 {
+			return JsonValueLookup.Missing
+		}
+
+		cursor = values
+		i = 0
+		while true {
+			match cursor {
+				JsonValues.Empty => {
+					return JsonValueLookup.Missing
+				}
+				JsonValues.Node(node) => {
+					if i == index {
+						return JsonValueLookup.Found(node.value)
+					}
+					i = i + 1
+					cursor = node.next
+				}
+			}
+		}
+
+		return JsonValueLookup.Missing
+	}
+
+	fun json_members_get(members: JsonMembers, key: String) -> JsonValueLookup {
+		cursor = members
+		while true {
+			match cursor {
+				JsonMembers.Empty => {
+					return JsonValueLookup.Missing
+				}
+				JsonMembers.Node(node) => {
+					member = node.member
+					if Json.string_eq(member.key, key) {
+						return JsonValueLookup.Found(member.value)
+					}
+					cursor = node.next
+				}
+			}
+		}
+
+		return JsonValueLookup.Missing
+	}
+
+	fun value_kind(value: JsonValue) -> JsonKind {
+		return match value {
+			JsonValue.Object(_members) => JsonKind.Object
+			JsonValue.Array(_values) => JsonKind.Array
+			JsonValue.String(_text) => JsonKind.String
+			JsonValue.Number(_text) => JsonKind.Number
+			JsonValue.True => JsonKind.True
+			JsonValue.False => JsonKind.False
+			JsonValue.Null => JsonKind.Null
+		}
+	}
+
+	fun object_len(value: JsonValue) -> I32 {
+		return match value {
+			JsonValue.Object(members) => Json.json_members_len(members)
+			JsonValue.Array(_values) => 0
+			JsonValue.String(_text) => 0
+			JsonValue.Number(_text) => 0
+			JsonValue.True => 0
+			JsonValue.False => 0
+			JsonValue.Null => 0
+		}
+	}
+
+	fun array_len(value: JsonValue) -> I32 {
+		return match value {
+			JsonValue.Array(values) => Json.json_values_len(values)
+			JsonValue.Object(_members) => 0
+			JsonValue.String(_text) => 0
+			JsonValue.Number(_text) => 0
+			JsonValue.True => 0
+			JsonValue.False => 0
+			JsonValue.Null => 0
+		}
+	}
+
+	fun object_get(value: JsonValue, key: String) -> JsonValueLookup {
+		return match value {
+			JsonValue.Object(members) => Json.json_members_get(members, key)
+			JsonValue.Array(_values) => JsonValueLookup.Missing
+			JsonValue.String(_text) => JsonValueLookup.Missing
+			JsonValue.Number(_text) => JsonValueLookup.Missing
+			JsonValue.True => JsonValueLookup.Missing
+			JsonValue.False => JsonValueLookup.Missing
+			JsonValue.Null => JsonValueLookup.Missing
+		}
+	}
+
+	fun array_get(value: JsonValue, index: I32) -> JsonValueLookup {
+		return match value {
+			JsonValue.Array(values) => Json.json_values_get(values, index)
+			JsonValue.Object(_members) => JsonValueLookup.Missing
+			JsonValue.String(_text) => JsonValueLookup.Missing
+			JsonValue.Number(_text) => JsonValueLookup.Missing
+			JsonValue.True => JsonValueLookup.Missing
+			JsonValue.False => JsonValueLookup.Missing
+			JsonValue.Null => JsonValueLookup.Missing
+		}
+	}
+
+	fun value_string(value: JsonValue) -> JsonStringLookup {
+		return match value {
+			JsonValue.String(text) => JsonStringLookup.Found(text)
+			JsonValue.Object(_members) => JsonStringLookup.Missing
+			JsonValue.Array(_values) => JsonStringLookup.Missing
+			JsonValue.Number(_text) => JsonStringLookup.Missing
+			JsonValue.True => JsonStringLookup.Missing
+			JsonValue.False => JsonStringLookup.Missing
+			JsonValue.Null => JsonStringLookup.Missing
+		}
+	}
+
+	fun value_number(value: JsonValue) -> JsonStringLookup {
+		return match value {
+			JsonValue.Number(text) => JsonStringLookup.Found(text)
+			JsonValue.Object(_members) => JsonStringLookup.Missing
+			JsonValue.Array(_values) => JsonStringLookup.Missing
+			JsonValue.String(_text) => JsonStringLookup.Missing
+			JsonValue.True => JsonStringLookup.Missing
+			JsonValue.False => JsonStringLookup.Missing
+			JsonValue.Null => JsonStringLookup.Missing
+		}
+	}
+
+	fun parse_json_document_value_result(s: String) -> JsonDocumentValueResult {
+		start = Json.skip_ws(s, 0)
+		if start >= string_len(s) {
+			return JsonDocumentValueResult.Err(ParseErr.EmptyInput)
+		}
+
+		result = Json.parse_json_value_at_result(s, start)
+		match result {
+			JsonValueParseResult.Err(err) => {
+				return JsonDocumentValueResult.Err(err)
+			}
+			JsonValueParseResult.Ok(parsed) => {
+				end = Json.skip_ws(s, parsed.end)
+				if end != string_len(s) {
+					return JsonDocumentValueResult.Err(ParseErr.TrailingData)
+				}
+				return JsonDocumentValueResult.Ok(parsed.value)
+			}
+		}
+	}
+
+	fun consume_json_array(s: String, start: I32) -> I32 {
+		result = Json.parse_json_array_value_at(s, start)
+		match result {
+			JsonValueParseResult.Ok(parsed) => {
+				return parsed.end
+			}
+			JsonValueParseResult.Err(_err) => {
+				return Json.parse_fail()
+			}
+		}
+	}
+
+	fun consume_json_object(s: String, start: I32) -> I32 {
+		result = Json.parse_json_object_value_at(s, start)
+		match result {
+			JsonValueParseResult.Ok(parsed) => {
+				return parsed.end
+			}
+			JsonValueParseResult.Err(_err) => {
+				return Json.parse_fail()
+			}
+		}
+	}
+
+	fun parse_value_end(s: String, start: I32) -> I32 {
+		result = Json.parse_json_value_at_result(s, start)
+		match result {
+			JsonValueParseResult.Ok(parsed) => {
+				return parsed.end
+			}
+			JsonValueParseResult.Err(_err) => {
+				return Json.parse_fail()
+			}
+		}
 	}
 
 	fun parse_value_end_result(s: String, start: I32) -> ParseResult {
@@ -317,55 +731,21 @@ namespace Json {
 
 	fun json_kind(s: String) -> JsonKind {
 		i = Json.skip_ws(s, 0)
-		result = Json.parse_value_end_result(s, i)
-		match result {
-			ParseResult.Ok(_end) => {
-				if Json.parse_keyword_at(s, "true", i) != Json.parse_fail() {
-					return JsonKind.True
-				}
-				if Json.parse_keyword_at(s, "false", i) != Json.parse_fail() {
-					return JsonKind.False
-				}
-				if Json.parse_keyword_at(s, "null", i) != Json.parse_fail() {
-					return JsonKind.Null
-				}
-
-				ch = char_at(s, i)
-				if ch == 123 {
-					return JsonKind.Object
-				}
-				if ch == 91 {
-					return JsonKind.Array
-				}
-				if ch == 34 {
-					return JsonKind.String
-				}
-
-				return JsonKind.Number
-			}
-			ParseResult.Err(_err) => {
-				return JsonKind.Invalid
-			}
+		result = Json.parse_json_value_at_result(s, i)
+		return match result {
+			JsonValueParseResult.Ok(parsed) => Json.value_kind(parsed.value)
+			JsonValueParseResult.Err(_err) => JsonKind.Invalid
 		}
 	}
 
 	fun parse_json_document_result(s: String) -> ParseResult {
-		start = Json.skip_ws(s, 0)
-		if start >= string_len(s) {
-			return ParseResult.Err(ParseErr.EmptyInput)
-		}
-
-		result = Json.parse_value_end_result(s, start)
+		result = Json.parse_json_document_value_result(s)
 		match result {
-			ParseResult.Err(err) => {
+			JsonDocumentValueResult.Err(err) => {
 				return ParseResult.Err(err)
 			}
-			ParseResult.Ok(end0) => {
-				end = Json.skip_ws(s, end0)
-				if end != string_len(s) {
-					return ParseResult.Err(ParseErr.TrailingData)
-				}
-				return ParseResult.Ok(end)
+			JsonDocumentValueResult.Ok(_value) => {
+				return ParseResult.Ok(string_len(s))
 			}
 		}
 	}
