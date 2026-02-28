@@ -169,7 +169,7 @@ Important enforced invariants include:
 - Floating-point SMT reasoning is intentionally unsupported today; FP32/FP64 values/compares in obligations are rejected fail-closed.
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
-- Struct-invariant SAT failures include a compact checker CFG witness (block path + branch directions); for `main(argc, argv)` obligations, `oac` also extracts a concrete `argc` witness via additional CHC range queries.
+- Struct-invariant SAT failures include a compact checker CFG witness (block path + branch directions).
 - Loop classification is intentionally conservative: currently proves only a narrow canonical while-loop shape where the guard is initially true on entry and the body preserves the guard variable (`x' = x`), otherwise result is unknown and build proceeds.
 
 ## LSP Path

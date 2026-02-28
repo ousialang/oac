@@ -124,7 +124,7 @@ Observed in parser/IR implementation:
 - `qbe-smt` models `phi` by threading predecessor-block identity through CHC state and guarding predecessor-dependent merges.
 - `qbe-smt` is parser-free: proving consumes direct `qbe::Function` IR, not re-parsed QBE text.
 - `qbe-smt` flattens only entry-reachable blocks; unreachable unsupported instructions do not affect encoding.
-- When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions) plus, when the site is in `main(argc, argv)`, a concrete solver-derived `argc` witness (`program_input` field).
+- When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions).
 - `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced only for struct invariant obligations under `target/oac/struct_invariants/`.
 - `oac build` emits prove artifacts under `target/oac/prove/` when prove obligations exist.
 - `oac build` runs a conservative non-termination classifier over QBE `main` loops and rejects builds only when non-termination is proven (current proof shape: canonical while-loop with initially true guard and identity body update on guard variable, including simple `sub(x, 0)` forms). Unproven loops are treated as unknown and allowed.
