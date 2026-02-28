@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+staged_rust_files=()
+while IFS= read -r file; do
+  staged_rust_files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -- "*.rs")
+
+if [[ ${#staged_rust_files[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+if ! command -v rustup >/dev/null 2>&1; then
+  echo "pre-commit: rustup is required to run nightly rustfmt."
+  echo "Install rustup or bypass once with: git commit --no-verify"
+  exit 1
+fi
+
+rustfmt_bin="$(rustup which --toolchain nightly rustfmt 2>/dev/null || true)"
+if [[ -z "${rustfmt_bin}" || ! -x "${rustfmt_bin}" ]]; then
+  echo "pre-commit: nightly rustfmt is not available."
+  echo "Run: rustup toolchain install nightly --component rustfmt"
+  echo "Or bypass once with: git commit --no-verify"
+  exit 1
+fi
+
+echo "pre-commit: formatting staged Rust files with nightly rustfmt..."
+"${rustfmt_bin}" --config-path rustfmt.toml "${staged_rust_files[@]}"
+
+git add -- "${staged_rust_files[@]}"
