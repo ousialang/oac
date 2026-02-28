@@ -1,8 +1,8 @@
+use std::io::{IsTerminal, Write};
+use std::process::{Command, Stdio};
+
 use ariadne::{sources, Config, Label, Report, ReportKind};
 use qbe::{Function as QbeFunction, Module as QbeModule};
-use std::io::IsTerminal;
-use std::io::Write;
-use std::process::{Command, Stdio};
 use thiserror::Error;
 
 mod classify;
@@ -652,6 +652,74 @@ mod tests {
     }
 
     #[test]
+    fn models_strlen_with_bounded_nul_scan_and_fallback_branch() {
+        let function = make_main(
+            vec![(Type::Long, temp("s"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "len",
+                        Type::Long,
+                        Instr::Call("strlen".to_string(), vec![(Type::Long, temp("s"))], None),
+                    ),
+                    volatile(Instr::Ret(Some(temp("len")))),
+                ],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("strlen should encode");
+
+        assert!(smt.contains("(_ bv15 64)"));
+        assert!(smt.contains("(_ bv0 8)"));
+        assert!(smt.contains("(select mem (bvadd"));
+    }
+
+    #[test]
+    fn models_strcmp_with_bounded_scan_and_fallback_branch() {
+        let function = make_main(
+            vec![(Type::Long, temp("lhs")), (Type::Long, temp("rhs"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "cmp",
+                        Type::Word,
+                        Instr::Call(
+                            "strcmp".to_string(),
+                            vec![(Type::Long, temp("lhs")), (Type::Long, temp("rhs"))],
+                            None,
+                        ),
+                    ),
+                    volatile(Instr::Ret(Some(temp("cmp")))),
+                ],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("strcmp should encode");
+
+        assert!(smt.contains("(_ bv0 8)"));
+        assert!(smt.contains("(distinct (select mem (bvadd"));
+        assert!(smt.contains("(bvult (select mem (bvadd"));
+        assert!(smt.contains("(_ bv18446744073709551615 64)"));
+        assert!(smt.contains("(_ bv1 64)"));
+    }
+
+    #[test]
     fn models_memmove_overlap_case() {
         let function = make_main(
             vec![(Type::Long, temp("dst")), (Type::Long, temp("n"))],
@@ -718,6 +786,114 @@ mod tests {
 
         assert!(smt.contains("((_ extract 7 0)"));
         assert!(smt.contains("(store"));
+    }
+
+    #[test]
+    fn models_strcpy_with_bounded_copy_until_nul_and_fallback_branch() {
+        let function = make_main(
+            vec![(Type::Long, temp("dst")), (Type::Long, temp("src"))],
+            vec![block(
+                "entry",
+                vec![
+                    volatile(Instr::Call(
+                        "strcpy".to_string(),
+                        vec![(Type::Long, temp("dst")), (Type::Long, temp("src"))],
+                        None,
+                    )),
+                    volatile(Instr::Ret(Some(Value::Const(0)))),
+                ],
+            )],
+        );
+
+        let smt = encode_single_function(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("strcpy should encode");
+
+        assert!(smt.contains("(_ bv0 8)"));
+        assert!(smt.contains("(not"));
+        assert!(smt.contains("(store"));
+    }
+
+    #[test]
+    fn models_open_read_write_close_return_constraints() {
+        let function = make_main(
+            vec![
+                (Type::Long, temp("path")),
+                (Type::Word, temp("flags")),
+                (Type::Long, temp("mode")),
+                (Type::Word, temp("fd")),
+                (Type::Long, temp("buf")),
+                (Type::Long, temp("count")),
+            ],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "opened",
+                        Type::Word,
+                        Instr::Call(
+                            "open".to_string(),
+                            vec![
+                                (Type::Long, temp("path")),
+                                (Type::Word, temp("flags")),
+                                (Type::Long, temp("mode")),
+                            ],
+                            None,
+                        ),
+                    ),
+                    assign(
+                        "nread",
+                        Type::Long,
+                        Instr::Call(
+                            "read".to_string(),
+                            vec![
+                                (Type::Word, temp("fd")),
+                                (Type::Long, temp("buf")),
+                                (Type::Long, temp("count")),
+                            ],
+                            None,
+                        ),
+                    ),
+                    assign(
+                        "nwritten",
+                        Type::Long,
+                        Instr::Call(
+                            "write".to_string(),
+                            vec![
+                                (Type::Word, temp("fd")),
+                                (Type::Long, temp("buf")),
+                                (Type::Long, temp("count")),
+                            ],
+                            None,
+                        ),
+                    ),
+                    assign(
+                        "closed",
+                        Type::Word,
+                        Instr::Call("close".to_string(), vec![(Type::Word, temp("fd"))], None),
+                    ),
+                    volatile(Instr::Ret(Some(temp("nread")))),
+                ],
+            )],
+        );
+
+        let smt = qbe_to_smt(
+            &function,
+            &EncodeOptions {
+                assume_main_argc_non_negative: false,
+                first_arg_i32_range: None,
+            },
+        )
+        .expect("open/read/write/close should encode");
+
+        assert!(smt.contains("(bvsle"));
+        assert!(smt.contains("(bvsge"));
+        assert!(smt.contains("(_ bv18446744073709551615 64)"));
     }
 
     #[test]

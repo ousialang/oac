@@ -883,9 +883,10 @@ fn fresh_unique_temp(base: &str, used: &mut HashSet<String>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::{ir, parser, tokenizer};
-    use std::collections::HashMap;
 
     fn resolve_program(source: &str) -> ResolvedProgram {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
@@ -1520,6 +1521,77 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
         assert!(
             smt.contains("(ite (bvule"),
             "expected bounded branch in SMT: {smt}"
+        );
+    }
+
+    #[test]
+    fn modeled_clib_string_and_io_calls_encode_in_qbe_native_flow() {
+        let program = resolve_program(
+            r#"
+struct Probe {
+	ptr: PtrInt,
+	code: Int,
+}
+
+invariant "probe fields are reflexive" for (v: Probe) {
+	return v.ptr == v.ptr && v.code == v.code
+}
+
+fun make_probe(path: PtrInt, fd: Int, buf: PtrInt, n: PtrInt) -> Probe {
+	l = Clib.strlen(path)
+	cmp = Clib.strcmp(path, path)
+	copied = Clib.strcpy(buf, path)
+	opened = Clib.open(path, fd, path)
+	nread = Clib.read(opened, copied, n)
+	nwritten = Clib.write(opened, copied, n)
+	closed = Clib.close(opened)
+	chosen = nread
+	if cmp != 0 {
+		chosen = nwritten
+	}
+	if closed != 0 {
+		chosen = l
+	}
+	return Probe struct { ptr: chosen, code: opened, }
+}
+
+fun main(argc: I32, argv: PtrInt) -> I32 {
+	p = make_probe(argv, argc, argv, argv)
+	return argc
+}
+"#,
+        );
+
+        let (sites, function_map, invariants) =
+            site_function_map(&program).expect("build sites and qbe");
+        assert_eq!(sites.len(), 1);
+        let (checker_module, checker, assumptions) =
+            build_site_checker_module(&program, &invariants, &function_map, &sites[0])
+                .expect("build site checker");
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
+            &qbe_smt::EncodeOptions {
+                assume_main_argc_non_negative: should_assume_main_argc_non_negative(
+                    &sites[0].caller,
+                    &checker,
+                ),
+                first_arg_i32_range: None,
+            },
+            &assumptions,
+        )
+        .expect("string/io clib-backed checker should encode");
+        assert!(
+            smt.contains("(bvult (select mem (bvadd"),
+            "expected tri-state strcmp ordering branch in SMT: {smt}"
+        );
+        assert!(
+            smt.contains("(not false)"),
+            "expected bounded strcpy copy loop guard in SMT: {smt}"
+        );
+        assert!(
+            smt.contains("(_ bv18446744073709551615 64)") && smt.contains("(bvsle"),
+            "expected constrained open/read/write/close return modeling in SMT: {smt}"
         );
     }
 

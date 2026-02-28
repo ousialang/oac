@@ -175,6 +175,9 @@ Important enforced invariants include:
 - Property surface is fixed: query whether halt with `exit == 1` is reachable (`(query bad)`).
 - Unsupported constructs are fail-closed hard errors (no havoc fallback path).
 - For modeled CLib memory operations, encoding uses bounded precise expansion (`limit = 16`) plus sound fallback branches (for example, unconstrained `mem_next` when bounds are exceeded).
+- Bounded string-call details: `strlen` scans for NUL up to the inline limit and otherwise falls back to constrained unknown non-negative length; `strcmp` performs bounded first-event scan (`difference` or shared NUL) with tri-state results (`-1/0/1`) and otherwise falls back to unconstrained return.
+- `strcpy` memory effects are modeled as bounded byte copy until first NUL (including terminator); if no NUL is found within the inline limit, memory falls back to unconstrained `mem_next`.
+- Syscall-like modeled return constraints are explicit: `open` -> `-1 | >=0`, `close` -> `0 | -1`, `read`/`write` -> `-1 | (0 <= ret <= count)`.
 - Floating-point SMT reasoning is intentionally unsupported today; FP32/FP64 values/compares in obligations are rejected fail-closed.
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.

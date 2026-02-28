@@ -306,12 +306,13 @@ fn inject_site_check_and_return(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use super::verify_prove_obligations_with_qbe;
     use crate::verification_cycles::{
         reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
     };
     use crate::{ir, parser, qbe_backend, tokenizer};
-
-    use super::verify_prove_obligations_with_qbe;
 
     fn resolve_program(source: &str) -> ir::ResolvedProgram {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
@@ -513,5 +514,73 @@ fun main() -> I32 {
         assert!(err
             .to_string()
             .contains("includes arg-invariant precondition edges"));
+    }
+
+    #[test]
+    fn prove_checker_encoding_models_string_and_io_clib_calls() {
+        let source = r#"
+fun check(path: PtrInt, fd: Int, buf: PtrInt, n: PtrInt) -> I32 {
+	l = Clib.strlen(path)
+	cmp = Clib.strcmp(path, path)
+	copied = Clib.strcpy(buf, path)
+	opened = Clib.open(path, fd, path)
+	nread = Clib.read(opened, copied, n)
+	nwritten = Clib.write(opened, copied, n)
+	closed = Clib.close(opened)
+	prove(cmp == cmp && l == l && nread == nread && nwritten == nwritten && closed == closed)
+	return 0
+}
+
+fun main() -> I32 {
+	return check(i32_to_i64(0), 0, i32_to_i64(0), i32_to_i64(0))
+}
+"#;
+
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let invariant_by_struct =
+            super::discover_struct_invariant_bindings(&program).expect("discover invariants");
+        let function_map = qbe_module
+            .functions
+            .iter()
+            .map(|function| (function.name.clone(), function.clone()))
+            .collect::<HashMap<_, _>>();
+        let reachable =
+            reachable_user_functions(&program, "main").expect("collect reachable functions");
+        let sites = super::collect_prove_sites(&function_map, &reachable).expect("collect sites");
+        assert_eq!(sites.len(), 1, "expected one prove site");
+        let (checker_module, checker, assumptions) = super::build_site_checker_module(
+            &program,
+            &invariant_by_struct,
+            &function_map,
+            &sites[0],
+        )
+        .expect("build checker module");
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
+            &qbe_smt::EncodeOptions {
+                assume_main_argc_non_negative: super::should_assume_main_argc_non_negative(
+                    &sites[0].caller,
+                    &checker,
+                ),
+                first_arg_i32_range: None,
+            },
+            &assumptions,
+        )
+        .expect("encode prove checker");
+
+        assert!(
+            smt.contains("(bvult (select mem (bvadd"),
+            "expected tri-state strcmp ordering branch in SMT: {smt}"
+        );
+        assert!(
+            smt.contains("(not false)"),
+            "expected bounded strcpy copy loop guard in SMT: {smt}"
+        );
+        assert!(
+            smt.contains("(_ bv18446744073709551615 64)") && smt.contains("(bvsle"),
+            "expected constrained open/read/write/close return modeling in SMT: {smt}"
+        );
     }
 }
