@@ -87,15 +87,16 @@ Observed in parser/IR implementation:
 - The built-in stdlib is composed through flat imports from `crates/oac/src/std/std.oa` into split sibling files under `crates/oac/src/std/` (including `std_clib.oa` extern bindings and `std_traits.oa` trait/impl declarations), then merged into one global scope before user type-checking (including stdlib invariant declarations).
 - The split stdlib includes generic `Ref[T]` (in `crates/oac/src/std/std_ref.oa`) for pointer-wrapper value semantics (`from_ptr`, `ptr`, `is_null`, `add_bytes`), with read-only dereference helpers exposed via concrete specializations (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`).
 - Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Eq, V]`) and preserves probing/table semantics while routing key hashing/equality through `Hash.hash(k)` and `Eq.equals(a, b)`.
-- `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive.
-- C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }` (including `memcmp`); namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
+- `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`.
+- C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - The split stdlib `LinkedList[T]` template (in `crates/oac/src/std/std_collections.oa`) is persistent/value-based and now includes richer namespaced helpers (`empty`, `singleton`, `cons`, `push_front`, `is_empty`, `len`, `length`, `front`, `tail`, `pop_front`, `append`, `reverse`, `take`, `drop`, `at`, `at_or`) with result enums (`FrontResult`, `TailResult`, `PopFrontResult`); `length`, `head_or`, and `tail_or` are retained as compatibility wrappers.
+- `LinkedList[T]::Node` has a declaration-based struct invariant requiring positive cached length metadata (`len >= 1`); `LinkedList.make_node` normalizes negative lengths to `0` and saturates at `2147483646` before adding one so node construction preserves the invariant under fail-closed proving.
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs). `AsciiChar` wraps `Char` and has an invariant requiring `0 <= Char.code(ch) <= 127`.
 - The split stdlib also defines `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with helpers `Char.from_code(...)`, `Char.code(...)`, and `Char.equals(...)`.
 - The split stdlib now also defines `Null` as an empty struct (`struct Null {}`), with a namespaced constructor helper `Null.value() -> Null`.
-- The split stdlib now also defines `HashTable[T]` as a dynamically resizing separate-chaining map in `crates/oac/src/std/std_collections.oa`; public helpers are `HashTable.new`, `HashTable.with_capacity`, `HashTable.set`, `HashTable.get`, `HashTable.remove`, `HashTable.len`, `HashTable.capacity`, `HashTable.contains_key`, and `HashTable.clear`.
-- `HashTable.set` returns `SetResult { table: HashTable, inserted_new: Bool }` and `HashTable.remove` returns `RemoveResult { table: HashTable, removed: Lookup }`; `HashTable` keys are `I32`.
+- The split stdlib now also defines `HashTable[K: Hash + Eq, V]` as a dynamically resizing separate-chaining map in `crates/oac/src/std/std_collections.oa`; public helpers are `HashTable.new`, `HashTable.with_capacity`, `HashTable.set`, `HashTable.get`, `HashTable.remove`, `HashTable.len`, `HashTable.capacity`, `HashTable.contains_key`, and `HashTable.clear`.
+- `HashTable.set` returns `SetResult { table: HashTable, inserted_new: Bool }` and `HashTable.remove` returns `RemoveResult { table: HashTable, removed: Lookup }`.
 - Struct invariants are optional per struct type and can be declared directly as `invariant "Human label" for (v: TypeName) { ... }` or `invariant identifier "Human label" for (...) { ... }`.
 - Invariant declarations synthesize internal functions named `__struct__<TypeName>__invariant` with signature `fun ...(v: <TypeName>) -> Bool`; legacy explicit functions using that exact name/signature are still accepted for compatibility.
 - Malformed legacy invariant functions are compile errors.
@@ -103,7 +104,10 @@ Observed in parser/IR implementation:
 - Build-time verification also checks `prove(...)` obligations at reachable statement sites from `main` by synthesizing checker QBE functions that return `1` on proof-condition violation.
 - Verification synthesizes each site checker from compiled QBE by instrumenting the target call with an invariant check and returning `1` on violation / `0` on success, then asks if exit code `1` is reachable (`unsat` means invariant proven, `sat` means compile failure).
 - `prove(...)` checker synthesis instruments QBE marker assignments (`.oac_prove_site_*`) and rewrites checker return to `1` when the proved condition is false at the targeted site.
-- Checker construction inlines reachable user-function calls into the site checker before CHC encoding, so loops/control-flow are reasoned about on QBE transitions.
+- Checker construction is interprocedural: the checker artifact includes entry + reachable user callees, and CHC encoding models user calls through function summary relations (`*_ret` / `*_abort`) instead of checker-time inlining.
+- Checker entry preconditions now include argument-type invariants in both verification pipelines: for each checker function argument whose semantic type has a struct invariant, encoding adds an invariant relation precondition (`*_ret` relation + non-zero return).
+- These argument-invariant preconditions are assumptions only: the checker’s entry memory/heap state is not replaced with the invariant-call output memory/heap.
+- Shared recursion-cycle analysis lives in `verification_cycles.rs` and uses SCCs over the combined verification graph with deterministic cycle witness reconstruction for fail-closed diagnostics.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
 - String literals lower to std `String.Literal` values by allocating `Bytes` + tagged union wrapper in codegen; runtime string helpers (`char_at`, `string_len`, `slice`, `print_str`) read `Bytes.ptr`/`Bytes.len` from that layout.
 - Runtime `i32_to_i64` helper lowering uses signed extension (`extsw`) so values above `255` are not truncated in pointer/length conversion paths.
@@ -111,7 +115,7 @@ Observed in parser/IR implementation:
 - `oac test <file.oa>` is fail-fast: each `test` block is lowered to a generated zero-arg `I32` function, and a generated `main` executes tests in declaration order. A failing runtime `assert` exits immediately with code `242`.
 - `oac test` requires at least one `test` declaration and rejects source files that already define `main` (because `main` is synthesized by the test runner).
 - `oac build` does not lower or execute `test` declarations; test lowering is isolated to the `oac test` command path.
-- Recursion cycles in the reachable user call graph are rejected fail-closed for struct invariant verification.
+- Call-only recursion cycles are allowed for struct invariant and prove verification; cycles containing argument-invariant precondition edges are rejected fail-closed on the combined verification graph.
 - Unsupported proving constructs at QBE level fail closed through `qbe-smt` (hard `Unsupported` encoding errors).
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).
 - Prove obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
@@ -122,7 +126,7 @@ Observed in parser/IR implementation:
 - `qbe-smt` also models known CLib calls (`malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`) plus variadic `printf` for builtin `print` inlined paths.
 - CLib byte-memory call models use bounded precise expansion (`limit = 16`) with sound fallback branches; unknown extern call targets remain fail-closed unsupported errors.
 - `qbe-smt` models `phi` by threading predecessor-block identity through CHC state and guarding predecessor-dependent merges.
-- `qbe-smt` is parser-free: proving consumes direct `qbe::Function` IR, not re-parsed QBE text.
+- `qbe-smt` is parser-free: proving consumes direct in-memory QBE IR (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`), not re-parsed QBE text.
 - `qbe-smt` flattens only entry-reachable blocks; unreachable unsupported instructions do not affect encoding.
 - When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions).
 - `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced only for struct invariant obligations under `target/oac/struct_invariants/`.

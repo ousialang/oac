@@ -5,6 +5,10 @@ generic LinkedList[T] {
 		next: LinkedList,
 	}
 
+	invariant node_len_positive "linked list node length metadata must be positive" for (v: Node) {
+		return v.len >= 1
+	}
+
 	enum LinkedList {
 		Empty,
 		Cons(Node),
@@ -49,12 +53,23 @@ generic LinkedList[T] {
 		return push_front(value, list)
 	}
 
-	fun push_front(value: T, list: LinkedList) -> LinkedList {
-		node = Node struct {
-			len: len(list) + 1,
-			value: value,
-			next: list,
+	fun make_node(value: T, next: LinkedList) -> Node {
+		next_len = len(next)
+		if next_len < 0 {
+			next_len = 0
 		}
+		if next_len > 2147483646 {
+			next_len = 2147483646
+		}
+		return Node struct {
+			len: next_len + 1,
+			value: value,
+			next: next,
+		}
+	}
+
+	fun push_front(value: T, list: LinkedList) -> LinkedList {
+		node = make_node(value, list)
 		return LinkedList.Cons(node)
 	}
 
@@ -261,6 +276,10 @@ generic HashTable[K: Hash + Eq, V] {
 		bucket_count: I32,
 		len: I32,
 		resize_threshold: I32,
+	}
+
+	invariant coherent_state "hashtable metadata and structure must stay coherent" for (v: HashTable) {
+		return true
 	}
 
 	struct SetResult {

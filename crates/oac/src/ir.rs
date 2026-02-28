@@ -3517,6 +3517,16 @@ fun main() -> I32 {
                 .contains_key("__struct__AsciiChar__invariant"),
             "missing __struct__AsciiChar__invariant function from split stdlib"
         );
+        assert!(
+            resolved.struct_invariants.contains_key("Bytes"),
+            "missing Bytes invariant metadata from split stdlib"
+        );
+        assert!(
+            resolved
+                .function_definitions
+                .contains_key("__struct__Bytes__invariant"),
+            "missing __struct__Bytes__invariant function from split stdlib"
+        );
     }
 
     #[test]

@@ -3,8 +3,16 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::invariant_metadata::{
+    build_function_arg_invariant_assumptions, build_function_arg_invariant_assumptions_for_names,
+    build_function_arg_invariant_assumptions_with_name_overrides,
+    discover_struct_invariant_bindings, InvariantBinding,
+};
 use crate::ir::{ResolvedProgram, TypeDef};
 use crate::parser::{Expression, Statement};
+use crate::verification_cycles::{
+    reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+};
 
 const Z3_TIMEOUT_SECONDS: u64 = 10;
 
@@ -27,8 +35,26 @@ pub fn verify_struct_invariants_with_qbe(
     if sites.is_empty() {
         return Ok(());
     }
-    reject_recursion_cycles(program, "main", &reachable)?;
-    solve_obligations_qbe(program, &qbe_module, &sites, target_dir)
+    let reachable_names = reachable.iter().cloned().collect::<BTreeSet<_>>();
+    let arg_invariant_assumptions = build_function_arg_invariant_assumptions_for_names(
+        program,
+        &reachable_names,
+        &invariant_by_struct,
+    )?;
+    reject_recursion_cycles_with_arg_invariants(
+        program,
+        "main",
+        &reachable,
+        &arg_invariant_assumptions,
+        "struct invariant verification",
+    )?;
+    solve_obligations_qbe(
+        program,
+        &qbe_module,
+        &sites,
+        target_dir,
+        &invariant_by_struct,
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -43,281 +69,10 @@ struct ObligationSite {
     invariant_identifier: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-struct InvariantBinding {
-    function_name: String,
-    display_name: String,
-    identifier: Option<String>,
-}
-
 fn discover_invariants(
     program: &ResolvedProgram,
 ) -> anyhow::Result<HashMap<String, InvariantBinding>> {
-    let mut invariant_by_struct = HashMap::new();
-
-    for (struct_name, invariant) in &program.struct_invariants {
-        let ty = program
-            .type_definitions
-            .get(struct_name)
-            .ok_or_else(|| anyhow::anyhow!("invariant targets unknown type {}", struct_name))?;
-        if !matches!(ty, TypeDef::Struct(_)) {
-            return Err(anyhow::anyhow!(
-                "invariant \"{}\" must target a struct type, but {} is not a struct",
-                invariant.display_name,
-                struct_name
-            ));
-        }
-
-        let func_def = program
-            .function_definitions
-            .get(&invariant.function_name)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing function definition for invariant \"{}\" ({})",
-                    invariant.display_name,
-                    invariant.function_name
-                )
-            })?;
-        let sig = &func_def.sig;
-        if sig.parameters.len() != 1 {
-            return Err(anyhow::anyhow!(
-                "invariant \"{}\" must have exactly one parameter of type {}",
-                invariant.display_name,
-                struct_name
-            ));
-        }
-        if sig.parameters[0].ty != *struct_name {
-            return Err(anyhow::anyhow!(
-                "invariant \"{}\" must have signature fun {}(v: {}) -> Bool",
-                invariant.display_name,
-                invariant.function_name,
-                struct_name
-            ));
-        }
-        if sig.return_type != "Bool" {
-            return Err(anyhow::anyhow!(
-                "invariant \"{}\" must return Bool, got {}",
-                invariant.display_name,
-                sig.return_type
-            ));
-        }
-
-        if let Some(existing) = invariant_by_struct.insert(
-            struct_name.to_string(),
-            InvariantBinding {
-                function_name: invariant.function_name.clone(),
-                display_name: invariant.display_name.clone(),
-                identifier: invariant.identifier.clone(),
-            },
-        ) {
-            return Err(anyhow::anyhow!(
-                "struct {} has multiple invariants: \"{}\" and \"{}\"",
-                struct_name,
-                existing.display_name,
-                invariant.display_name
-            ));
-        }
-    }
-
-    Ok(invariant_by_struct)
-}
-
-fn reachable_user_functions(
-    program: &ResolvedProgram,
-    root: &str,
-) -> anyhow::Result<HashSet<String>> {
-    let mut reachable = HashSet::new();
-    let mut stack = vec![root.to_string()];
-
-    while let Some(function_name) = stack.pop() {
-        if !reachable.insert(function_name.clone()) {
-            continue;
-        }
-
-        let function = program
-            .function_definitions
-            .get(&function_name)
-            .ok_or_else(|| {
-                anyhow::anyhow!("reachable function {} is missing definition", function_name)
-            })?;
-
-        let mut callees = BTreeSet::new();
-        for statement in &function.body {
-            collect_called_user_functions_in_statement(statement, program, &mut callees);
-        }
-
-        for callee in callees {
-            if !reachable.contains(&callee) {
-                stack.push(callee);
-            }
-        }
-    }
-
-    Ok(reachable)
-}
-
-fn collect_called_user_functions_in_statement(
-    statement: &Statement,
-    program: &ResolvedProgram,
-    out: &mut BTreeSet<String>,
-) {
-    match statement {
-        Statement::StructDef { .. } => {}
-        Statement::Assign { value, .. } => {
-            collect_called_user_functions_in_expr(value, program, out)
-        }
-        Statement::Return { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Expression { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Prove { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Assert { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-            if let Some(else_body) = else_body {
-                for statement in else_body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-        Statement::While { condition, body } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-        }
-        Statement::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                for statement in &arm.body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-    }
-}
-
-fn collect_called_user_functions_in_expr(
-    expr: &Expression,
-    program: &ResolvedProgram,
-    out: &mut BTreeSet<String>,
-) {
-    match expr {
-        Expression::Call(name, args) => {
-            if program.function_definitions.contains_key(name) {
-                out.insert(name.clone());
-            }
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            if let Expression::FieldAccess {
-                struct_variable,
-                field,
-            } = callee.as_ref()
-            {
-                let call = crate::parser::qualify_namespace_function_name(struct_variable, field);
-                if program.function_definitions.contains_key(&call) {
-                    out.insert(call);
-                }
-            }
-            collect_called_user_functions_in_expr(callee, program, out);
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::BinOp(_, lhs, rhs) => {
-            collect_called_user_functions_in_expr(lhs, program, out);
-            collect_called_user_functions_in_expr(rhs, program, out);
-        }
-        Expression::UnaryOp(_, expr) => collect_called_user_functions_in_expr(expr, program, out),
-        Expression::StructValue { field_values, .. } => {
-            for (_, value) in field_values {
-                collect_called_user_functions_in_expr(value, program, out);
-            }
-        }
-        Expression::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                collect_called_user_functions_in_expr(&arm.value, program, out);
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
-    }
-}
-
-fn reject_recursion_cycles(
-    program: &ResolvedProgram,
-    root: &str,
-    reachable: &HashSet<String>,
-) -> anyhow::Result<()> {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum VisitState {
-        Visiting,
-        Visited,
-    }
-
-    fn dfs(
-        program: &ResolvedProgram,
-        function: &str,
-        reachable: &HashSet<String>,
-        states: &mut HashMap<String, VisitState>,
-        stack: &mut Vec<String>,
-    ) -> anyhow::Result<()> {
-        if let Some(VisitState::Visited) = states.get(function) {
-            return Ok(());
-        }
-        if let Some(VisitState::Visiting) = states.get(function) {
-            let pos = stack.iter().position(|name| name == function).unwrap_or(0);
-            let mut cycle = stack[pos..].join(" -> ");
-            if !cycle.is_empty() {
-                cycle.push_str(" -> ");
-            }
-            cycle.push_str(function);
-            return Err(anyhow::anyhow!(
-                "recursion cycles are unsupported by struct invariant verification: {}",
-                cycle
-            ));
-        }
-
-        states.insert(function.to_string(), VisitState::Visiting);
-        stack.push(function.to_string());
-
-        let func = program
-            .function_definitions
-            .get(function)
-            .ok_or_else(|| anyhow::anyhow!("missing function definition for {}", function))?;
-        let mut callees = BTreeSet::new();
-        for statement in &func.body {
-            collect_called_user_functions_in_statement(statement, program, &mut callees);
-        }
-        for callee in callees {
-            if reachable.contains(&callee) {
-                dfs(program, &callee, reachable, states, stack)?;
-            }
-        }
-
-        stack.pop();
-        states.insert(function.to_string(), VisitState::Visited);
-        Ok(())
-    }
-
-    let mut states = HashMap::new();
-    let mut stack = Vec::new();
-    if reachable.contains(root) {
-        dfs(program, root, reachable, &mut states, &mut stack)?;
-    }
-    Ok(())
+    discover_struct_invariant_bindings(program)
 }
 
 fn collect_obligation_sites(
@@ -799,10 +554,11 @@ fn should_assume_main_argc_non_negative(site: &ObligationSite, checker: &qbe::Fu
 }
 
 fn solve_obligations_qbe(
-    _program: &ResolvedProgram,
+    program: &ResolvedProgram,
     qbe_module: &qbe::Module,
     sites: &[ObligationSite],
     target_dir: &Path,
+    invariant_by_struct: &HashMap<String, InvariantBinding>,
 ) -> anyhow::Result<()> {
     let verification_dir = target_dir.join("struct_invariants");
     std::fs::create_dir_all(&verification_dir).with_context(|| {
@@ -821,8 +577,9 @@ fn solve_obligations_qbe(
     let mut failures = Vec::new();
 
     for site in sites {
-        let checker_function = build_site_checker_function(&function_map, site)?;
-        let checker_qbe = checker_function.to_string();
+        let (checker_module, checker_function, assumptions) =
+            build_site_checker_module(program, invariant_by_struct, &function_map, site)?;
+        let checker_qbe = checker_module.to_string();
         let site_stem = format!("site_{}", sanitize_ident(&site.id));
         let qbe_filename = format!("{}.qbe", site_stem);
         let smt_filename = format!("{}.smt2", site_stem);
@@ -832,8 +589,9 @@ fn solve_obligations_qbe(
             format!("failed to write checker QBE program {}", qbe_path.display())
         })?;
 
-        let smt = qbe_smt::qbe_to_smt(
-            &checker_function,
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
                     site,
@@ -841,6 +599,7 @@ fn solve_obligations_qbe(
                 ),
                 first_arg_i32_range: None,
             },
+            &assumptions,
         )
         .map_err(|err| {
             anyhow::anyhow!(
@@ -863,9 +622,14 @@ fn solve_obligations_qbe(
                 let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
                     .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                     .unwrap_or_default();
-                let program_input = try_find_program_input_counterexample(site, &checker_function)
-                    .map(|input| format!(", program_input=\"{}\"", escape_diagnostic_value(&input)))
-                    .unwrap_or_default();
+                let program_input = try_find_program_input_counterexample(
+                    site,
+                    &checker_function,
+                    &checker_module,
+                    &assumptions,
+                )
+                .map(|input| format!(", program_input=\"{}\"", escape_diagnostic_value(&input)))
+                .unwrap_or_default();
                 let invariant_label = if let Some(identifier) = &site.invariant_identifier {
                     format!("{} (id={})", site.invariant_display_name, identifier)
                 } else {
@@ -912,6 +676,8 @@ fn solve_obligations_qbe(
 fn try_find_program_input_counterexample(
     site: &ObligationSite,
     checker: &qbe::Function,
+    checker_module: &qbe::Module,
+    assumptions: &qbe_smt::ModuleAssumptions,
 ) -> Option<String> {
     if site.caller != "main" {
         return None;
@@ -919,11 +685,60 @@ fn try_find_program_input_counterexample(
 
     match checker.arguments.as_slice() {
         [] => Some("main() has no inputs (counterexample is input-independent)".to_string()),
-        [(qbe::Type::Word, _), (qbe::Type::Long, _)] => None,
+        [(qbe::Type::Word, _), (qbe::Type::Long, _)] => {
+            find_main_argc_counterexample(checker_module, assumptions)
+        }
         _ => None,
     }
 }
 
+fn find_main_argc_counterexample(
+    checker_module: &qbe::Module,
+    assumptions: &qbe_smt::ModuleAssumptions,
+) -> Option<String> {
+    // Find one concrete argc in [0, i32::MAX] by querying satisfiable signed ranges.
+    let mut lo = 0i32;
+    let mut hi = i32::MAX;
+
+    if !is_sat_for_main_argc_range(checker_module, assumptions, lo, hi)? {
+        return None;
+    }
+
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if is_sat_for_main_argc_range(checker_module, assumptions, lo, mid)? {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    Some(format!("argc={} (solver witness for main(argc, argv))", lo))
+}
+
+fn is_sat_for_main_argc_range(
+    checker_module: &qbe::Module,
+    assumptions: &qbe_smt::ModuleAssumptions,
+    lower: i32,
+    upper: i32,
+) -> Option<bool> {
+    let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+        checker_module,
+        "main",
+        &qbe_smt::EncodeOptions {
+            assume_main_argc_non_negative: true,
+            first_arg_i32_range: Some((lower, upper)),
+        },
+        assumptions,
+    )
+    .ok()?;
+
+    match qbe_smt::solve_chc_script(&smt, COUNTEREXAMPLE_SEARCH_TIMEOUT_SECONDS).ok()? {
+        qbe_smt::SolverResult::Sat => Some(true),
+        qbe_smt::SolverResult::Unsat => Some(false),
+        qbe_smt::SolverResult::Unknown => None,
+    }
+}
 fn escape_diagnostic_value(value: &str) -> String {
     value.replace('"', "\\\"")
 }
@@ -1146,10 +961,12 @@ fn describe_edge(
     }
 }
 
-fn build_site_checker_function(
+fn build_site_checker_module(
+    program: &ResolvedProgram,
+    invariant_by_struct: &HashMap<String, InvariantBinding>,
     function_map: &HashMap<String, qbe::Function>,
     site: &ObligationSite,
-) -> anyhow::Result<qbe::Function> {
+) -> anyhow::Result<(qbe::Module, qbe::Function, qbe_smt::ModuleAssumptions)> {
     let caller = function_map
         .get(&site.caller)
         .ok_or_else(|| anyhow::anyhow!("missing QBE function for caller {}", site.caller))?;
@@ -1160,9 +977,116 @@ fn build_site_checker_function(
 
     rewrite_returns_to_zero(&mut checker);
     inject_site_check_and_return(&mut checker, site)?;
-    inline_reachable_user_calls(&mut checker, function_map)?;
 
-    Ok(checker)
+    let mut checker_to_program_name = HashMap::new();
+    if site.caller != "main" {
+        checker_to_program_name.insert("main".to_string(), site.caller.clone());
+    }
+
+    let (module, assumptions) = checker_module_with_reachable_callees(
+        program,
+        invariant_by_struct,
+        function_map,
+        &checker,
+        &checker_to_program_name,
+    )?;
+    Ok((module, checker, assumptions))
+}
+
+fn checker_module_with_reachable_callees(
+    program: &ResolvedProgram,
+    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    function_map: &HashMap<String, qbe::Function>,
+    checker: &qbe::Function,
+    checker_to_program_name: &HashMap<String, String>,
+) -> anyhow::Result<(qbe::Module, qbe_smt::ModuleAssumptions)> {
+    let mut additional_roots = BTreeSet::<String>::new();
+    loop {
+        let mut module = qbe::Module::default();
+        module.functions.push(checker.clone());
+
+        let mut visited = HashSet::<String>::new();
+        let mut queue = VecDeque::<String>::new();
+        for callee in direct_user_callees(checker, function_map) {
+            queue.push_back(callee);
+        }
+        for root in &additional_roots {
+            if root != &checker.name {
+                queue.push_back(root.clone());
+            }
+        }
+
+        while let Some(callee_name) = queue.pop_front() {
+            if !visited.insert(callee_name.clone()) {
+                continue;
+            }
+            let callee = function_map.get(&callee_name).ok_or_else(|| {
+                anyhow::anyhow!("missing QBE function for callee {}", callee_name)
+            })?;
+            module.functions.push(callee.clone());
+            for nested in direct_user_callees(callee, function_map) {
+                if !visited.contains(&nested) {
+                    queue.push_back(nested);
+                }
+            }
+        }
+
+        let assumptions = if checker_to_program_name.is_empty() {
+            build_function_arg_invariant_assumptions(
+                program,
+                &module.functions,
+                invariant_by_struct,
+            )?
+        } else {
+            build_function_arg_invariant_assumptions_with_name_overrides(
+                program,
+                &module.functions,
+                invariant_by_struct,
+                checker_to_program_name,
+            )?
+        };
+        let required_invariant_functions = assumptions
+            .iter()
+            .map(|assumption| assumption.invariant_function_name.clone())
+            .collect::<BTreeSet<_>>();
+
+        let mut next_roots = additional_roots.clone();
+        next_roots.extend(required_invariant_functions);
+        if next_roots == additional_roots {
+            return Ok((
+                module,
+                qbe_smt::ModuleAssumptions {
+                    arg_invariant_assumptions: assumptions,
+                },
+            ));
+        }
+        additional_roots = next_roots;
+    }
+}
+
+fn direct_user_callees(
+    function: &qbe::Function,
+    function_map: &HashMap<String, qbe::Function>,
+) -> BTreeSet<String> {
+    let mut callees = BTreeSet::new();
+    for block in &function.blocks {
+        for item in &block.items {
+            let qbe::BlockItem::Statement(statement) = item else {
+                continue;
+            };
+            let maybe_name = match statement {
+                qbe::Statement::Assign(_, _, qbe::Instr::Call(name, _, _))
+                | qbe::Statement::Volatile(qbe::Instr::Call(name, _, _)) => Some(name),
+                _ => None,
+            };
+            if let Some(name) = maybe_name {
+                if function_map.contains_key(name) {
+                    callees.insert(name.clone());
+                }
+            }
+        }
+    }
+    callees
 }
 
 fn rewrite_returns_to_zero(function: &mut qbe::Function) {
@@ -1289,308 +1213,6 @@ fn inject_site_check_and_return(
     }
 }
 
-pub(crate) fn inline_reachable_user_calls(
-    function: &mut qbe::Function,
-    function_map: &HashMap<String, qbe::Function>,
-) -> anyhow::Result<()> {
-    let mut inline_counter = 0usize;
-    let max_inlines = 20_000usize;
-
-    loop {
-        if inline_counter > max_inlines {
-            return Err(anyhow::anyhow!(
-                "inline limit exceeded while building checker for {}",
-                function.name
-            ));
-        }
-
-        let Some((block_idx, item_idx, callee_name)) =
-            find_next_reachable_inline_call(function, function_map)
-        else {
-            break;
-        };
-
-        if callee_name == function.name {
-            return Err(anyhow::anyhow!(
-                "recursion cycles are unsupported by struct invariant verification: {} -> {}",
-                function.name,
-                callee_name
-            ));
-        }
-
-        let callee = function_map
-            .get(&callee_name)
-            .ok_or_else(|| anyhow::anyhow!("missing callee function {}", callee_name))?
-            .clone();
-        inline_single_call(function, block_idx, item_idx, &callee, inline_counter)?;
-        inline_counter += 1;
-    }
-
-    Ok(())
-}
-
-fn find_next_reachable_inline_call(
-    function: &qbe::Function,
-    function_map: &HashMap<String, qbe::Function>,
-) -> Option<(usize, usize, String)> {
-    let reachable = reachable_block_indices(function);
-
-    for (block_idx, block) in function.blocks.iter().enumerate() {
-        if !reachable.contains(&block_idx) {
-            continue;
-        }
-        for (item_idx, item) in block.items.iter().enumerate() {
-            let maybe_name = match item {
-                qbe::BlockItem::Statement(qbe::Statement::Assign(
-                    _,
-                    _,
-                    qbe::Instr::Call(name, _, variadic_index),
-                )) => {
-                    if variadic_index.is_none() {
-                        Some(name)
-                    } else {
-                        None
-                    }
-                }
-                qbe::BlockItem::Statement(qbe::Statement::Volatile(qbe::Instr::Call(
-                    name,
-                    _,
-                    variadic_index,
-                ))) => {
-                    if variadic_index.is_none() {
-                        Some(name)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-
-            let Some(name) = maybe_name else {
-                continue;
-            };
-            if function_map.contains_key(name) {
-                return Some((block_idx, item_idx, name.clone()));
-            }
-        }
-    }
-
-    None
-}
-
-fn inline_single_call(
-    function: &mut qbe::Function,
-    block_idx: usize,
-    item_idx: usize,
-    callee: &qbe::Function,
-    inline_counter: usize,
-) -> anyhow::Result<()> {
-    if callee.blocks.is_empty() {
-        return Err(anyhow::anyhow!(
-            "cannot inline empty callee {}",
-            callee.name
-        ));
-    }
-
-    let call_item = function.blocks[block_idx]
-        .items
-        .get(item_idx)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("invalid call location for inlining"))?;
-
-    enum CallKind {
-        Assign {
-            dest: qbe::Value,
-            dest_ty: qbe::Type,
-            args: Vec<(qbe::Type, qbe::Value)>,
-        },
-        Volatile {
-            args: Vec<(qbe::Type, qbe::Value)>,
-        },
-    }
-
-    let call_kind = match &call_item {
-        qbe::BlockItem::Statement(qbe::Statement::Assign(
-            dest,
-            dest_ty,
-            qbe::Instr::Call(name, args, variadic_index),
-        )) => {
-            if name != &callee.name {
-                return Err(anyhow::anyhow!(
-                    "call target mismatch while inlining: expected {}, got {}",
-                    callee.name,
-                    name
-                ));
-            }
-            if variadic_index.is_some() {
-                return Err(anyhow::anyhow!(
-                    "variadic call to {} is unsupported in struct invariant checker inlining",
-                    name
-                ));
-            }
-            CallKind::Assign {
-                dest: dest.clone(),
-                dest_ty: dest_ty.clone(),
-                args: args.clone(),
-            }
-        }
-        qbe::BlockItem::Statement(qbe::Statement::Volatile(qbe::Instr::Call(
-            name,
-            args,
-            variadic_index,
-        ))) => {
-            if name != &callee.name {
-                return Err(anyhow::anyhow!(
-                    "call target mismatch while inlining: expected {}, got {}",
-                    callee.name,
-                    name
-                ));
-            }
-            if variadic_index.is_some() {
-                return Err(anyhow::anyhow!(
-                    "variadic call to {} is unsupported in struct invariant checker inlining",
-                    name
-                ));
-            }
-            CallKind::Volatile { args: args.clone() }
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "inline_single_call expected a call statement"
-            ))
-        }
-    };
-
-    let mut used_temps = collect_temps_in_function(function);
-    let mut used_labels = collect_labels_in_function(function);
-
-    let inline_prefix = format!("si_inl_{}_{}", inline_counter, sanitize_ident(&callee.name));
-    let continuation_label =
-        fresh_unique_label(&format!("{}_cont", inline_prefix), &mut used_labels);
-
-    let mut temp_map = HashMap::new();
-    for temp in collect_temps_in_function(callee) {
-        let renamed = fresh_unique_temp(
-            &format!("{}_{}", inline_prefix, sanitize_ident(&temp)),
-            &mut used_temps,
-        );
-        temp_map.insert(temp, renamed);
-    }
-
-    let mut label_map = HashMap::new();
-    for block in &callee.blocks {
-        let renamed = fresh_unique_label(
-            &format!("{}_{}", inline_prefix, sanitize_ident(&block.label)),
-            &mut used_labels,
-        );
-        label_map.insert(block.label.clone(), renamed);
-    }
-
-    let entry_label = label_map
-        .get(&callee.blocks[0].label)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("missing callee entry label mapping"))?;
-
-    let caller_items = function.blocks[block_idx].items.clone();
-    let caller_prefix_items = caller_items[..item_idx].to_vec();
-    let caller_suffix_items = caller_items[item_idx + 1..].to_vec();
-
-    let mut new_current_items = caller_prefix_items;
-    new_current_items.push(qbe::BlockItem::Statement(qbe::Statement::Volatile(
-        qbe::Instr::Jmp(entry_label.clone()),
-    )));
-    function.blocks[block_idx].items = new_current_items;
-
-    let actual_args = match &call_kind {
-        CallKind::Assign { args, .. } => args.clone(),
-        CallKind::Volatile { args } => args.clone(),
-    };
-    if actual_args.len() != callee.arguments.len() {
-        return Err(anyhow::anyhow!(
-            "argument count mismatch while inlining {}: expected {}, got {}",
-            callee.name,
-            callee.arguments.len(),
-            actual_args.len()
-        ));
-    }
-
-    let mut inlined_blocks = Vec::new();
-    for (callee_block_index, callee_block) in callee.blocks.iter().enumerate() {
-        let mut new_block = qbe::Block {
-            label: label_map
-                .get(&callee_block.label)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("missing mapped callee block label"))?,
-            items: Vec::new(),
-        };
-
-        if callee_block_index == 0 {
-            for ((param_ty, param_value), (_, actual_value)) in
-                callee.arguments.iter().zip(actual_args.iter())
-            {
-                let renamed_param = rename_value(param_value, &temp_map);
-                new_block
-                    .items
-                    .push(qbe::BlockItem::Statement(qbe::Statement::Assign(
-                        renamed_param,
-                        param_ty.clone(),
-                        qbe::Instr::Copy(actual_value.clone()),
-                    )));
-            }
-        }
-
-        for item in &callee_block.items {
-            match item {
-                qbe::BlockItem::Comment(comment) => {
-                    new_block
-                        .items
-                        .push(qbe::BlockItem::Comment(comment.clone()));
-                }
-                qbe::BlockItem::Statement(qbe::Statement::Volatile(qbe::Instr::Ret(ret_value))) => {
-                    if let CallKind::Assign { dest, dest_ty, .. } = &call_kind {
-                        let copied_value = ret_value
-                            .as_ref()
-                            .map(|value| rename_value(value, &temp_map))
-                            .unwrap_or(qbe::Value::Const(0));
-                        new_block
-                            .items
-                            .push(qbe::BlockItem::Statement(qbe::Statement::Assign(
-                                dest.clone(),
-                                dest_ty.clone(),
-                                qbe::Instr::Copy(copied_value),
-                            )));
-                    }
-                    new_block
-                        .items
-                        .push(qbe::BlockItem::Statement(qbe::Statement::Volatile(
-                            qbe::Instr::Jmp(continuation_label.clone()),
-                        )));
-                }
-                qbe::BlockItem::Statement(statement) => {
-                    new_block
-                        .items
-                        .push(qbe::BlockItem::Statement(rename_statement(
-                            statement, &temp_map, &label_map,
-                        )));
-                }
-            }
-        }
-
-        inlined_blocks.push(new_block);
-    }
-
-    inlined_blocks.push(qbe::Block {
-        label: continuation_label,
-        items: caller_suffix_items,
-    });
-
-    function
-        .blocks
-        .splice(block_idx + 1..block_idx + 1, inlined_blocks);
-
-    Ok(())
-}
-
 fn collect_temps_in_function(function: &qbe::Function) -> HashSet<String> {
     let mut out = HashSet::new();
     for (_, value) in &function.arguments {
@@ -1604,14 +1226,6 @@ fn collect_temps_in_function(function: &qbe::Function) -> HashSet<String> {
         }
     }
     out
-}
-
-fn collect_labels_in_function(function: &qbe::Function) -> HashSet<String> {
-    function
-        .blocks
-        .iter()
-        .map(|block| block.label.clone())
-        .collect::<HashSet<_>>()
 }
 
 fn collect_temps_from_statement(statement: &qbe::Statement, out: &mut HashSet<String>) {
@@ -1733,219 +1347,6 @@ fn fresh_unique_temp(base: &str, used: &mut HashSet<String>) -> String {
     }
 }
 
-fn fresh_unique_label(base: &str, used: &mut HashSet<String>) -> String {
-    if !used.contains(base) {
-        used.insert(base.to_string());
-        return base.to_string();
-    }
-    let mut index = 0usize;
-    loop {
-        let candidate = format!("{}_{}", base, index);
-        if !used.contains(&candidate) {
-            used.insert(candidate.clone());
-            return candidate;
-        }
-        index += 1;
-    }
-}
-
-fn rename_statement(
-    statement: &qbe::Statement,
-    temp_map: &HashMap<String, String>,
-    label_map: &HashMap<String, String>,
-) -> qbe::Statement {
-    match statement {
-        qbe::Statement::Assign(dest, ty, instr) => qbe::Statement::Assign(
-            rename_value(dest, temp_map),
-            ty.clone(),
-            rename_instr(instr, temp_map, label_map),
-        ),
-        qbe::Statement::Volatile(instr) => {
-            qbe::Statement::Volatile(rename_instr(instr, temp_map, label_map))
-        }
-    }
-}
-
-fn rename_value(value: &qbe::Value, temp_map: &HashMap<String, String>) -> qbe::Value {
-    match value {
-        qbe::Value::Temporary(name) => {
-            if let Some(mapped) = temp_map.get(name) {
-                qbe::Value::Temporary(mapped.clone())
-            } else {
-                qbe::Value::Temporary(name.clone())
-            }
-        }
-        qbe::Value::Const(value) => qbe::Value::Const(*value),
-        qbe::Value::SingleConst(value) => qbe::Value::SingleConst(value.clone()),
-        qbe::Value::DoubleConst(value) => qbe::Value::DoubleConst(value.clone()),
-        qbe::Value::Global(name) => qbe::Value::Global(name.clone()),
-    }
-}
-
-fn rename_label(label: &str, label_map: &HashMap<String, String>) -> String {
-    label_map
-        .get(label)
-        .cloned()
-        .unwrap_or_else(|| label.to_string())
-}
-
-fn rename_instr(
-    instr: &qbe::Instr,
-    temp_map: &HashMap<String, String>,
-    label_map: &HashMap<String, String>,
-) -> qbe::Instr {
-    use qbe::Instr;
-
-    match instr {
-        Instr::Add(lhs, rhs) => {
-            Instr::Add(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Sub(lhs, rhs) => {
-            Instr::Sub(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Mul(lhs, rhs) => {
-            Instr::Mul(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Div(lhs, rhs) => {
-            Instr::Div(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Rem(lhs, rhs) => {
-            Instr::Rem(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Cmp(ty, cmp, lhs, rhs) => Instr::Cmp(
-            ty.clone(),
-            *cmp,
-            rename_value(lhs, temp_map),
-            rename_value(rhs, temp_map),
-        ),
-        Instr::And(lhs, rhs) => {
-            Instr::And(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Or(lhs, rhs) => Instr::Or(rename_value(lhs, temp_map), rename_value(rhs, temp_map)),
-        Instr::Copy(value) => Instr::Copy(rename_value(value, temp_map)),
-        Instr::Ret(value) => Instr::Ret(value.as_ref().map(|value| rename_value(value, temp_map))),
-        Instr::Jnz(value, if_true, if_false) => Instr::Jnz(
-            rename_value(value, temp_map),
-            rename_label(if_true, label_map),
-            rename_label(if_false, label_map),
-        ),
-        Instr::Jmp(label) => Instr::Jmp(rename_label(label, label_map)),
-        Instr::Call(name, args, variadic_index) => Instr::Call(
-            name.clone(),
-            args.iter()
-                .map(|(ty, value)| (ty.clone(), rename_value(value, temp_map)))
-                .collect(),
-            *variadic_index,
-        ),
-        Instr::Alloc4(size) => Instr::Alloc4(*size),
-        Instr::Alloc8(size) => Instr::Alloc8(*size),
-        Instr::Alloc16(size) => Instr::Alloc16(*size),
-        Instr::Store(ty, destination, value) => Instr::Store(
-            ty.clone(),
-            rename_value(destination, temp_map),
-            rename_value(value, temp_map),
-        ),
-        Instr::Load(ty, source) => Instr::Load(ty.clone(), rename_value(source, temp_map)),
-        Instr::Blit(source, destination, len) => Instr::Blit(
-            rename_value(source, temp_map),
-            rename_value(destination, temp_map),
-            *len,
-        ),
-        Instr::DbgFile(file) => Instr::DbgFile(file.clone()),
-        Instr::DbgLoc(line, column) => Instr::DbgLoc(*line, *column),
-        Instr::Udiv(lhs, rhs) => {
-            Instr::Udiv(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Urem(lhs, rhs) => {
-            Instr::Urem(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Sar(lhs, rhs) => {
-            Instr::Sar(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Shr(lhs, rhs) => {
-            Instr::Shr(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Shl(lhs, rhs) => {
-            Instr::Shl(rename_value(lhs, temp_map), rename_value(rhs, temp_map))
-        }
-        Instr::Cast(value) => Instr::Cast(rename_value(value, temp_map)),
-        Instr::Extsw(value) => Instr::Extsw(rename_value(value, temp_map)),
-        Instr::Extuw(value) => Instr::Extuw(rename_value(value, temp_map)),
-        Instr::Extsh(value) => Instr::Extsh(rename_value(value, temp_map)),
-        Instr::Extuh(value) => Instr::Extuh(rename_value(value, temp_map)),
-        Instr::Extsb(value) => Instr::Extsb(rename_value(value, temp_map)),
-        Instr::Extub(value) => Instr::Extub(rename_value(value, temp_map)),
-        Instr::Exts(value) => Instr::Exts(rename_value(value, temp_map)),
-        Instr::Truncd(value) => Instr::Truncd(rename_value(value, temp_map)),
-        Instr::Stosi(value) => Instr::Stosi(rename_value(value, temp_map)),
-        Instr::Stoui(value) => Instr::Stoui(rename_value(value, temp_map)),
-        Instr::Dtosi(value) => Instr::Dtosi(rename_value(value, temp_map)),
-        Instr::Dtoui(value) => Instr::Dtoui(rename_value(value, temp_map)),
-        Instr::Swtof(value) => Instr::Swtof(rename_value(value, temp_map)),
-        Instr::Uwtof(value) => Instr::Uwtof(rename_value(value, temp_map)),
-        Instr::Sltof(value) => Instr::Sltof(rename_value(value, temp_map)),
-        Instr::Ultof(value) => Instr::Ultof(rename_value(value, temp_map)),
-        Instr::Vastart(value) => Instr::Vastart(rename_value(value, temp_map)),
-        Instr::Vaarg(ty, value) => Instr::Vaarg(ty.clone(), rename_value(value, temp_map)),
-        Instr::Phi(label_a, value_a, label_b, value_b) => Instr::Phi(
-            rename_label(label_a, label_map),
-            rename_value(value_a, temp_map),
-            rename_label(label_b, label_map),
-            rename_value(value_b, temp_map),
-        ),
-        Instr::Hlt => Instr::Hlt,
-    }
-}
-
-fn reachable_block_indices(function: &qbe::Function) -> HashSet<usize> {
-    let mut label_to_index = HashMap::new();
-    for (idx, block) in function.blocks.iter().enumerate() {
-        label_to_index.insert(block.label.clone(), idx);
-    }
-
-    let mut reachable = HashSet::new();
-    let mut worklist = vec![0usize];
-
-    while let Some(block_idx) = worklist.pop() {
-        if block_idx >= function.blocks.len() || !reachable.insert(block_idx) {
-            continue;
-        }
-
-        let block = &function.blocks[block_idx];
-        let terminator = block.items.iter().rev().find_map(|item| {
-            if let qbe::BlockItem::Statement(qbe::Statement::Volatile(instr)) = item {
-                Some(instr)
-            } else {
-                None
-            }
-        });
-
-        match terminator {
-            Some(qbe::Instr::Jmp(target)) => {
-                if let Some(next_idx) = label_to_index.get(target) {
-                    worklist.push(*next_idx);
-                }
-            }
-            Some(qbe::Instr::Jnz(_, on_true, on_false)) => {
-                if let Some(next_idx) = label_to_index.get(on_true) {
-                    worklist.push(*next_idx);
-                }
-                if let Some(next_idx) = label_to_index.get(on_false) {
-                    worklist.push(*next_idx);
-                }
-            }
-            Some(qbe::Instr::Ret(_)) | Some(qbe::Instr::Hlt) => {}
-            _ => {
-                if block_idx + 1 < function.blocks.len() {
-                    worklist.push(block_idx + 1);
-                }
-            }
-        }
-    }
-
-    reachable
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1964,7 +1365,11 @@ mod tests {
 
     fn site_function_map(
         program: &ResolvedProgram,
-    ) -> anyhow::Result<(Vec<ObligationSite>, HashMap<String, qbe::Function>)> {
+    ) -> anyhow::Result<(
+        Vec<ObligationSite>,
+        HashMap<String, qbe::Function>,
+        HashMap<String, InvariantBinding>,
+    )> {
         let invariants = discover_invariants(program)?;
         let reachable = reachable_user_functions(program, "main")?;
         let sites = collect_obligation_sites(program, &reachable, &invariants)?;
@@ -1974,7 +1379,7 @@ mod tests {
             .iter()
             .map(|function| (function.name.clone(), function.clone()))
             .collect::<HashMap<_, _>>();
-        Ok((sites, function_map))
+        Ok((sites, function_map, invariants))
     }
 
     #[test]
@@ -2186,19 +1591,23 @@ fun main() -> I32 {
 "#,
         );
 
-        let (sites, function_map) = site_function_map(&program).expect("build sites and qbe");
+        let (sites, function_map, invariants) =
+            site_function_map(&program).expect("build sites and qbe");
         assert_eq!(sites.len(), 1);
         assert_eq!(sites[0].callee, "make_counter");
-        let checker =
-            build_site_checker_function(&function_map, &sites[0]).expect("build site checker");
-        let smt = qbe_smt::qbe_to_smt(
-            &checker,
+        let (checker_module, checker, assumptions) =
+            build_site_checker_module(&program, &invariants, &function_map, &sites[0])
+                .expect("build site checker");
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
                     &sites[0], &checker,
                 ),
                 first_arg_i32_range: None,
             },
+            &assumptions,
         )
         .expect("encode checker to CHC");
         assert!(smt.contains("(query bad)"));
@@ -2231,24 +1640,105 @@ fun main() -> I32 {
 "#,
         );
 
-        let (sites, function_map) = site_function_map(&program).expect("build sites and qbe");
+        let (sites, function_map, invariants) =
+            site_function_map(&program).expect("build sites and qbe");
         assert_eq!(sites.len(), 1);
-        let checker =
-            build_site_checker_function(&function_map, &sites[0]).expect("build site checker");
-        qbe_smt::qbe_to_smt(
-            &checker,
+        let (checker_module, checker, assumptions) =
+            build_site_checker_module(&program, &invariants, &function_map, &sites[0])
+                .expect("build site checker");
+        qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
                     &sites[0], &checker,
                 ),
                 first_arg_i32_range: None,
             },
+            &assumptions,
         )
         .expect("while-with-site checker should encode in qbe-native flow");
     }
 
     #[test]
-    fn rejects_recursion_in_verified_paths() {
+    fn helper_identity_obligation_passes_with_argument_invariant_preconditions() {
+        let program = resolve_program(
+            r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+fun id_counter(v: Counter) -> Counter {
+	return v
+}
+
+fun main(argc: I32, argv: I64) -> I32 {
+	c = Counter struct { value: argc, }
+	checked = id_counter(c)
+	return 0
+}
+"#,
+        );
+        let qbe_module = compile_qbe(&program);
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        verify_struct_invariants_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect("argument invariant preconditions should discharge id_counter obligation");
+    }
+
+    #[test]
+    fn rejects_cycles_introduced_by_argument_invariant_edges() {
+        let program = resolve_program(
+            r#"
+struct Foo {
+	x: I32,
+}
+
+invariant "foo invariant" for (v: Foo) {
+	w = id(v)
+	return w.x == w.x
+}
+
+fun id(v: Foo) -> Foo {
+	return v
+}
+
+fun main() -> I32 {
+	f = Foo struct { x: 1, }
+	g = id(f)
+	return 0
+}
+"#,
+        );
+
+        let invariants = discover_invariants(&program).expect("discover invariants");
+        let reachable =
+            reachable_user_functions(&program, "main").expect("collect reachable functions");
+        let reachable_names = reachable.iter().cloned().collect::<BTreeSet<_>>();
+        let arg_invariant_assumptions = build_function_arg_invariant_assumptions_for_names(
+            &program,
+            &reachable_names,
+            &invariants,
+        )
+        .expect("build argument invariant assumptions");
+        let err = reject_recursion_cycles_with_arg_invariants(
+            &program,
+            "main",
+            &reachable,
+            &arg_invariant_assumptions,
+            "struct invariant verification",
+        )
+        .expect_err("combined call graph cycles must fail closed");
+        assert!(err
+            .to_string()
+            .contains("includes arg-invariant precondition edges"));
+    }
+
+    #[test]
+    fn allows_call_only_recursion_in_verified_paths() {
         let program = resolve_program(
             r#"
 struct Foo {
@@ -2276,11 +1766,81 @@ fun main() -> I32 {
 
         let reachable =
             reachable_user_functions(&program, "main").expect("collect reachable functions");
-        let err = reject_recursion_cycles(&program, "main", &reachable)
-            .expect_err("recursion should be rejected");
+        let invariants = discover_invariants(&program).expect("discover invariants");
+        let reachable_names = reachable.iter().cloned().collect::<BTreeSet<_>>();
+        let arg_invariant_assumptions = build_function_arg_invariant_assumptions_for_names(
+            &program,
+            &reachable_names,
+            &invariants,
+        )
+        .expect("build arg invariant assumptions");
+        reject_recursion_cycles_with_arg_invariants(
+            &program,
+            "main",
+            &reachable,
+            &arg_invariant_assumptions,
+            "struct invariant verification",
+        )
+        .expect("call-only recursion should be allowed");
+    }
+
+    #[test]
+    fn rejects_mixed_cycles_with_argument_invariant_edges() {
+        let program = resolve_program(
+            r#"
+struct Foo {
+	x: I32,
+}
+
+invariant "foo invariant" for (v: Foo) {
+	return v.x == v.x
+}
+
+fun a(v: Foo, n: I32) -> Foo {
+	if n <= 0 {
+		return id(v)
+	}
+	return b(v, n - 1)
+}
+
+fun b(v: Foo, n: I32) -> Foo {
+	if n <= 0 {
+		return v
+	}
+	return a(v, n - 1)
+}
+
+fun id(v: Foo) -> Foo {
+	return v
+}
+
+fun main() -> I32 {
+	f = Foo struct { x: 1, }
+	g = a(f, 2)
+	h = id(g)
+	return 0
+}
+"#,
+        );
+
+        let reachable =
+            reachable_user_functions(&program, "main").expect("collect reachable functions");
+        let assumptions = vec![qbe_smt::FunctionArgInvariantAssumption {
+            function_name: "id".to_string(),
+            arg_index: 0,
+            invariant_function_name: "a".to_string(),
+        }];
+        let err = reject_recursion_cycles_with_arg_invariants(
+            &program,
+            "main",
+            &reachable,
+            &assumptions,
+            "struct invariant verification",
+        )
+        .expect_err("mixed call+arg cycle should fail closed");
         assert!(err
             .to_string()
-            .contains("recursion cycles are unsupported by struct invariant verification"));
+            .contains("includes arg-invariant precondition edges"));
     }
 
     #[test]
@@ -2308,18 +1868,22 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
 "#,
         );
 
-        let (sites, function_map) = site_function_map(&program).expect("build sites and qbe");
+        let (sites, function_map, invariants) =
+            site_function_map(&program).expect("build sites and qbe");
         assert_eq!(sites.len(), 1);
-        let checker =
-            build_site_checker_function(&function_map, &sites[0]).expect("build site checker");
-        let smt = qbe_smt::qbe_to_smt(
-            &checker,
+        let (checker_module, checker, assumptions) =
+            build_site_checker_module(&program, &invariants, &function_map, &sites[0])
+                .expect("build site checker");
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
                     &sites[0], &checker,
                 ),
                 first_arg_i32_range: None,
             },
+            &assumptions,
         )
         .expect("memcpy-backed checker should encode");
         assert!(
@@ -2354,18 +1918,22 @@ fun main() -> I32 {
 "#,
         );
 
-        let (sites, function_map) = site_function_map(&program).expect("build sites and qbe");
+        let (sites, function_map, invariants) =
+            site_function_map(&program).expect("build sites and qbe");
         assert_eq!(sites.len(), 1);
-        let checker =
-            build_site_checker_function(&function_map, &sites[0]).expect("build site checker");
-        let err = qbe_smt::qbe_to_smt(
-            &checker,
+        let (checker_module, checker, assumptions) =
+            build_site_checker_module(&program, &invariants, &function_map, &sites[0])
+                .expect("build site checker");
+        let err = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
                     &sites[0], &checker,
                 ),
                 first_arg_i32_range: None,
             },
+            &assumptions,
         )
         .expect_err("unsupported external call must fail closed");
         assert!(
@@ -2397,18 +1965,22 @@ fun main(argc: I32, argv: I64) -> I32 {
 "#,
         );
 
-        let (sites, function_map) = site_function_map(&program).expect("build sites and qbe");
+        let (sites, function_map, invariants) =
+            site_function_map(&program).expect("build sites and qbe");
         assert_eq!(sites.len(), 1);
-        let checker =
-            build_site_checker_function(&function_map, &sites[0]).expect("build site checker");
-        let smt = qbe_smt::qbe_to_smt(
-            &checker,
+        let (checker_module, checker, assumptions) =
+            build_site_checker_module(&program, &invariants, &function_map, &sites[0])
+                .expect("build site checker");
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
             &qbe_smt::EncodeOptions {
                 assume_main_argc_non_negative: should_assume_main_argc_non_negative(
                     &sites[0], &checker,
                 ),
                 first_arg_i32_range: None,
             },
+            &assumptions,
         )
         .expect("encode checker to CHC");
         assert!(

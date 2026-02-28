@@ -2,6 +2,7 @@ mod builtins;
 mod comptime;
 mod diagnostics;
 mod flat_imports;
+mod invariant_metadata;
 mod ir;
 mod lsp;
 mod parser;
@@ -11,6 +12,7 @@ mod riscv_smt; // Add the new module
 mod struct_invariants;
 mod test_framework;
 mod tokenizer;
+mod verification_cycles;
 
 use std::collections::HashSet;
 use std::env;

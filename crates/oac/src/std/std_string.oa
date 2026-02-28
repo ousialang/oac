@@ -3,6 +3,10 @@ struct Bytes {
 	len: I32,
 }
 
+invariant non_negative_length "bytes length must be non-negative" for (v: Bytes) {
+	return v.len >= 0
+}
+
 enum String {
 	Literal(Bytes),
 	Heap(Bytes),
