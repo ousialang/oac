@@ -30,6 +30,95 @@ namespace String {
 		return b.len
 	}
 
+	fun is_empty(s: String) -> Bool {
+		return String.len(s) == 0
+	}
+
+	fun equals(a: String, b: String) -> Bool {
+		len_a = String.len(a)
+		len_b = String.len(b)
+		if len_a != len_b {
+			return false
+		}
+
+		i = 0
+		while i < len_a {
+			if char_at(a, i) != char_at(b, i) {
+				return false
+			}
+			i = i + 1
+		}
+
+		return true
+	}
+
+	fun starts_with(s: String, prefix: String) -> Bool {
+		n = String.len(s)
+		m = String.len(prefix)
+		if m > n {
+			return false
+		}
+
+		i = 0
+		while i < m {
+			if char_at(s, i) != char_at(prefix, i) {
+				return false
+			}
+			i = i + 1
+		}
+
+		return true
+	}
+
+	fun ends_with(s: String, suffix: String) -> Bool {
+		n = String.len(s)
+		m = String.len(suffix)
+		if m > n {
+			return false
+		}
+
+		offset = n - m
+		i = 0
+		while i < m {
+			if char_at(s, offset + i) != char_at(suffix, i) {
+				return false
+			}
+			i = i + 1
+		}
+
+		return true
+	}
+
+	fun char_at_or(s: String, index: I32, fallback: I32) -> I32 {
+		n = String.len(s)
+		if index < 0 || index >= n {
+			return fallback
+		}
+		return char_at(s, index)
+	}
+
+	fun slice_clamped(s: String, start: I32, len: I32) -> String {
+		n = String.len(s)
+		safe_start = start
+		if safe_start < 0 {
+			safe_start = 0
+		}
+		if safe_start > n {
+			safe_start = n
+		}
+
+		safe_len = len
+		if safe_len < 0 {
+			safe_len = 0
+		}
+		max_len = n - safe_start
+		if safe_len > max_len {
+			safe_len = max_len
+		}
+
+		return slice(s, safe_start, safe_len)
+	}
+
 	fun from_literal_parts(ptr: PtrInt, len: I32) -> String {
 		b = Bytes struct {
 			ptr: ptr,

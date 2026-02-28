@@ -22,21 +22,7 @@ enum JsonKind {
 
 namespace Json {
 	fun string_eq(a: String, b: String) -> Bool {
-		len_a = string_len(a)
-		len_b = string_len(b)
-		if len_a != len_b {
-			return false
-		}
-
-		i = 0
-		while i < len_a {
-			if char_at(a, i) != char_at(b, i) {
-				return false
-			}
-			i = i + 1
-		}
-
-		return true
+		return String.equals(a, b)
 	}
 
 	fun char_is_digit(ch: I32) -> Bool {

@@ -1,0 +1,33 @@
+specialize OptionI32 = Option[I32]
+specialize ResultI32Bool = Result[I32, Bool]
+
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+	} else {
+		print(0)
+	}
+	return 0
+}
+
+fun main() -> I32 {
+	none = OptionI32.none()
+	some = OptionI32.some(7)
+	print_bool(OptionI32.is_none(none))
+	print_bool(OptionI32.is_some(none))
+	print_bool(OptionI32.is_some(some))
+	print(OptionI32.unwrap_or(none, 11))
+	print(OptionI32.unwrap_or(some, 11))
+
+	ok = ResultI32Bool.ok(9)
+	err = ResultI32Bool.err(true)
+	print_bool(ResultI32Bool.is_ok(ok))
+	print_bool(ResultI32Bool.is_err(ok))
+	print_bool(ResultI32Bool.is_err(err))
+	print(ResultI32Bool.unwrap_or(ok, 1))
+	print(ResultI32Bool.unwrap_or(err, 1))
+	print_bool(ResultI32Bool.unwrap_err_or(ok, false))
+	print_bool(ResultI32Bool.unwrap_err_or(err, false))
+
+	return 0
+}

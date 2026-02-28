@@ -44,7 +44,7 @@ Observed in parser/IR implementation:
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
-- Runtime pointer-memory builtins: `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, and `store_u8(addr: PtrInt, value: U8) -> Void`.
+- Runtime pointer-memory builtins: `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, `store_u8(addr: PtrInt, value: U8) -> Void`, `store_i32(addr: PtrInt, value: I32) -> Void`, `store_i64(addr: PtrInt, value: I64) -> Void`, and `store_bool(addr: PtrInt, value: Bool) -> Void`.
 - Top-level test declarations: `test "Name" { ... }`.
 - Legacy syntax `template` / `instantiate` is hard-cut and rejected with migration diagnostics.
 
@@ -85,9 +85,10 @@ Observed in parser/IR implementation:
 - Generic expansion is ahead-of-type-checking and ahead-of-codegen: backend/proving/invariant passes still operate on concrete non-generic IR/function symbols.
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `crates/oac/src/std/std.oa` into split sibling files under `crates/oac/src/std/` (including `std_clib.oa` extern bindings and `std_traits.oa` trait/impl declarations), then merged into one global scope before user type-checking (including stdlib invariant declarations).
-- The split stdlib includes generic `Ref[T]` (in `crates/oac/src/std/std_ref.oa`) for pointer-wrapper value semantics (`from_ptr`, `ptr`, `is_null`, `add_bytes`), with read-only dereference helpers exposed via concrete specializations (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`).
+- The split stdlib includes generic `Option[T]` / `Result[T,E]` in `crates/oac/src/std/std_option_result.oa` with namespaced constructors/predicates/unwrapping helpers.
+- The split stdlib includes generic `Ref[T]` and `Mut[T]` (in `crates/oac/src/std/std_ref.oa`) for pointer-wrapper value semantics (`from_ptr`, `ptr`, `is_null`, `add_bytes`), with typed read-only dereference helpers (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`) and typed mutable helpers (`U8Mut.*`, `I32Mut.*`, `I64Mut.*`, `PtrIntMut.*`, `BoolMut.*`) that use builtin stores.
 - Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Eq, V]`) and preserves probing/table semantics while routing key hashing/equality through `Hash.hash(k)` and `Eq.equals(a, b)`.
-- `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`.
+- `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`. Namespaced helpers include structural accessors (`bytes`, `ptr`, `len`) and convenience operations (`is_empty`, `equals`, `starts_with`, `ends_with`, `char_at_or`, `slice_clamped`).
 - C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) while JSON result enums remain top-level types (`ParseErr`, `ParseResult`, `JsonKind`).
 - The split stdlib `LinkedList[T]` template (in `crates/oac/src/std/std_collections.oa`) is persistent/value-based and now includes richer namespaced helpers (`empty`, `singleton`, `cons`, `push_front`, `is_empty`, `len`, `length`, `front`, `tail`, `pop_front`, `append`, `reverse`, `take`, `drop`, `at`, `at_or`) with result enums (`FrontResult`, `TailResult`, `PopFrontResult`); `length`, `head_or`, and `tail_or` are retained as compatibility wrappers.

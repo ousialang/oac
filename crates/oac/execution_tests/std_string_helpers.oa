@@ -1,0 +1,37 @@
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+	} else {
+		print(0)
+	}
+	return 0
+}
+
+fun main() -> I32 {
+	s = "alpha-beta"
+
+	print_bool(String.equals(s, "alpha-beta"))
+	print_bool(String.equals(s, "alpha"))
+	print_bool(String.starts_with(s, "alpha"))
+	print_bool(String.starts_with(s, "beta"))
+	print_bool(String.ends_with(s, "beta"))
+	print_bool(String.ends_with(s, "alpha"))
+
+	print(String.char_at_or(s, 0, 63))
+	print(String.char_at_or(s, 100, 63))
+
+	clip_start = String.slice_clamped(s, 0 - 2, 5)
+	print(string_len(clip_start))
+	print(char_at(clip_start, 0))
+
+	clip_end = String.slice_clamped(s, 6, 50)
+	print(string_len(clip_end))
+	print(char_at(clip_end, 0))
+	print(char_at(clip_end, 3))
+
+	empty = String.slice_clamped(s, 100, 2)
+	print(string_len(empty))
+	print_bool(String.is_empty(empty))
+
+	return 0
+}

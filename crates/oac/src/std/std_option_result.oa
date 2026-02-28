@@ -1,0 +1,72 @@
+generic Option[T] {
+	enum Option {
+		None,
+		Some(T),
+	}
+
+	fun none() -> Option {
+		return Option.None
+	}
+
+	fun some(value: T) -> Option {
+		return Option.Some(value)
+	}
+
+	fun is_some(v: Option) -> Bool {
+		return match v {
+			Option.None => false
+			Option.Some(_value) => true
+		}
+	}
+
+	fun is_none(v: Option) -> Bool {
+		return !is_some(v)
+	}
+
+	fun unwrap_or(v: Option, fallback: T) -> T {
+		return match v {
+			Option.None => fallback
+			Option.Some(value) => value
+		}
+	}
+}
+
+generic Result[T, E] {
+	enum Result {
+		Ok(T),
+		Err(E),
+	}
+
+	fun ok(value: T) -> Result {
+		return Result.Ok(value)
+	}
+
+	fun err(value: E) -> Result {
+		return Result.Err(value)
+	}
+
+	fun is_ok(v: Result) -> Bool {
+		return match v {
+			Result.Ok(_value) => true
+			Result.Err(_value) => false
+		}
+	}
+
+	fun is_err(v: Result) -> Bool {
+		return !is_ok(v)
+	}
+
+	fun unwrap_or(v: Result, fallback: T) -> T {
+		return match v {
+			Result.Ok(value) => value
+			Result.Err(_value) => fallback
+		}
+	}
+
+	fun unwrap_err_or(v: Result, fallback: E) -> E {
+		return match v {
+			Result.Ok(_value) => fallback
+			Result.Err(value) => value
+		}
+	}
+}
