@@ -659,8 +659,26 @@ fn solve_obligations_qbe(
                     solver_excerpt
                 ));
             }
-            Ok(_run) => {
-                return Err(anyhow::anyhow!("solver returned unknown for {}", site.id));
+            Ok(run) => {
+                let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
+                    .map(|excerpt| format!(", solver_excerpt={excerpt}"))
+                    .unwrap_or_default();
+                let invariant_label = if let Some(identifier) = &site.invariant_identifier {
+                    format!("{} (id={})", site.invariant_display_name, identifier)
+                } else {
+                    site.invariant_display_name.clone()
+                };
+                return Err(anyhow::anyhow!(
+                    "solver returned unknown for struct invariant obligation {} (caller={}, callee={}, struct={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}{}). verification is fail-closed until this obligation is proven unsat",
+                    site.id,
+                    site.caller,
+                    site.callee,
+                    site.struct_name,
+                    invariant_label,
+                    qbe_filename,
+                    smt_filename,
+                    solver_excerpt
+                ));
             }
             Err(err) => {
                 return Err(anyhow::anyhow!(

@@ -180,10 +180,17 @@ fn solve_prove_sites(
                 failure.push(')');
                 failures.push(failure);
             }
-            Ok(_run) => {
+            Ok(run) => {
+                let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
+                    .map(|excerpt| format!(", solver_excerpt={excerpt}"))
+                    .unwrap_or_default();
                 return Err(anyhow::anyhow!(
-                    "solver returned unknown for prove obligation {}",
-                    site.id
+                    "solver returned unknown for prove obligation {} (caller={}, qbe_artifact={}, smt_artifact={}{}). verification is fail-closed until this obligation is proven unsat",
+                    site.id,
+                    site.caller,
+                    qbe_filename,
+                    smt_filename,
+                    solver_excerpt
                 ));
             }
             Err(err) => {

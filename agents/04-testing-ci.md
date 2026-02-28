@@ -97,6 +97,7 @@ Key tests:
 - `crates/qbe-smt/src/lib.rs` also covers Ariadne rendering helpers on `QbeSmtError` (`render_report_plain` / `render_report_terminal_auto`).
 - `crates/qbe-smt/src/lib.rs` also tests loop classification (`classify_simple_loops`) for proven non-termination patterns (identity updates, including `call $sub(..., 0)`) vs unknown/progress loops.
 - `crates/oac/src/diagnostics.rs` tests cover tokenizer span conversion, plain (no ANSI) report rendering, and no-span fallback rendering.
+- `crates/oac/src/diagnostics.rs` tests also enforce diagnostic headline quality for Ariadne plain reports (no duplicated `Error: error[...]` prefixing) and message/cause dedup behavior in `diagnostic_from_anyhow`.
 - `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, and file-URI handling.
 - `crates/oac/src/invariant_metadata.rs` tests cover multi-binding discovery per struct and argument-assumption cross-product expansion when parameter types carry multiple invariants.
 - `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, grouped invariant declarations, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, per-`(call-site, invariant)` obligation expansion, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding and fail-closed unknown external calls).
@@ -105,6 +106,7 @@ Key tests:
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Compiler-error snapshots now capture Ariadne plain-report output from the shared diagnostics layer.
+- `crates/oac/src/qbe_backend.rs` also enforces snapshot hygiene contracts for execution snapshots: no committed `*.snap.new` files, no orphan execution snapshots without matching fixtures, and no duplicated Ariadne prefix artifacts (`Error: error[...]`) in snapshot content.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts QBE emission for namespaced calls contains mangled function call symbols.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts statement-position `Void` extern calls are emitted (`call $free`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `i32_to_i64` lowering uses signed extension (`extsw`) and not byte extension (`extub`).
@@ -148,6 +150,7 @@ Snapshots live in:
 - `crates/oac/src/snapshots/*.snap`
 
 If behavior intentionally changes, update snapshots deliberately and review diffs for semantic regressions.
+Do not commit `.snap.new` files; accept or delete them before finishing.
 
 ## Runtime Tooling Dependencies
 
@@ -161,6 +164,7 @@ If behavior intentionally changes, update snapshots deliberately and review diff
 - `CC` to prefer a linker command first while still keeping default fallbacks
 - `OAC_CC_TARGET` to force `--target=<triple>`
 - `OAC_CC_FLAGS` to append extra linker flags
+- Linker diagnostics for this stage are reported under `DiagnosticStage::Linker` with stable codes `OAC-LINK-001` (configuration resolution) and `OAC-LINK-002` (all linker attempts failed).
 
 `oac test` has the same backend dependencies as `oac build` (`qbe`, C compiler driver, and `z3` when obligations are present), and additionally executes the produced binary under `target/oac/test/app`.
 

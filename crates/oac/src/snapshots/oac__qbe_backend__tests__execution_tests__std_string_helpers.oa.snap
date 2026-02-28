@@ -1,20 +1,9 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: output
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
 snapshot_kind: text
 ---
-1
-0
-1
-0
-1
-0
-97
-63
-5
-97
-4
-98
-97
-0
-1
+COMPILATION ERROR
+
+[OAC-INV-001] Error: struct invariant verification failed: struct invariant verification failed (SAT counterexamples found):
+String__len#0#0 (caller=String__len, callee=String__bytes, struct=Bytes, invariant="bytes length must be non-negative (id=non_negative_length)", witness=cfg_path=b0, bad_ret_temp=%si_bad, qbe_artifact=site_String__len_0_0.qbe, smt_artifact=site_String__len_0_0.smt2)

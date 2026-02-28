@@ -12,7 +12,6 @@ mod riscv_smt; // Add the new module
 mod struct_invariants;
 mod test_framework;
 mod tokenizer;
-mod verification;
 mod verification_cycles;
 
 use std::collections::HashSet;
@@ -229,7 +228,14 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
     })?;
     debug!(ast_path = %ast_path.display(), "Parsed source file");
 
-    compile_ast_to_executable(&target_dir, ast, build.arch.as_deref(), "app")?;
+    compile_ast_to_executable(
+        &target_dir,
+        ast,
+        build.arch.as_deref(),
+        "app",
+        Some(source_path),
+        Some(&source),
+    )?;
 
     Ok(())
 }
@@ -332,7 +338,14 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
     })?;
     debug!(ast_path = %ast_path.display(), "Lowered test AST");
 
-    let executable_path = compile_ast_to_executable(&target_dir, lowered_ast, None, "app")?;
+    let executable_path = compile_ast_to_executable(
+        &target_dir,
+        lowered_ast,
+        None,
+        "app",
+        Some(source_path),
+        Some(&source),
+    )?;
 
     let output = std::process::Command::new(&executable_path)
         .output()
@@ -374,6 +387,8 @@ fn compile_ast_to_executable(
     ast: parser::Ast,
     arch: Option<&str>,
     executable_name: &str,
+    source_path: Option<&Path>,
+    source_text: Option<&str>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
     let ir = ir::resolve(ast).map_err(|err| {
         stage_error_from_anyhow(
@@ -381,8 +396,8 @@ fn compile_ast_to_executable(
             "OAC-RESOLVE-001",
             "failed to resolve/type-check program",
             err,
-            None,
-            None,
+            source_path,
+            source_text,
         )
     })?;
     let ir_path = target_dir.join("ir.json");
@@ -397,34 +412,36 @@ fn compile_ast_to_executable(
     })?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
     let qbe_ir = qbe_backend::compile(ir.clone());
-    verification::verify_all_obligations_with_qbe(&ir, &qbe_ir, target_dir).map_err(|err| {
-        match err {
-            verification::VerificationError::Prove(err) => stage_error_from_anyhow(
-                DiagnosticStage::Prove,
-                "OAC-PROVE-001",
-                "prove obligation verification failed",
-                err,
-                None,
-                None,
-            ),
-            verification::VerificationError::StructInvariant(err) => stage_error_from_anyhow(
+    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, target_dir).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Prove,
+            "OAC-PROVE-001",
+            "prove obligation verification failed",
+            err,
+            source_path,
+            source_text,
+        )
+    })?;
+    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, target_dir).map_err(
+        |err| {
+            stage_error_from_anyhow(
                 DiagnosticStage::StructInvariant,
                 "OAC-INV-001",
                 "struct invariant verification failed",
                 err,
-                None,
-                None,
-            ),
-        }
-    })?;
+                source_path,
+                source_text,
+            )
+        },
+    )?;
     reject_proven_non_terminating_main(&qbe_ir).map_err(|err| {
         stage_error_from_anyhow(
             DiagnosticStage::LoopClassifier,
             "OAC-LOOP-001",
             "loop non-termination classification failed",
             err,
-            None,
-            None,
+            source_path,
+            source_text,
         )
     })?;
     let qbe_ir_text = qbe_ir.to_string();
@@ -472,8 +489,8 @@ fn compile_ast_to_executable(
     let executable_path = target_dir.join(executable_name);
     let linker_attempts = resolve_linker_attempts(arch).map_err(|err| {
         stage_error_from_anyhow(
-            DiagnosticStage::Zig,
-            "OAC-ZIG-001",
+            DiagnosticStage::Linker,
+            "OAC-LINK-001",
             "failed to resolve linker configuration",
             err,
             None,
@@ -526,8 +543,8 @@ fn compile_ast_to_executable(
     }
 
     let mut diagnostic = CompilerDiagnostic::new(
-        "OAC-ZIG-002",
-        DiagnosticStage::Zig,
+        "OAC-LINK-002",
+        DiagnosticStage::Linker,
         format!(
             "compilation of assembly to executable failed after trying {} linker command(s)",
             failures.len()

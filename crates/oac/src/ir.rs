@@ -2813,13 +2813,13 @@ pub(crate) fn get_expression_type(
                 }
 
                 Err(anyhow::anyhow!(
-                    "unsupported call target {:?}",
-                    callee.as_ref()
+                    "{}",
+                    format_unsupported_call_target_message(callee.as_ref())
                 ))
             }
             _ => Err(anyhow::anyhow!(
-                "unsupported call target {:?}",
-                callee.as_ref()
+                "{}",
+                format_unsupported_call_target_message(callee.as_ref())
             )),
         },
         Expression::StructValue {
@@ -3424,6 +3424,40 @@ pub(crate) fn get_expression_type(
                 }
             }
         }
+    }
+}
+
+fn format_unsupported_call_target_message(callee: &Expression) -> String {
+    match callee {
+        Expression::FieldAccess {
+            struct_variable,
+            field,
+        } => format!(
+            "unsupported call target {}.{}(...): expected a namespaced function call, enum variant constructor call, or trait static call",
+            struct_variable, field
+        ),
+        Expression::Variable(name) => format!(
+            "unsupported call target {}(...): expected a declared function call",
+            name
+        ),
+        _ => format!(
+            "unsupported call target expression of kind {}: expected a function-style call target",
+            expression_kind(callee)
+        ),
+    }
+}
+
+fn expression_kind(expr: &Expression) -> &'static str {
+    match expr {
+        Expression::Variable(_) => "variable",
+        Expression::Literal(_) => "literal",
+        Expression::Call(_, _) => "call",
+        Expression::PostfixCall { .. } => "postfix-call",
+        Expression::BinOp(_, _, _) => "binary-op",
+        Expression::UnaryOp(_, _) => "unary-op",
+        Expression::FieldAccess { .. } => "field-access",
+        Expression::StructValue { .. } => "struct-literal",
+        Expression::Match { .. } => "match-expression",
     }
 }
 
@@ -4190,6 +4224,34 @@ fun main() -> I32 {
         assert!(resolved
             .function_definitions
             .contains_key("Option__is_some"));
+    }
+
+    #[test]
+    fn resolve_reports_user_facing_message_for_unsupported_call_target() {
+        let source = r#"
+struct Option {
+	value: I32,
+}
+
+fun main() -> I32 {
+	v = Option struct { value: 7 }
+	return v.missing()
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("unsupported call target v.missing(...)"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !message.contains("FieldAccess {"),
+            "error should not leak debug AST formatting: {message}"
+        );
     }
 
     #[test]
