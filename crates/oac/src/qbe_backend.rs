@@ -284,6 +284,66 @@ fn add_builtins(ctx: &mut CodegenCtx) {
     }
 
     {
+        let mut f = Function::new(
+            Linkage::public(),
+            "store_i32".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary("addr".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("value".to_string())),
+            ],
+            None,
+        );
+        f.add_block("start".to_string());
+        f.add_instr(Instr::Store(
+            Type::Word,
+            Value::Temporary("addr".to_string()),
+            Value::Temporary("value".to_string()),
+        ));
+        f.add_instr(Instr::Ret(None));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "store_i64".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary("addr".to_string())),
+                (qbe::Type::Long, qbe::Value::Temporary("value".to_string())),
+            ],
+            None,
+        );
+        f.add_block("start".to_string());
+        f.add_instr(Instr::Store(
+            Type::Long,
+            Value::Temporary("addr".to_string()),
+            Value::Temporary("value".to_string()),
+        ));
+        f.add_instr(Instr::Ret(None));
+        ctx.module.add_function(f);
+    }
+
+    {
+        let mut f = Function::new(
+            Linkage::public(),
+            "store_bool".to_string(),
+            vec![
+                (qbe::Type::Long, qbe::Value::Temporary("addr".to_string())),
+                (qbe::Type::Word, qbe::Value::Temporary("value".to_string())),
+            ],
+            None,
+        );
+        f.add_block("start".to_string());
+        f.add_instr(Instr::Store(
+            Type::Word,
+            Value::Temporary("addr".to_string()),
+            Value::Temporary("value".to_string()),
+        ));
+        f.add_instr(Instr::Ret(None));
+        ctx.module.add_function(f);
+    }
+
+    {
         let mut payload_fn = Function::new(
             Linkage::private(),
             "__string_payload".to_string(),
@@ -2515,6 +2575,9 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
 	l = load_i64(argv)
 	flag = load_bool(argv)
 	store_u8(argv, b)
+	store_i32(argv, w)
+	store_i64(argv, l)
+	store_bool(argv, flag)
 	if flag {
 		return w
 	}
@@ -2569,6 +2632,30 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
             "expected call to store_u8 in qbe output, got:\n{qbe_ir}"
         );
         assert!(
+            qbe_ir.contains("function $store_i32"),
+            "expected store_i32 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $store_i32"),
+            "expected call to store_i32 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("function $store_i64"),
+            "expected store_i64 builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $store_i64"),
+            "expected call to store_i64 in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("function $store_bool"),
+            "expected store_bool builtin definition in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $store_bool"),
+            "expected call to store_bool in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
             qbe_ir.contains("loadw %addr"),
             "expected load_i32/load_bool lowering to loadw in qbe output, got:\n{qbe_ir}"
         );
@@ -2583,6 +2670,14 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
         assert!(
             qbe_ir.contains("storeb %value, %addr"),
             "expected store_u8 lowering to storeb in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("storew %value, %addr"),
+            "expected store_i32/store_bool lowering to storew in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("storel %value, %addr"),
+            "expected store_i64 lowering to storel in qbe output, got:\n{qbe_ir}"
         );
     }
 

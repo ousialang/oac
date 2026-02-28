@@ -674,6 +674,57 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         },
     );
     program.function_sigs.insert(
+        "store_i32".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "addr".to_string(),
+                    ty: "PtrInt".to_string(),
+                },
+                FunctionParameter {
+                    name: "value".to_string(),
+                    ty: "I32".to_string(),
+                },
+            ],
+            return_type: "Void".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
+        "store_i64".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "addr".to_string(),
+                    ty: "PtrInt".to_string(),
+                },
+                FunctionParameter {
+                    name: "value".to_string(),
+                    ty: "I64".to_string(),
+                },
+            ],
+            return_type: "Void".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
+        "store_bool".to_string(),
+        FunctionSignature {
+            parameters: vec![
+                FunctionParameter {
+                    name: "addr".to_string(),
+                    ty: "PtrInt".to_string(),
+                },
+                FunctionParameter {
+                    name: "value".to_string(),
+                    ty: "Bool".to_string(),
+                },
+            ],
+            return_type: "Void".to_string(),
+            extern_symbol_name: None,
+        },
+    );
+    program.function_sigs.insert(
         "string_len".to_string(),
         FunctionSignature {
             parameters: vec![FunctionParameter {
@@ -3420,6 +3471,38 @@ fun main() -> I32 {
             "missing String__from_heap_parts function from split stdlib"
         );
         assert!(
+            resolved.function_sigs.contains_key("String__equals"),
+            "missing String__equals function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("String__starts_with"),
+            "missing String__starts_with function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("String__ends_with"),
+            "missing String__ends_with function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("String__slice_clamped"),
+            "missing String__slice_clamped function from split stdlib"
+        );
+        assert!(
+            resolved
+                .ast
+                .generic_definitions
+                .iter()
+                .any(|def| def.name == "Option"),
+            "missing Option generic from split stdlib"
+        );
+        assert!(
+            resolved
+                .ast
+                .generic_definitions
+                .iter()
+                .any(|def| def.name == "Result"),
+            "missing Result generic from split stdlib"
+        );
+        assert!(
             resolved.function_sigs.contains_key("Clib__malloc"),
             "missing Clib__malloc extern function from split stdlib"
         );
@@ -3468,6 +3551,18 @@ fun main() -> I32 {
             "missing store_u8 builtin signature"
         );
         assert!(
+            resolved.function_sigs.contains_key("store_i32"),
+            "missing store_i32 builtin signature"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("store_i64"),
+            "missing store_i64 builtin signature"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("store_bool"),
+            "missing store_bool builtin signature"
+        );
+        assert!(
             resolved.type_definitions.contains_key("U8Ref"),
             "missing U8Ref type from split stdlib"
         );
@@ -3488,6 +3583,26 @@ fun main() -> I32 {
             "missing BoolRef type from split stdlib"
         );
         assert!(
+            resolved.type_definitions.contains_key("U8Mut"),
+            "missing U8Mut type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("I32Mut"),
+            "missing I32Mut type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("I64Mut"),
+            "missing I64Mut type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("PtrIntMut"),
+            "missing PtrIntMut type from split stdlib"
+        );
+        assert!(
+            resolved.type_definitions.contains_key("BoolMut"),
+            "missing BoolMut type from split stdlib"
+        );
+        assert!(
             resolved.function_sigs.contains_key("U8Ref__read"),
             "missing U8Ref__read function from split stdlib"
         );
@@ -3506,6 +3621,26 @@ fun main() -> I32 {
         assert!(
             resolved.function_sigs.contains_key("BoolRef__read"),
             "missing BoolRef__read function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("U8Mut__write"),
+            "missing U8Mut__write function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("I32Mut__write"),
+            "missing I32Mut__write function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("I64Mut__write"),
+            "missing I64Mut__write function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("PtrIntMut__write"),
+            "missing PtrIntMut__write function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("BoolMut__write"),
+            "missing BoolMut__write function from split stdlib"
         );
         assert!(
             resolved.struct_invariants.contains_key("AsciiChar"),
@@ -4187,6 +4322,9 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
 	l = load_i64(argv)
 	flag = load_bool(argv)
 	store_u8(argv, b)
+	store_i32(argv, w)
+	store_i64(argv, l)
+	store_bool(argv, flag)
 	if flag {
 		return w
 	}

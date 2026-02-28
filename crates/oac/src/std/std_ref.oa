@@ -22,11 +22,40 @@ generic Ref[T] {
 	}
 }
 
+generic Mut[T] {
+	struct Mut {
+		ptr: PtrInt,
+	}
+
+	fun from_ptr(ptr: PtrInt) -> Mut {
+		return Mut struct {
+			ptr: ptr,
+		}
+	}
+
+	fun ptr(m: Mut) -> PtrInt {
+		return m.ptr
+	}
+
+	fun is_null(m: Mut) -> Bool {
+		return m.ptr == i32_to_i64(0)
+	}
+
+	fun add_bytes(m: Mut, delta: PtrInt) -> Mut {
+		return from_ptr(m.ptr + delta)
+	}
+}
+
 specialize U8Ref = Ref[U8]
 specialize I32Ref = Ref[I32]
 specialize I64Ref = Ref[I64]
 specialize PtrIntRef = Ref[PtrInt]
 specialize BoolRef = Ref[Bool]
+specialize U8Mut = Mut[U8]
+specialize I32Mut = Mut[I32]
+specialize I64Mut = Mut[I64]
+specialize PtrIntMut = Mut[PtrInt]
+specialize BoolMut = Mut[Bool]
 
 namespace U8Ref {
 	fun read(r: U8Ref) -> U8 {
@@ -55,5 +84,60 @@ namespace PtrIntRef {
 namespace BoolRef {
 	fun read(r: BoolRef) -> Bool {
 		return load_bool(BoolRef.ptr(r))
+	}
+}
+
+namespace U8Mut {
+	fun read(m: U8Mut) -> U8 {
+		return load_u8(U8Mut.ptr(m))
+	}
+
+	fun write(m: U8Mut, value: U8) -> U8Mut {
+		store_u8(U8Mut.ptr(m), value)
+		return m
+	}
+}
+
+namespace I32Mut {
+	fun read(m: I32Mut) -> I32 {
+		return load_i32(I32Mut.ptr(m))
+	}
+
+	fun write(m: I32Mut, value: I32) -> I32Mut {
+		store_i32(I32Mut.ptr(m), value)
+		return m
+	}
+}
+
+namespace I64Mut {
+	fun read(m: I64Mut) -> I64 {
+		return load_i64(I64Mut.ptr(m))
+	}
+
+	fun write(m: I64Mut, value: I64) -> I64Mut {
+		store_i64(I64Mut.ptr(m), value)
+		return m
+	}
+}
+
+namespace PtrIntMut {
+	fun read(m: PtrIntMut) -> PtrInt {
+		return load_i64(PtrIntMut.ptr(m))
+	}
+
+	fun write(m: PtrIntMut, value: PtrInt) -> PtrIntMut {
+		store_i64(PtrIntMut.ptr(m), value)
+		return m
+	}
+}
+
+namespace BoolMut {
+	fun read(m: BoolMut) -> Bool {
+		return load_bool(BoolMut.ptr(m))
+	}
+
+	fun write(m: BoolMut, value: Bool) -> BoolMut {
+		store_bool(BoolMut.ptr(m), value)
+		return m
 	}
 }

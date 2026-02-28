@@ -1,0 +1,39 @@
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+	} else {
+		print(0)
+	}
+	return 0
+}
+
+fun main() -> I32 {
+	ptr = Clib.calloc(i32_to_i64(1), i32_to_i64(16))
+
+	u8_mut = U8Mut.from_ptr(ptr)
+	U8Mut.write(u8_mut, 65)
+	print(U8Mut.read(u8_mut))
+
+	u8_next = U8Mut.add_bytes(u8_mut, i32_to_i64(1))
+	U8Mut.write(u8_next, 66)
+	print(U8Mut.read(u8_next))
+
+	i32_mut = I32Mut.from_ptr(ptr)
+	I32Mut.write(i32_mut, 1234)
+	print(I32Mut.read(i32_mut))
+
+	i64_mut = I64Mut.from_ptr(ptr + i32_to_i64(8))
+	I64Mut.write(i64_mut, i32_to_i64(9001))
+	print_bool(I64Mut.read(i64_mut) == i32_to_i64(9001))
+
+	bool_mut = BoolMut.from_ptr(ptr)
+	BoolMut.write(bool_mut, true)
+	print_bool(BoolMut.read(bool_mut))
+
+	ptr_mut = PtrIntMut.from_ptr(ptr)
+	PtrIntMut.write(ptr_mut, ptr)
+	print_bool(PtrIntMut.read(ptr_mut) == ptr)
+
+	Clib.free(ptr)
+	return 0
+}
