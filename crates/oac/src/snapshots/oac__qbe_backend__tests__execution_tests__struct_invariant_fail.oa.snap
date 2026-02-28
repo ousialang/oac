@@ -1,9 +1,10 @@
 ---
 source: crates/oac/src/qbe_backend.rs
+assertion_line: 2749
 expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
 snapshot_kind: text
 ---
 COMPILATION ERROR
 
 [OAC-INV-001] Error: struct invariant verification failed: struct invariant verification failed (SAT counterexamples found):
-main#0#0 (caller=main, callee=make_counter, struct=Counter, invariant="counter value must be non-negative (id=positive_value)", witness=cfg_path=b0, bad_ret_temp=%si_bad, qbe_artifact=site_main_0_0.qbe, smt_artifact=site_main_0_0.smt2, program_input="main() has no inputs (counterexample is input-independent)")
+main#0#0#positive_value (caller=main, callee=make_counter, struct=Counter, invariant="counter value must be non-negative (id=positive_value)", witness=cfg_path=b0, bad_ret_temp=%si_bad, qbe_artifact=site_main_0_0_positive_value.qbe, smt_artifact=site_main_0_0_positive_value.smt2, program_input="main() has no inputs (counterexample is input-independent)")

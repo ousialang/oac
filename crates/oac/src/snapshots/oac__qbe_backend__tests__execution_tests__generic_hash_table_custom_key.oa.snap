@@ -1,8 +1,9 @@
 ---
 source: crates/oac/src/qbe_backend.rs
+assertion_line: 2749
 expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
 snapshot_kind: text
 ---
 COMPILATION ERROR
 
-[OAC-INV-001] Error: struct invariant verification failed: solver returned unknown for struct invariant obligation UserTable__insert_all_buckets#0#13 (caller=UserTable__insert_all_buckets, callee=UserTable__insert_all_buckets, struct=UserTable, invariant="hashtable metadata and structure must stay coherent (id=coherent_state)", qbe_artifact=site_UserTable__insert_all_buckets_0_13.qbe, smt_artifact=site_UserTable__insert_all_buckets_0_13.smt2). verification is fail-closed until this obligation is proven unsat
+[OAC-INV-001] Error: struct invariant verification failed: solver returned unknown for struct invariant obligation UserTable__insert_all_buckets#0#13#coherent_state (caller=UserTable__insert_all_buckets, callee=UserTable__insert_all_buckets, struct=UserTable, invariant="hashtable metadata and structure must stay coherent (id=coherent_state)", qbe_artifact=site_UserTable__insert_all_buckets_0_13_coherent_state.qbe, smt_artifact=site_UserTable__insert_all_buckets_0_13_coherent_state.smt2). verification is fail-closed until this obligation is proven unsat
