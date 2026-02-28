@@ -11,6 +11,7 @@ mod riscv_smt; // Add the new module
 mod struct_invariants;
 mod test_framework;
 mod tokenizer;
+mod verification;
 
 use std::collections::HashSet;
 use std::env;
@@ -394,26 +395,24 @@ fn compile_ast_to_executable(
     })?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
     let qbe_ir = qbe_backend::compile(ir.clone());
-    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, target_dir).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Prove,
-            "OAC-PROVE-001",
-            "prove obligation verification failed",
-            err,
-            None,
-            None,
-        )
-    })?;
-    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, target_dir).map_err(
-        |err| {
-            stage_error_from_anyhow(
+    verification::verify_all_obligations_with_qbe(&ir, &qbe_ir, target_dir).map_err(
+        |err| match err {
+            verification::VerificationError::Prove(err) => stage_error_from_anyhow(
+                DiagnosticStage::Prove,
+                "OAC-PROVE-001",
+                "prove obligation verification failed",
+                err,
+                None,
+                None,
+            ),
+            verification::VerificationError::StructInvariant(err) => stage_error_from_anyhow(
                 DiagnosticStage::StructInvariant,
                 "OAC-INV-001",
                 "struct invariant verification failed",
                 err,
                 None,
                 None,
-            )
+            ),
         },
     )?;
     reject_proven_non_terminating_main(&qbe_ir).map_err(|err| {

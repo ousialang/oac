@@ -1,13 +1,24 @@
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
-
-use anyhow::Context;
 
 use crate::ir::{ResolvedProgram, TypeDef};
 use crate::parser::{Expression, Statement};
 
-const Z3_TIMEOUT_SECONDS: u64 = 10;
+pub(crate) const INVARIANT_BATCH_CONFIG: crate::verification::ObligationBatchConfig<'static> =
+    crate::verification::ObligationBatchConfig {
+        verification_subdir: "struct_invariants",
+        create_dir_error_prefix: "failed to create struct invariant verification directory",
+        write_qbe_error_prefix: "failed to write checker QBE program",
+        write_smt_error_prefix: "failed to write SMT obligation",
+        encode_error_prefix: "failed to encode checker QBE for",
+        encode_report_name: "invariant-checker",
+        unknown_error_prefix: "solver returned unknown for",
+        solve_error_prefix: "failed to solve struct invariant obligation",
+        solve_report_name: "invariant-obligation",
+        sat_failure_header: "struct invariant verification failed (SAT counterexamples found):",
+    };
 
+#[allow(dead_code)]
 pub fn verify_struct_invariants(
     program: &ResolvedProgram,
     target_dir: &Path,
@@ -16,41 +27,56 @@ pub fn verify_struct_invariants(
     verify_struct_invariants_with_qbe(program, &qbe_module, target_dir)
 }
 
+#[allow(dead_code)]
 pub fn verify_struct_invariants_with_qbe(
     program: &ResolvedProgram,
     qbe_module: &qbe::Module,
     target_dir: &Path,
 ) -> anyhow::Result<()> {
     let invariant_by_struct = discover_invariants(program)?;
-    let reachable = reachable_user_functions(program, "main")?;
-    let sites = collect_obligation_sites(program, &reachable, &invariant_by_struct)?;
+    let context = crate::verification::build_verification_context(program, qbe_module)?;
+    let sites = collect_obligation_sites(program, &context.reachable, &invariant_by_struct)?;
     if sites.is_empty() {
         return Ok(());
     }
-    reject_recursion_cycles(program, "main", &reachable)?;
-    solve_obligations_qbe(program, &qbe_module, &sites, target_dir)
+    crate::verification::reject_recursion_cycles(
+        program,
+        "main",
+        &context.reachable,
+        "struct invariant verification",
+    )?;
+    crate::verification::run_obligation_batch(
+        &context.function_map,
+        &sites,
+        target_dir,
+        &INVARIANT_BATCH_CONFIG,
+        |site| site.id.as_str(),
+        build_site_checker_function,
+        should_assume_main_argc_non_negative,
+        format_sat_failure,
+    )
 }
 
 #[derive(Clone, Debug)]
-struct ObligationSite {
-    id: String,
-    caller: String,
-    callee: String,
-    callee_call_ordinal: usize,
-    struct_name: String,
-    invariant_fn: String,
-    invariant_display_name: String,
-    invariant_identifier: Option<String>,
+pub(crate) struct ObligationSite {
+    pub(crate) id: String,
+    pub(crate) caller: String,
+    pub(crate) callee: String,
+    pub(crate) callee_call_ordinal: usize,
+    pub(crate) struct_name: String,
+    pub(crate) invariant_fn: String,
+    pub(crate) invariant_display_name: String,
+    pub(crate) invariant_identifier: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-struct InvariantBinding {
-    function_name: String,
-    display_name: String,
-    identifier: Option<String>,
+pub(crate) struct InvariantBinding {
+    pub(crate) function_name: String,
+    pub(crate) display_name: String,
+    pub(crate) identifier: Option<String>,
 }
 
-fn discover_invariants(
+pub(crate) fn discover_invariants(
     program: &ResolvedProgram,
 ) -> anyhow::Result<HashMap<String, InvariantBinding>> {
     let mut invariant_by_struct = HashMap::new();
@@ -122,205 +148,29 @@ fn discover_invariants(
     Ok(invariant_by_struct)
 }
 
+#[cfg(test)]
 fn reachable_user_functions(
     program: &ResolvedProgram,
     root: &str,
 ) -> anyhow::Result<HashSet<String>> {
-    let mut reachable = HashSet::new();
-    let mut stack = vec![root.to_string()];
-
-    while let Some(function_name) = stack.pop() {
-        if !reachable.insert(function_name.clone()) {
-            continue;
-        }
-
-        let function = program
-            .function_definitions
-            .get(&function_name)
-            .ok_or_else(|| {
-                anyhow::anyhow!("reachable function {} is missing definition", function_name)
-            })?;
-
-        let mut callees = BTreeSet::new();
-        for statement in &function.body {
-            collect_called_user_functions_in_statement(statement, program, &mut callees);
-        }
-
-        for callee in callees {
-            if !reachable.contains(&callee) {
-                stack.push(callee);
-            }
-        }
-    }
-
-    Ok(reachable)
+    crate::verification::reachable_user_functions(program, root)
 }
 
-fn collect_called_user_functions_in_statement(
-    statement: &Statement,
-    program: &ResolvedProgram,
-    out: &mut BTreeSet<String>,
-) {
-    match statement {
-        Statement::StructDef { .. } => {}
-        Statement::Assign { value, .. } => {
-            collect_called_user_functions_in_expr(value, program, out)
-        }
-        Statement::Return { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Expression { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Prove { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Assert { condition } => {
-            collect_called_user_functions_in_expr(condition, program, out)
-        }
-        Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-            if let Some(else_body) = else_body {
-                for statement in else_body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-        Statement::While { condition, body } => {
-            collect_called_user_functions_in_expr(condition, program, out);
-            for statement in body {
-                collect_called_user_functions_in_statement(statement, program, out);
-            }
-        }
-        Statement::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                for statement in &arm.body {
-                    collect_called_user_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-    }
-}
-
-fn collect_called_user_functions_in_expr(
-    expr: &Expression,
-    program: &ResolvedProgram,
-    out: &mut BTreeSet<String>,
-) {
-    match expr {
-        Expression::Call(name, args) => {
-            if program.function_definitions.contains_key(name) {
-                out.insert(name.clone());
-            }
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            if let Expression::FieldAccess {
-                struct_variable,
-                field,
-            } = callee.as_ref()
-            {
-                let call = crate::parser::qualify_namespace_function_name(struct_variable, field);
-                if program.function_definitions.contains_key(&call) {
-                    out.insert(call);
-                }
-            }
-            collect_called_user_functions_in_expr(callee, program, out);
-            for arg in args {
-                collect_called_user_functions_in_expr(arg, program, out);
-            }
-        }
-        Expression::BinOp(_, lhs, rhs) => {
-            collect_called_user_functions_in_expr(lhs, program, out);
-            collect_called_user_functions_in_expr(rhs, program, out);
-        }
-        Expression::UnaryOp(_, expr) => collect_called_user_functions_in_expr(expr, program, out),
-        Expression::StructValue { field_values, .. } => {
-            for (_, value) in field_values {
-                collect_called_user_functions_in_expr(value, program, out);
-            }
-        }
-        Expression::Match { subject, arms } => {
-            collect_called_user_functions_in_expr(subject, program, out);
-            for arm in arms {
-                collect_called_user_functions_in_expr(&arm.value, program, out);
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
-    }
-}
-
+#[cfg(test)]
 fn reject_recursion_cycles(
     program: &ResolvedProgram,
     root: &str,
     reachable: &HashSet<String>,
 ) -> anyhow::Result<()> {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum VisitState {
-        Visiting,
-        Visited,
-    }
-
-    fn dfs(
-        program: &ResolvedProgram,
-        function: &str,
-        reachable: &HashSet<String>,
-        states: &mut HashMap<String, VisitState>,
-        stack: &mut Vec<String>,
-    ) -> anyhow::Result<()> {
-        if let Some(VisitState::Visited) = states.get(function) {
-            return Ok(());
-        }
-        if let Some(VisitState::Visiting) = states.get(function) {
-            let pos = stack.iter().position(|name| name == function).unwrap_or(0);
-            let mut cycle = stack[pos..].join(" -> ");
-            if !cycle.is_empty() {
-                cycle.push_str(" -> ");
-            }
-            cycle.push_str(function);
-            return Err(anyhow::anyhow!(
-                "recursion cycles are unsupported by struct invariant verification: {}",
-                cycle
-            ));
-        }
-
-        states.insert(function.to_string(), VisitState::Visiting);
-        stack.push(function.to_string());
-
-        let func = program
-            .function_definitions
-            .get(function)
-            .ok_or_else(|| anyhow::anyhow!("missing function definition for {}", function))?;
-        let mut callees = BTreeSet::new();
-        for statement in &func.body {
-            collect_called_user_functions_in_statement(statement, program, &mut callees);
-        }
-        for callee in callees {
-            if reachable.contains(&callee) {
-                dfs(program, &callee, reachable, states, stack)?;
-            }
-        }
-
-        stack.pop();
-        states.insert(function.to_string(), VisitState::Visited);
-        Ok(())
-    }
-
-    let mut states = HashMap::new();
-    let mut stack = Vec::new();
-    if reachable.contains(root) {
-        dfs(program, root, reachable, &mut states, &mut stack)?;
-    }
-    Ok(())
+    crate::verification::reject_recursion_cycles(
+        program,
+        root,
+        reachable,
+        "struct invariant verification",
+    )
 }
 
-fn collect_obligation_sites(
+pub(crate) fn collect_obligation_sites(
     program: &ResolvedProgram,
     reachable: &HashSet<String>,
     invariant_by_struct: &HashMap<String, InvariantBinding>,
@@ -767,27 +617,10 @@ fn join_path(prefix: &str, segment: &str) -> String {
     }
 }
 
-fn sanitize_ident(input: &str) -> String {
-    let mut out = String::new();
-    for (i, ch) in input.chars().enumerate() {
-        let keep = ch.is_ascii_alphanumeric() || ch == '_';
-        if keep {
-            if i == 0 && ch.is_ascii_digit() {
-                out.push('_');
-            }
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    if out.is_empty() {
-        "_sym".to_string()
-    } else {
-        out
-    }
-}
-
-fn should_assume_main_argc_non_negative(site: &ObligationSite, checker: &qbe::Function) -> bool {
+pub(crate) fn should_assume_main_argc_non_negative(
+    site: &ObligationSite,
+    checker: &qbe::Function,
+) -> bool {
     if site.caller != "main" {
         return false;
     }
@@ -798,115 +631,39 @@ fn should_assume_main_argc_non_negative(site: &ObligationSite, checker: &qbe::Fu
         && matches!(checker.arguments[1].0, qbe::Type::Long)
 }
 
-fn solve_obligations_qbe(
-    _program: &ResolvedProgram,
-    qbe_module: &qbe::Module,
-    sites: &[ObligationSite],
-    target_dir: &Path,
-) -> anyhow::Result<()> {
-    let verification_dir = target_dir.join("struct_invariants");
-    std::fs::create_dir_all(&verification_dir).with_context(|| {
-        format!(
-            "failed to create struct invariant verification directory {}",
-            verification_dir.display()
-        )
-    })?;
-
-    let function_map = qbe_module
-        .functions
-        .iter()
-        .map(|function| (function.name.clone(), function.clone()))
-        .collect::<HashMap<_, _>>();
-
-    let mut failures = Vec::new();
-
-    for site in sites {
-        let checker_function = build_site_checker_function(&function_map, site)?;
-        let checker_qbe = checker_function.to_string();
-        let site_stem = format!("site_{}", sanitize_ident(&site.id));
-        let qbe_filename = format!("{}.qbe", site_stem);
-        let smt_filename = format!("{}.smt2", site_stem);
-
-        let qbe_path = verification_dir.join(&qbe_filename);
-        std::fs::write(&qbe_path, &checker_qbe).with_context(|| {
-            format!("failed to write checker QBE program {}", qbe_path.display())
-        })?;
-
-        let smt = qbe_smt::qbe_to_smt(
-            &checker_function,
-            &qbe_smt::EncodeOptions {
-                assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    site,
-                    &checker_function,
-                ),
-                first_arg_i32_range: None,
-            },
-        )
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "failed to encode checker QBE for {}: {}\n{}",
-                site.id,
-                err,
-                err.render_report_plain("invariant-checker")
-            )
-        })?;
-
-        let smt_path = verification_dir.join(&smt_filename);
-        std::fs::write(&smt_path, &smt)
-            .with_context(|| format!("failed to write SMT obligation {}", smt_path.display()))?;
-
-        match qbe_smt::solve_chc_script_with_diagnostics(&smt, Z3_TIMEOUT_SECONDS) {
-            Ok(run) if run.result == qbe_smt::SolverResult::Unsat => {}
-            Ok(run) if run.result == qbe_smt::SolverResult::Sat => {
-                let witness = sat_cfg_witness_summary(&checker_function)
-                    .unwrap_or_else(|| "unavailable".to_string());
-                let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
-                    .map(|excerpt| format!(", solver_excerpt={excerpt}"))
-                    .unwrap_or_default();
-                let program_input = try_find_program_input_counterexample(site, &checker_function)
-                    .map(|input| format!(", program_input=\"{}\"", escape_diagnostic_value(&input)))
-                    .unwrap_or_default();
-                let invariant_label = if let Some(identifier) = &site.invariant_identifier {
-                    format!("{} (id={})", site.invariant_display_name, identifier)
-                } else {
-                    site.invariant_display_name.clone()
-                };
-                failures.push(format!(
-                    "{} (caller={}, callee={}, struct={}, invariant=\"{}\", witness={}, qbe_artifact={}, smt_artifact={}{}{})",
-                    site.id,
-                    site.caller,
-                    site.callee,
-                    site.struct_name,
-                    invariant_label,
-                    witness,
-                    qbe_filename,
-                    smt_filename,
-                    program_input,
-                    solver_excerpt
-                ));
-            }
-            Ok(_run) => {
-                return Err(anyhow::anyhow!("solver returned unknown for {}", site.id));
-            }
-            Err(err) => {
-                return Err(anyhow::anyhow!(
-                    "failed to solve struct invariant obligation {}: {}\n{}",
-                    site.id,
-                    err,
-                    err.render_report_plain("invariant-obligation")
-                ))
-            }
-        }
-    }
-
-    if failures.is_empty() {
-        Ok(())
+pub(crate) fn format_sat_failure(
+    site: &ObligationSite,
+    checker_function: &qbe::Function,
+    qbe_filename: &str,
+    smt_filename: &str,
+    run: &qbe_smt::SolverRun,
+) -> String {
+    let witness =
+        sat_cfg_witness_summary(checker_function).unwrap_or_else(|| "unavailable".to_string());
+    let solver_excerpt = crate::verification::summarize_solver_output(&run.stdout, &run.stderr)
+        .map(|excerpt| format!(", solver_excerpt={excerpt}"))
+        .unwrap_or_default();
+    let program_input = try_find_program_input_counterexample(site, checker_function)
+        .map(|input| format!(", program_input=\"{}\"", escape_diagnostic_value(&input)))
+        .unwrap_or_default();
+    let invariant_label = if let Some(identifier) = &site.invariant_identifier {
+        format!("{} (id={})", site.invariant_display_name, identifier)
     } else {
-        Err(anyhow::anyhow!(
-            "struct invariant verification failed (SAT counterexamples found):\n{}",
-            failures.join("\n")
-        ))
-    }
+        site.invariant_display_name.clone()
+    };
+    format!(
+        "{} (caller={}, callee={}, struct={}, invariant=\"{}\", witness={}, qbe_artifact={}, smt_artifact={}{}{})",
+        site.id,
+        site.caller,
+        site.callee,
+        site.struct_name,
+        invariant_label,
+        witness,
+        qbe_filename,
+        smt_filename,
+        program_input,
+        solver_excerpt
+    )
 }
 
 fn try_find_program_input_counterexample(
@@ -926,33 +683,6 @@ fn try_find_program_input_counterexample(
 
 fn escape_diagnostic_value(value: &str) -> String {
     value.replace('"', "\\\"")
-}
-
-fn summarize_solver_output(stdout: &str, stderr: &str) -> Option<String> {
-    let mut snippets = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .skip(1)
-        .take(2)
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>();
-
-    if snippets.is_empty() {
-        snippets = stderr
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .take(1)
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>();
-    }
-
-    if snippets.is_empty() {
-        None
-    } else {
-        Some(snippets.join(" | "))
-    }
 }
 
 fn sat_cfg_witness_summary(function: &qbe::Function) -> Option<String> {
@@ -1146,7 +876,7 @@ fn describe_edge(
     }
 }
 
-fn build_site_checker_function(
+pub(crate) fn build_site_checker_function(
     function_map: &HashMap<String, qbe::Function>,
     site: &ObligationSite,
 ) -> anyhow::Result<qbe::Function> {
@@ -1464,14 +1194,22 @@ fn inline_single_call(
     let mut used_temps = collect_temps_in_function(function);
     let mut used_labels = collect_labels_in_function(function);
 
-    let inline_prefix = format!("si_inl_{}_{}", inline_counter, sanitize_ident(&callee.name));
+    let inline_prefix = format!(
+        "si_inl_{}_{}",
+        inline_counter,
+        crate::verification::sanitize_ident(&callee.name)
+    );
     let continuation_label =
         fresh_unique_label(&format!("{}_cont", inline_prefix), &mut used_labels);
 
     let mut temp_map = HashMap::new();
     for temp in collect_temps_in_function(callee) {
         let renamed = fresh_unique_temp(
-            &format!("{}_{}", inline_prefix, sanitize_ident(&temp)),
+            &format!(
+                "{}_{}",
+                inline_prefix,
+                crate::verification::sanitize_ident(&temp)
+            ),
             &mut used_temps,
         );
         temp_map.insert(temp, renamed);
@@ -1480,7 +1218,11 @@ fn inline_single_call(
     let mut label_map = HashMap::new();
     for block in &callee.blocks {
         let renamed = fresh_unique_label(
-            &format!("{}_{}", inline_prefix, sanitize_ident(&block.label)),
+            &format!(
+                "{}_{}",
+                inline_prefix,
+                crate::verification::sanitize_ident(&block.label)
+            ),
             &mut used_labels,
         );
         label_map.insert(block.label.clone(), renamed);

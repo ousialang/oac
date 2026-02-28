@@ -10,13 +10,15 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
 5. Resolve/type-check with `ir::resolve`.
 6. Lower to QBE with `qbe_backend::compile`.
-7. Verify `prove(...)` obligations with `prove::verify_prove_obligations_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
-8. Verify struct invariants with `struct_invariants::verify_struct_invariants_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
-9. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
-10. Emit QBE IR to `target/oac/ir.qbe`.
-11. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
-12. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`): default `cc` (plus `--target=<triple>` when arch mapping is known), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc`, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
-13. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+7. Verify proof obligations through `verification::verify_all_obligations_with_qbe` (single orchestrator over in-memory QBE module):
+   - runs reachable `prove(...)` obligations first (`prove` batch)
+   - short-circuits on prove failure
+   - runs reachable struct-invariant obligations second (`struct_invariants` batch)
+8. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
+9. Emit QBE IR to `target/oac/ir.qbe`.
+10. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
+11. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`): default `cc` (plus `--target=<triple>` when arch mapping is known), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc`, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+12. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -25,7 +27,7 @@ Artifacts emitted during build:
 - `target/oac/ir.qbe`
 - `target/oac/prove/site_*.qbe` (generated checker programs, when prove obligations exist)
 - `target/oac/prove/site_*.smt2` (when prove obligations exist)
-- `target/oac/struct_invariants/site_*.qbe` (generated checker programs, when obligations exist)
+- `target/oac/struct_invariants/site_*.qbe` (generated checker programs, when invariant obligations exist)
 - `target/oac/struct_invariants/site_*.smt2` (when invariant obligations exist)
 - `target/oac/assembly.s`
 - `target/oac/app`
@@ -152,7 +154,8 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `riscv-smt` subcommand.
 - `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
-- `qbe-smt` is used by prove verification and struct invariant verification to encode checker QBE functions into CHC/fixedpoint (Horn) constraints.
+- `verification.rs` is the shared in-crate orchestrator for proof obligations: it builds shared reachability/function-map context once, runs prove and struct-invariant batches in order, and reuses one generic per-obligation QBE->SMT->solve loop.
+- `qbe-smt` is used by both verification batches to encode checker QBE functions into CHC/fixedpoint (Horn) constraints.
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
 - `qbe-smt` is parser-free: it consumes in-memory `qbe::Function` directly. Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), and `crates/qbe-smt/src/classify.rs` (loop classification).
