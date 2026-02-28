@@ -13,10 +13,22 @@ enum String {
 }
 
 namespace String {
+	fun make_bytes(ptr: PtrInt, len: I32) -> Bytes {
+		safe_len = len
+		if safe_len < 0 {
+			safe_len = 0
+		}
+
+		return Bytes struct {
+			ptr: ptr,
+			len: safe_len,
+		}
+	}
+
 	fun bytes(s: String) -> Bytes {
 		return match s {
-			String.Literal(b) => b
-			String.Heap(b) => b
+			String.Literal(b) => String.make_bytes(b.ptr, b.len)
+			String.Heap(b) => String.make_bytes(b.ptr, b.len)
 		}
 	}
 
@@ -120,18 +132,12 @@ namespace String {
 	}
 
 	fun from_literal_parts(ptr: PtrInt, len: I32) -> String {
-		b = Bytes struct {
-			ptr: ptr,
-			len: len,
-		}
+		b = String.make_bytes(ptr, len)
 		return String.Literal(b)
 	}
 
 	fun from_heap_parts(ptr: PtrInt, len: I32) -> String {
-		b = Bytes struct {
-			ptr: ptr,
-			len: len,
-		}
+		b = String.make_bytes(ptr, len)
 		return String.Heap(b)
 	}
 }
