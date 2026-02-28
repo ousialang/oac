@@ -113,7 +113,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also includes `U8` coverage for accepted same-type arithmetic/comparison and rejection of mixed `U8`/`I32` arithmetic.
 - `crates/oac/src/ir.rs` also includes resolve coverage for builtin pointer-memory helpers (`load_u8`, `load_i32`, `load_i64`, `load_bool`, `store_u8`, `store_i32`, `store_i64`, `store_bool`) with `PtrInt` addresses.
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
-- `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` and `qbe::Module` fixtures) cover CHC/fixedpoint encoding shape (`HORN` for non-FP modules and `ALL` for FP32 modules, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, FP32 proving subset modeling (`copy`/`add`/`sub`/`mul`/`div`, ordered/unordered compares, `phi`, FP32 `loads`/`stores`), interprocedural user-call summaries (including self-recursive user calls), argument-invariant precondition assumptions, explicit FP64 fail-closed rejection, and strict rejection of unsupported operations.
+- `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` and `qbe::Module` fixtures) cover CHC/fixedpoint encoding shape (`HORN` for non-FP modules and `ALL` for FP32/FP64 modules, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, FP32/FP64 proving subset modeling (`copy`/`add`/`sub`/`mul`/`div`, ordered/unordered compares, `phi`, FP32/FP64 `loads`/`stores`), interprocedural user-call summaries (including self-recursive user calls), argument-invariant precondition assumptions, fail-closed rejection for unsupported float conversions, and strict rejection of unsupported operations.
 - `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`, bounded `strlen`/`strcmp`, bounded `strcpy`, and constrained `open`/`read`/`write`/`close` return modeling) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
 - `crates/qbe-smt/src/lib.rs` also verifies reachable-only encoding behavior (unsupported instructions inside unreachable blocks are ignored).
@@ -145,12 +145,15 @@ Key tests:
 - Execution fixtures now include dedicated prove/assert coverage:
   - `prove_pass.oa`
   - `prove_fp32_pass.oa`
+  - `prove_fp64_pass.oa`
   - `prove_fail.oa`
   - `prove_statement_only.oa`
   - `assert_pass.oa`
   - `assert_fail.oa`
 - Execution fixtures also include FP32 struct-invariant proving coverage:
   - `struct_invariant_fp32_pass.oa`
+- Execution fixtures also include FP64 struct-invariant proving coverage:
+  - `struct_invariant_fp64_pass.oa`
 - Execution fixtures also include namespace call coverage:
   - `namespace_basic.oa`
 - Execution fixtures also include large-string length regression coverage:

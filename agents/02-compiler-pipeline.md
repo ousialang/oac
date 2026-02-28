@@ -179,8 +179,8 @@ Important enforced invariants include:
 - Bounded string-call details: `strlen` scans for NUL up to the inline limit and otherwise falls back to constrained unknown non-negative length; `strcmp` performs bounded first-event scan (`difference` or shared NUL) with tri-state results (`-1/0/1`) and otherwise falls back to unconstrained return.
 - `strcpy` memory effects are modeled as bounded byte copy until first NUL (including terminator); if no NUL is found within the inline limit, memory falls back to unconstrained `mem_next`.
 - Syscall-like modeled return constraints are explicit: `open` -> `-1 | >=0`, `close` -> `0 | -1`, `read`/`write` -> `-1 | (0 <= ret <= count)`.
-- FP32 obligations are supported in checker encoding for the emitted subset (FP32 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, and FP32 `loads`/`stores`), and force `(set-logic ALL)` in the emitted SMT script.
-- FP64 obligations remain fail-closed unsupported in checker encoding (`Unsupported` errors).
+- FP32/FP64 obligations are supported in checker encoding for the emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, and FP32/FP64 `loads`/`stores`), and force `(set-logic ALL)` in the emitted SMT script.
+- Unsupported float conversion operations remain fail-closed in checker encoding (`Unsupported` errors).
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
 - Module-level argument assumptions are also available: `oac` now passes per-function invariant-bearing argument assumptions, and `qbe-smt` validates these references fail-closed (function exists/encoded, argument index in range, invariant target unary).

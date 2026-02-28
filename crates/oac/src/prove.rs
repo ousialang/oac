@@ -535,6 +535,24 @@ fun main() -> I32 {
     }
 
     #[test]
+    fn prove_sites_support_fp64_obligations() {
+        let source = r#"
+fun main() -> I32 {
+	a = 1.25f64
+	b = 2.5f64
+	prove(a < b)
+	return 0
+}
+"#;
+
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect("FP64 prove obligations should verify");
+    }
+
+    #[test]
     fn prove_checker_encoding_models_string_and_io_clib_calls() {
         let source = r#"
 fun check(path: PtrInt, fd: Int, buf: PtrInt, n: PtrInt) -> I32 {

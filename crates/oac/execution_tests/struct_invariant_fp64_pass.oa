@@ -1,0 +1,19 @@
+struct Foo {
+	x: FP64,
+}
+
+invariant "x is bounded above by one" for (v: Foo) {
+	return v.x <= 1.0f64
+}
+
+fun make_foo(x: FP64) -> Foo {
+	return Foo struct { x: x, }
+}
+
+fun main() -> I32 {
+	f = make_foo(0.5f64)
+	if f.x < 1.0f64 {
+		print(2)
+	}
+	return 0
+}

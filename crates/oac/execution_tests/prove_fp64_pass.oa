@@ -1,0 +1,7 @@
+fun main() -> I32 {
+	a = 1.25f64
+	b = 2.5f64
+	prove(a < b)
+	print(64)
+	return 0
+}
