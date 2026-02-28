@@ -136,6 +136,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Build/test linking now uses C compiler drivers (`cc`/`clang`/target-prefixed `*-gcc`) instead of Zig. Link step is fail-closed and supports `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS`.
 - Linker-stage diagnostics now use `DiagnosticStage::Linker` and stable codes `OAC-LINK-001` / `OAC-LINK-002` (legacy `OAC-ZIG-*` names are removed).
 - Execution fixture snapshots in `qbe_backend` are based on program stdout even when the process exits with a non-zero code; runtime errors are reserved for spawn failures, timeouts, invalid UTF-8, or signal termination.
+- `crates/oac/src/qbe_backend.rs` execution fixtures now compile/execute in parallel worker threads inside one test harness, but snapshot assertions stay deterministic by sorting fixture paths/results before asserting; worker count defaults to `min(available_parallelism, 8)` and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>`.
 - Snapshot hygiene is test-gated: committed `*.snap.new` files, execution snapshots without matching `execution_tests/*.oa` fixtures, and duplicated Ariadne prefixes (`Error: error[...]`) are treated as test failures.
 - GitHub Actions CI now provisions backend test/build dependencies before Rust checks (`z3`, Zig via `goto-bus-stop/setup-zig@v2` pinned to `0.13.0`, and `qbe` built from upstream `qbe-1.2` source tarball in `.github/workflows/ci.yml`).
 
