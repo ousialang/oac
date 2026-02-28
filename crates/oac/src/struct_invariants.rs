@@ -842,7 +842,14 @@ fn solve_obligations_qbe(
                 first_arg_i32_range: None,
             },
         )
-        .with_context(|| format!("failed to encode checker QBE for {}", site.id))?;
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "failed to encode checker QBE for {}: {}\n{}",
+                site.id,
+                err,
+                err.render_report_plain("invariant-checker")
+            )
+        })?;
 
         let smt_path = verification_dir.join(&smt_filename);
         std::fs::write(&smt_path, &smt)
@@ -883,9 +890,10 @@ fn solve_obligations_qbe(
             }
             Err(err) => {
                 return Err(anyhow::anyhow!(
-                    "failed to solve struct invariant obligation {}: {}",
+                    "failed to solve struct invariant obligation {}: {}\n{}",
                     site.id,
-                    err
+                    err,
+                    err.render_report_plain("invariant-obligation")
                 ))
             }
         }

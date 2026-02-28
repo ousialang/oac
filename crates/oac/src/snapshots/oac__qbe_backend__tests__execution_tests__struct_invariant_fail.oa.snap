@@ -5,5 +5,5 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-struct invariant verification failed (SAT counterexamples found):
+[OAC-INV-001] Error: error[struct-invariant:OAC-INV-001]: struct invariant verification failed: struct invariant verification failed (SAT counterexamples found):
 main#0#0 (caller=main, callee=make_counter, struct=Counter, invariant="counter value must be non-negative (id=positive_value)", witness=cfg_path=b0 -> b1 -> b2 -> b3 -> b4 -> b5 -> b6, branch_steps=[b0 -> b1 (jmp); b1 -> b2 (jmp); b2 -> b3 (jmp); b3 -> b4 (jmp); b4 -> b5 (jmp); b5 -> b6 (jmp)], bad_ret_temp=%si_bad, qbe_artifact=site_main_0_0.qbe, smt_artifact=site_main_0_0.smt2, program_input="main() has no inputs (counterexample is input-independent)")

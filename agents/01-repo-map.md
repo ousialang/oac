@@ -16,6 +16,7 @@ Editor tooling in this repository:
 ## High-Value Paths
 
 - `crates/oac/src/main.rs`: CLI entrypoint and build pipeline orchestration.
+- `crates/oac/src/diagnostics.rs`: shared compiler diagnostic model and Ariadne rendering used by CLI and LSP.
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
 - `crates/oac/src/lsp.rs`: stdio LSP server loop (`oac lsp`) and diagnostics publishing.
 - `tools/vscode-ousia/src/extension.ts`: VS Code client activation and `oac lsp` process launch.

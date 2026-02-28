@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-unknown comptime function missing_transform
+[OAC-COMPTIME-001] Error: error[comptime:OAC-COMPTIME-001]: failed to execute comptime applies: unknown comptime function missing_transform

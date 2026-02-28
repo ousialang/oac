@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-variant OptionI32.Some requires payload constructor call
+[OAC-RESOLVE-001] Error: error[resolve:OAC-RESOLVE-001]: failed to resolve/type-check program: variant OptionI32.Some requires payload constructor call

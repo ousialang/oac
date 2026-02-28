@@ -1,7 +1,8 @@
 ---
 source: crates/oac/src/qbe_backend.rs
 expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
 ---
 COMPILATION ERROR
 
-failed to insert function signature for foo
+[OAC-RESOLVE-001] Error: error[resolve:OAC-RESOLVE-001]: failed to resolve/type-check program: failed to insert function signature for foo

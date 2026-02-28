@@ -24,6 +24,7 @@ Act like a compiler engineer, not a text editor:
 - Do not change IR assumptions without auditing backend lowering paths.
 - Preserve or explicitly migrate snapshot expectations.
 - Keep error messages actionable and stable where possible.
+- Route user-visible compiler errors through `crates/oac/src/diagnostics.rs` so CLI/LSP/snapshot behavior stays consistent (Ariadne plain output for deterministic tests).
 
 ## Pre-Release Compatibility Posture
 

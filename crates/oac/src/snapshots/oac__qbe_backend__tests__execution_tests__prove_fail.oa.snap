@@ -5,5 +5,5 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-prove verification failed (SAT counterexamples found):
+[OAC-PROVE-001] Error: error[prove:OAC-PROVE-001]: prove obligation verification failed: prove verification failed (SAT counterexamples found):
 main#0#1 (caller=main, qbe_artifact=site_main_0_1.qbe, smt_artifact=site_main_0_1.smt2)

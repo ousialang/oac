@@ -16,6 +16,7 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 10. Emit QBE IR to `target/oac/ir.qbe`.
 11. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
 12. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`): default `cc` (plus `--target=<triple>` when arch mapping is known), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc`, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+13. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -41,6 +42,7 @@ Defined in `crates/oac/src/main.rs` (`run_tests` function):
 6. Resolve/type-check with `ir::resolve`.
 7. Lower to QBE, run prove/invariant checks, run non-termination classification, emit QBE/assembly, and link executable (same backend path as `oac build`).
 8. Execute `target/oac/test/app` and treat non-zero exit status as test failure.
+9. Map failures into shared compiler diagnostics and render Ariadne reports for CLI users.
 
 Artifacts emitted during test runs:
 - `target/oac/test/tokens.json`
@@ -179,7 +181,7 @@ Important enforced invariants include:
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
 - Symbol indexing includes `extern fun` declarations in document symbols.
 - Completion keywords include `generic`, `specialize`, `trait`, and `impl` (legacy `template`/`instantiate` are removed).
-- Diagnostics are produced from tokenizer/parser/import-resolution/type-resolution, and published via `textDocument/publishDiagnostics`.
+- Diagnostics are produced from tokenizer/parser/import-resolution/type-resolution through the shared `diagnostics` module and then converted to LSP ranges (`textDocument/publishDiagnostics`), using span labels when available and a `0:0` fallback range otherwise.
 
 ## Implementation Guidance
 

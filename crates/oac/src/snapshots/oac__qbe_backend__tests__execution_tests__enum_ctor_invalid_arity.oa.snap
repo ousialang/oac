@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-expected 1 payload argument for constructor OptionI32.Some, got 2
+[OAC-RESOLVE-001] Error: error[resolve:OAC-RESOLVE-001]: failed to resolve/type-check program: expected 1 payload argument for constructor OptionI32.Some, got 2

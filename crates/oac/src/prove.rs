@@ -315,7 +315,14 @@ fn solve_prove_sites(
                 first_arg_i32_range: None,
             },
         )
-        .with_context(|| format!("failed to encode prove checker QBE for {}", site.id))?;
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "failed to encode prove checker QBE for {}: {}\n{}",
+                site.id,
+                err,
+                err.render_report_plain("prove-checker")
+            )
+        })?;
 
         let smt_path = verification_dir.join(&smt_filename);
         std::fs::write(&smt_path, &smt).with_context(|| {
@@ -347,9 +354,10 @@ fn solve_prove_sites(
             }
             Err(err) => {
                 return Err(anyhow::anyhow!(
-                    "failed to solve prove obligation {}: {}",
+                    "failed to solve prove obligation {}: {}\n{}",
                     site.id,
-                    err
+                    err,
+                    err.render_report_plain("prove-obligation")
                 ))
             }
         }

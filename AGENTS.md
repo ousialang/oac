@@ -77,6 +77,8 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Generic-specialized helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
+- Compiler diagnostics are centralized in `crates/oac/src/diagnostics.rs` and rendered with Ariadne for both CLI output and `oac lsp` diagnostic conversion.
+- `oac build` / `oac test` stage failures are now mapped to stable diagnostic codes (for example `OAC-PARSE-001`, `OAC-RESOLVE-001`) and emitted as Ariadne reports; execution fixture compilation-error snapshots therefore reflect Ariadne plain-report text.
 - A VS Code extension scaffold now lives in `tools/vscode-ousia/`; it launches `oac lsp` and is configured via `ousia.server.path`, `ousia.server.args`, and `ousia.trace.server`.
 - The VS Code extension must launch `oac lsp` without appending `--stdio`; `ousia.server.args` are sanitized to ignore `--stdio`.
 - Top-level tests use declaration syntax: `test "Name" { ... }`.
@@ -99,6 +101,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `qbe-smt` CHC state now tracks predecessor-block identity (`pred`) so `phi` assignments are modeled directly in Horn transitions (with predecessor guards), instead of being rejected.
 - `qbe-smt` source split: `lib.rs` (public API + tests), `encode.rs` (CHC/Horn encoding), `classify.rs` (loop classification).
 - CHC solving is centralized in `qbe-smt` (`solve_chc_script` / `solve_chc_script_with_diagnostics`); struct invariant verification uses this shared backend runner instead of owning a separate Z3 invocation path.
+- `qbe-smt` now exposes Ariadne report helpers on `QbeSmtError` (`render_report_plain`, `render_report_terminal_auto`) and `oac` includes those reports in prove/invariant failure notes.
 - `qbe-smt` now models a wider CLib call set in CHC encoding: `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, plus `exit(code)` halting transitions (and variadic `printf` for compiler builtin `print` inlining).
 - CLib byte-effect models are bounded with deterministic inline precision (`limit = 16`) and sound fallback branches; unknown extern call targets remain strict fail-closed errors.
 - CHC encoding only includes reachable QBE blocks from entry; unsupported instructions in unreachable blocks are ignored by design.

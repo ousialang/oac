@@ -1,4 +1,6 @@
+use ariadne::{sources, Config, Label, Report, ReportKind};
 use qbe::Function as QbeFunction;
+use std::io::IsTerminal;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -47,6 +49,43 @@ pub enum QbeSmtError {
         stdout: String,
         stderr: String,
     },
+}
+
+impl QbeSmtError {
+    pub fn render_report_plain(&self, source_id: &str) -> String {
+        self.render_report(source_id, false)
+    }
+
+    pub fn render_report_terminal_auto(&self, source_id: &str) -> String {
+        self.render_report(source_id, std::io::stderr().is_terminal())
+    }
+
+    fn render_report(&self, source_id: &str, use_color: bool) -> String {
+        let message = self.to_string();
+        let mut report = Report::build(ReportKind::Error, (source_id.to_string(), 0..1))
+            .with_code("QBE-SMT-001")
+            .with_message("qbe-smt error")
+            .with_label(Label::new((source_id.to_string(), 0..1)).with_message(message.clone()))
+            .with_config(Config::default().with_color(use_color));
+
+        match self {
+            QbeSmtError::Unsupported { .. } => {
+                report =
+                    report.with_note("qbe-smt is strict fail-closed for unsupported operations");
+            }
+            QbeSmtError::SolverUnavailable => {
+                report = report.with_help("install z3 and ensure it is on PATH");
+            }
+            _ => {}
+        }
+
+        let mut output = Vec::new();
+        let source_entries = vec![(source_id.to_string(), String::new())];
+        match report.finish().write(sources(source_entries), &mut output) {
+            Ok(()) => String::from_utf8_lossy(&output).trim_end().to_string(),
+            Err(_) => format!("qbe-smt error: {message}"),
+        }
+    }
 }
 
 /// Encode one QBE function body into SMT-LIB text.
@@ -225,6 +264,14 @@ mod tests {
         assert!(smt.contains("(declare-rel bad ())"));
         assert!(smt.contains("(query bad)"));
         assert!(smt.contains("(= exit (_ bv1 64))"));
+    }
+
+    #[test]
+    fn error_rendering_helpers_produce_report_text() {
+        let err = super::QbeSmtError::SolverUnavailable;
+        let plain = err.render_report_plain("checker");
+        assert!(plain.contains("qbe-smt error"));
+        assert!(plain.contains("z3"));
     }
 
     #[test]

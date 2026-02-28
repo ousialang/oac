@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+ariadne = "0.5"
 clap = { version = "4", features = ["derive"] }
 qbe = { path = "../qbe-rs" }
 qbe-smt = { path = "../qbe-smt" }

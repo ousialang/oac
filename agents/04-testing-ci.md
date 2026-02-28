@@ -94,14 +94,16 @@ Key tests:
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
 - `crates/qbe-smt/src/lib.rs` also verifies reachable-only encoding behavior (unsupported instructions inside unreachable blocks are ignored).
 - `crates/qbe-smt/src/lib.rs` is also the shared CHC solver entrypoint (`solve_chc_script` and `solve_chc_script_with_diagnostics`) used by struct invariant verification.
+- `crates/qbe-smt/src/lib.rs` also covers Ariadne rendering helpers on `QbeSmtError` (`render_report_plain` / `render_report_terminal_auto`).
 - `crates/qbe-smt/src/lib.rs` also tests loop classification (`classify_simple_loops`) for proven non-termination patterns (identity updates, including `call $sub(..., 0)`) vs unknown/progress loops.
+- `crates/oac/src/diagnostics.rs` tests cover tokenizer span conversion, plain (no ANSI) report rendering, and no-span fallback rendering.
 - `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, and file-URI handling.
 - `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, recursion rejection, and QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding and fail-closed unknown external calls).
 - `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving (including no-op behavior when no prove sites exist).
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps).
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
-- `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors).
+- `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Compiler-error snapshots now capture Ariadne plain-report output from the shared diagnostics layer.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts QBE emission for namespaced calls contains mangled function call symbols.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts statement-position `Void` extern calls are emitted (`call $free`).
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts `i32_to_i64` lowering uses signed extension (`extsw`) and not byte extension (`extub`).

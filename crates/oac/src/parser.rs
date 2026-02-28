@@ -402,21 +402,22 @@ fn parse_braced_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Stateme
 
     let mut body = vec![];
     loop {
-        match tokens.first().unwrap() {
-            TokenData::Parenthesis {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
                 opening: '}',
                 is_opening: false,
-            } => {
+            }) => {
                 tokens.remove(0);
                 break;
             }
-            TokenData::Newline => {
+            Some(TokenData::Newline) => {
                 tokens.remove(0);
             }
-            _ => {
+            Some(_) => {
                 let statement = parse_statement(tokens)?;
                 body.push(statement);
             }
+            None => return Err(anyhow::anyhow!("unexpected end of file in braced block")),
         }
     }
     Ok(body)
@@ -676,8 +677,8 @@ fn parse_optional_else(tokens: &mut Vec<TokenData>) -> anyhow::Result<Option<Vec
 fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parameter>> {
     let mut parameters = vec![];
     loop {
-        match tokens.first().unwrap() {
-            TokenData::Symbols(s) => {
+        match tokens.first() {
+            Some(TokenData::Symbols(s)) => {
                 if s == "," {
                     tokens.remove(0);
                     continue;
@@ -685,14 +686,14 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
                     return Err(anyhow::anyhow!("expected ',', parameter name, or ')'"));
                 }
             }
-            TokenData::Parenthesis {
+            Some(TokenData::Parenthesis {
                 opening: ')',
                 is_opening: false,
-            } => {
+            }) => {
                 tokens.remove(0);
                 break;
             }
-            TokenData::Word(name) => {
+            Some(TokenData::Word(name)) => {
                 let name = name.clone();
                 tokens.remove(0);
                 anyhow::ensure!(
@@ -703,6 +704,7 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
 
                 parameters.push(Parameter { name, ty });
             }
+            None => return Err(anyhow::anyhow!("unexpected end of file in parameter list")),
             _ => return Err(anyhow::anyhow!("expected parameter name")),
         }
     }
@@ -760,23 +762,24 @@ fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<S
     loop {
         trace!(
             "Parsing entry in a function-like body: {:#?}",
-            tokens.first().unwrap()
+            tokens.first()
         );
-        match tokens.first().unwrap() {
-            TokenData::Parenthesis {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
                 opening: '}',
                 is_opening: false,
-            } => {
+            }) => {
                 tokens.remove(0);
                 break;
             }
-            TokenData::Newline => {
+            Some(TokenData::Newline) => {
                 tokens.remove(0);
             }
-            _ => {
+            Some(_) => {
                 let statement = parse_statement(tokens)?;
                 body.push(statement);
             }
+            None => return Err(anyhow::anyhow!("unexpected end of file in function body")),
         }
     }
 
@@ -805,18 +808,18 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Struc
 
     let mut struct_fields = vec![];
     loop {
-        match tokens.first().unwrap() {
-            TokenData::Parenthesis {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
                 opening: '}',
                 is_opening: false,
-            } => {
+            }) => {
                 tokens.remove(0);
                 break;
             }
-            TokenData::Newline => {
+            Some(TokenData::Newline) => {
                 tokens.remove(0);
             }
-            _ => {
+            Some(_) => {
                 let field_name = match tokens.remove(0) {
                     TokenData::Word(name) => name,
                     _ => return Err(anyhow::anyhow!("expected field name")),
@@ -850,6 +853,11 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Struc
                     name: field_name,
                     ty,
                 });
+            }
+            None => {
+                return Err(anyhow::anyhow!(
+                    "unexpected end of file in struct declaration"
+                ))
             }
         }
     }
@@ -1504,14 +1512,34 @@ fn parse_struct_value(
     tokens: &mut Vec<TokenData>,
     struct_name: String,
 ) -> anyhow::Result<Expression> {
-    tokens.remove(0);
-    assert_eq!(
-        tokens.remove(0),
-        TokenData::Parenthesis {
+    match tokens.first() {
+        Some(TokenData::Word(keyword)) if keyword == "struct" => {
+            tokens.remove(0);
+        }
+        Some(token) => {
+            return Err(anyhow::anyhow!(
+                "expected `struct` keyword after type name in struct literal, got {:?}",
+                token
+            ));
+        }
+        None => return Err(anyhow::anyhow!("unexpected end of file in struct literal")),
+    }
+
+    match tokens.first() {
+        Some(TokenData::Parenthesis {
             opening: '{',
             is_opening: true,
+        }) => {
+            tokens.remove(0);
         }
-    );
+        Some(token) => {
+            return Err(anyhow::anyhow!(
+                "expected opening '{{' in struct literal, got {:?}",
+                token
+            ));
+        }
+        None => return Err(anyhow::anyhow!("unexpected end of file in struct literal")),
+    }
 
     let mut fields = vec![];
     while tokens.get(0)
@@ -1530,7 +1558,10 @@ fn parse_struct_value(
             TokenData::Word(name) => name,
             _ => return Err(anyhow::anyhow!("expected field name")),
         };
-        assert_eq!(tokens.remove(0), TokenData::Symbols(":".to_string()));
+        anyhow::ensure!(
+            tokens.remove(0) == TokenData::Symbols(":".to_string()),
+            "expected ':' after struct field name"
+        );
 
         fields.push((field_name, parse_expression(tokens, 0)?));
 
@@ -1564,6 +1595,11 @@ fn parse_struct_value(
 }
 
 fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
+    if tokens.is_empty() {
+        return Err(anyhow::anyhow!(
+            "unexpected end of file while parsing expression"
+        ));
+    }
     let next = tokens.remove(0);
     match next {
         TokenData::Symbols(s) if s == "!" => {
@@ -1633,10 +1669,22 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
             Some(TokenData::Symbols(s)) if s == "." => {
                 trace!("Parsing field access {:?}", lhs);
                 tokens.remove(0); // Consume '.'
-                let field_name = expect_identifier(tokens.remove(0))?;
+                let field_token = if tokens.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "unexpected end of file after '.' in expression"
+                    ));
+                } else {
+                    tokens.remove(0)
+                };
+                let field_name = expect_identifier(field_token)?;
                 let struct_variable = match lhs {
                     Expression::Variable(s) => s,
-                    _ => panic!("Expected field access or variable"),
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "expected variable before '.', got {:?}",
+                            other
+                        ))
+                    }
                 };
                 lhs = Expression::FieldAccess {
                     struct_variable,
@@ -2554,6 +2602,63 @@ fun main() -> I32 {
         assert!(
             err.to_string()
                 .contains("`comptime` declarations are only allowed at top level"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_struct_literal_missing_brace_without_panicking() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+fun main() -> I32 {
+	c = Counter struct value: 1
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("malformed struct literal must fail");
+        assert!(
+            err.to_string()
+                .contains("expected opening '{' in struct literal"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_field_access_on_non_variable_without_panicking() {
+        let source = r#"
+fun main() -> I32 {
+	x = (1 + 2).value
+	return 0
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("invalid field access lhs must fail");
+        assert!(
+            err.to_string().contains("expected variable before '.'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_function_body_without_panicking() {
+        let source = r#"
+fun main() -> I32 {
+	return 0
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("unterminated function body must fail");
+        assert!(
+            err.to_string().contains("unexpected end of file in function body"),
             "unexpected error: {err}"
         );
     }

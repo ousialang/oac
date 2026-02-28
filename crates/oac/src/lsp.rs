@@ -6,7 +6,11 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::{flat_imports, ir, parser, tokenizer};
+use crate::diagnostics::{diagnostic_from_anyhow, diagnostic_from_tokenizer_error};
+use crate::{
+    diagnostics::CompilerDiagnostic, diagnostics::DiagnosticStage, flat_imports, ir, parser,
+    tokenizer,
+};
 
 #[derive(Debug)]
 struct DocumentState {
@@ -385,26 +389,55 @@ fn publish_diagnostics(
 }
 
 fn analyze_document(source: &str, source_path: Option<&Path>) -> Vec<LspDiagnostic> {
+    analyze_document_compiler_diagnostics(source, source_path)
+        .iter()
+        .map(compiler_diagnostic_to_lsp)
+        .collect()
+}
+
+fn analyze_document_compiler_diagnostics(
+    source: &str,
+    source_path: Option<&Path>,
+) -> Vec<CompilerDiagnostic> {
     let tokens = match tokenizer::tokenize(source.to_string()) {
         Ok(tokens) => tokens,
         Err(err) => {
-            return vec![syntax_error_diagnostic(
-                err.message,
-                err.position.line,
-                err.position.column,
+            return vec![diagnostic_from_tokenizer_error(
+                "OAC-TOKENIZE-003",
+                source,
+                source_path,
+                &err,
             )]
         }
     };
 
     let ast = match parser::parse(tokens) {
         Ok(ast) => ast,
-        Err(err) => return vec![generic_error_diagnostic(format!("parse error: {err}"))],
+        Err(err) => {
+            return vec![diagnostic_from_anyhow(
+                DiagnosticStage::Parse,
+                "OAC-PARSE-003",
+                "failed to parse document",
+                &err,
+                source_path,
+                Some(source),
+            )]
+        }
     };
 
     let merged_ast = if let Some(source_path) = source_path {
         match flat_imports::resolve_ast(ast, source_path) {
             Ok(ast) => ast,
-            Err(err) => return vec![generic_error_diagnostic(format!("import error: {err}"))],
+            Err(err) => {
+                return vec![diagnostic_from_anyhow(
+                    DiagnosticStage::Import,
+                    "OAC-IMPORT-003",
+                    "failed to resolve imports",
+                    &err,
+                    Some(source_path),
+                    Some(source),
+                )]
+            }
         }
     } else {
         ast
@@ -415,48 +448,98 @@ fn analyze_document(source: &str, source_path: Option<&Path>) -> Vec<LspDiagnost
         if err.to_string().contains("main function not defined") {
             return vec![];
         }
-        return vec![generic_error_diagnostic(format!("type error: {err}"))];
+        return vec![diagnostic_from_anyhow(
+            DiagnosticStage::Resolve,
+            "OAC-RESOLVE-002",
+            "failed to resolve/type-check document",
+            &err,
+            source_path,
+            Some(source),
+        )];
     }
 
     vec![]
 }
 
-fn syntax_error_diagnostic(
-    message: String,
-    line_1_based: u32,
-    column_1_based: u32,
-) -> LspDiagnostic {
-    let line = line_1_based.saturating_sub(1);
-    let character = column_1_based.saturating_sub(1);
+fn compiler_diagnostic_to_lsp(diagnostic: &CompilerDiagnostic) -> LspDiagnostic {
+    let message = if let Some(label) = diagnostic.labels.first() {
+        if !label.message.is_empty() {
+            label.message.clone()
+        } else {
+            diagnostic.message.clone()
+        }
+    } else if let Some(note) = diagnostic.notes.first() {
+        format!("{}: {}", diagnostic.message, note)
+    } else {
+        diagnostic.message.clone()
+    };
+
+    let range = diagnostic
+        .labels
+        .first()
+        .and_then(|label| {
+            diagnostic
+                .sources
+                .get(&label.file_id)
+                .map(|source| byte_span_to_lsp_range(source, label.span.start, label.span.end))
+        })
+        .unwrap_or_else(default_lsp_range);
+
     LspDiagnostic {
-        range: LspRange {
-            start: LspPosition { line, character },
-            end: LspPosition {
-                line,
-                character: character + 1,
-            },
-        },
+        range,
         severity: 1,
         source: "oac".to_string(),
         message,
     }
 }
 
-fn generic_error_diagnostic(message: String) -> LspDiagnostic {
-    LspDiagnostic {
-        range: LspRange {
-            start: LspPosition {
-                line: 0,
-                character: 0,
-            },
-            end: LspPosition {
-                line: 0,
-                character: 1,
-            },
+fn byte_span_to_lsp_range(source: &str, start: usize, end: usize) -> LspRange {
+    let clamped_start = start.min(source.len());
+    let clamped_end = end.max(start.saturating_add(1)).min(source.len());
+    let start_pos = byte_offset_to_lsp_position(source, clamped_start);
+    let mut end_pos = byte_offset_to_lsp_position(source, clamped_end);
+
+    if end_pos.line == start_pos.line && end_pos.character <= start_pos.character {
+        end_pos.character = start_pos.character + 1;
+    }
+
+    LspRange {
+        start: start_pos,
+        end: end_pos,
+    }
+}
+
+fn byte_offset_to_lsp_position(source: &str, offset: usize) -> LspPosition {
+    let mut line = 0_u32;
+    let mut character = 0_u32;
+    let mut current_offset = 0_usize;
+
+    for ch in source.chars() {
+        if current_offset >= offset {
+            break;
+        }
+        current_offset += ch.len_utf8();
+        if ch == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += 1;
+        }
+    }
+
+    LspPosition { line, character }
+}
+
+fn default_lsp_range() -> LspRange {
+    LspRange {
+        start: LspPosition {
+            line: 0,
+            character: 0,
         },
-        severity: 1,
-        source: "oac".to_string(),
-        message,
+        end: LspPosition {
+            line: 0,
+            character: 1,
+        },
     }
 }
 

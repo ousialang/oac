@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ariadne = "0.5"
 qbe = { path = "../qbe-rs" }
 thiserror = "1"

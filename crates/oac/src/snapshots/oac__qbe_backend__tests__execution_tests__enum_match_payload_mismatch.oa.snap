@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-match arm for non-payload variant None cannot bind a payload
+[OAC-RESOLVE-001] Error: error[resolve:OAC-RESOLVE-001]: failed to resolve/type-check program: match arm for non-payload variant None cannot bind a payload

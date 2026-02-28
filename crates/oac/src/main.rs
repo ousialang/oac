@@ -1,5 +1,6 @@
 mod builtins;
 mod comptime;
+mod diagnostics;
 mod flat_imports;
 mod ir;
 mod lsp;
@@ -17,31 +18,68 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use clap::Parser;
+use diagnostics::{
+    diagnostic_from_anyhow, diagnostic_from_panic, diagnostic_from_tokenizer_error,
+    CompilerDiagnostic, CompilerDiagnosticBundle, DiagnosticStage,
+};
 use tracing::info;
 use tracing::{debug, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer};
 
-fn main() -> anyhow::Result<()> {
-    initialize_logging();
+fn main() {
+    let outcome = std::panic::catch_unwind(|| {
+        initialize_logging();
+        run()
+    });
 
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(bundle)) => {
+            eprintln!("{}", bundle.render_terminal_auto());
+            std::process::exit(1);
+        }
+        Err(payload) => {
+            let bundle = CompilerDiagnosticBundle::single(diagnostic_from_panic(payload));
+            eprintln!("{}", bundle.render_terminal_auto());
+            std::process::exit(101);
+        }
+    }
+}
+
+fn run() -> Result<(), CompilerDiagnosticBundle> {
     let oac = Oac::parse();
 
     match oac.subcmd {
         OacSubcommand::Build(build) => {
-            let current_dir = std::env::current_dir()?;
+            let current_dir = std::env::current_dir().map_err(|err| {
+                io_stage_error("OAC-IO-001", "failed to get current directory", err)
+            })?;
             compile(&current_dir, build)?;
         }
         OacSubcommand::Test(test) => {
-            let current_dir = std::env::current_dir()?;
+            let current_dir = std::env::current_dir().map_err(|err| {
+                io_stage_error("OAC-IO-002", "failed to get current directory", err)
+            })?;
             run_tests(&current_dir, test)?;
         }
         OacSubcommand::Lsp(_) => {
-            lsp::run()?;
+            lsp::run().map_err(|err| {
+                CompilerDiagnosticBundle::from_anyhow(
+                    DiagnosticStage::Internal,
+                    "OAC-LSP-001",
+                    "language server failed",
+                    &err,
+                    None,
+                    None,
+                )
+            })?;
         }
         OacSubcommand::RiscvSmt(riscv_smt_opts) => {
-            let current_dir = std::env::current_dir()?;
+            let current_dir = std::env::current_dir().map_err(|err| {
+                io_stage_error("OAC-IO-003", "failed to get current directory", err)
+            })?;
             process_riscv_smt(&current_dir, riscv_smt_opts)?;
         }
     }
@@ -49,10 +87,22 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn process_riscv_smt(_current_dir: &Path, opts: RiscvSmtOpts) -> anyhow::Result<()> {
+fn process_riscv_smt(
+    _current_dir: &Path,
+    opts: RiscvSmtOpts,
+) -> Result<(), CompilerDiagnosticBundle> {
     let elf_path = Path::new(&opts.elf_file);
     if opts.check {
-        let result = riscv_smt::check_returns_zero_within_cycles(elf_path)?;
+        let result = riscv_smt::check_returns_zero_within_cycles(elf_path).map_err(|err| {
+            CompilerDiagnosticBundle::from_anyhow(
+                DiagnosticStage::Resolve,
+                "OAC-RISCV-001",
+                "failed to run RISC-V SMT check",
+                &err,
+                None,
+                None,
+            )
+        })?;
         if result {
             println!(
                 "Program {} is SATISFIABLE to return 0 within {} cycles.",
@@ -67,9 +117,25 @@ fn process_riscv_smt(_current_dir: &Path, opts: RiscvSmtOpts) -> anyhow::Result<
             );
         }
     } else {
-        let smt_expression = riscv_smt::elf_to_smt_returns_zero_within_cycles(elf_path)?;
+        let smt_expression =
+            riscv_smt::elf_to_smt_returns_zero_within_cycles(elf_path).map_err(|err| {
+                CompilerDiagnosticBundle::from_anyhow(
+                    DiagnosticStage::Resolve,
+                    "OAC-RISCV-002",
+                    "failed to build RISC-V SMT expression",
+                    &err,
+                    None,
+                    None,
+                )
+            })?;
         if let Some(output_path) = opts.output {
-            std::fs::write(&output_path, smt_expression)?;
+            std::fs::write(&output_path, smt_expression).map_err(|err| {
+                io_stage_error(
+                    "OAC-IO-004",
+                    format!("failed to write SMT output {}", output_path),
+                    err,
+                )
+            })?;
             info!("SMT expression written to {}", output_path);
         } else {
             println!("{}", smt_expression);
@@ -78,24 +144,86 @@ fn process_riscv_smt(_current_dir: &Path, opts: RiscvSmtOpts) -> anyhow::Result<
     Ok(())
 }
 
-fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
+fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBundle> {
     let target_dir = current_dir.join("target").join("oac");
-    std::fs::create_dir_all(&target_dir)?;
+    std::fs::create_dir_all(&target_dir).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-005",
+            format!("failed to create target directory {}", target_dir.display()),
+            err,
+        )
+    })?;
 
     let source_path = Path::new(&build.source);
-    let source = std::fs::read_to_string(source_path)?;
+    let source = std::fs::read_to_string(source_path).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-006",
+            format!("failed to read source {}", source_path.display()),
+            err,
+        )
+    })?;
     trace!(source_len = source.len(), "Read input file");
 
-    let tokens = tokenizer::tokenize(source)?;
+    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
+        CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
+            "OAC-TOKENIZE-001",
+            &source,
+            Some(source_path),
+            &err,
+        ))
+    })?;
     let tokens_path = target_dir.join("tokens.json");
-    std::fs::write(&tokens_path, serde_json::to_string_pretty(&tokens)?)?;
+    let tokens_json = serde_json::to_string_pretty(&tokens)
+        .map_err(|err| io_stage_error("OAC-IO-007", "failed to serialize tokens", err))?;
+    std::fs::write(&tokens_path, tokens_json).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-008",
+            format!("failed to write {}", tokens_path.display()),
+            err,
+        )
+    })?;
     trace!(tokens_path = %tokens_path.display(), "Tokenized source file");
 
-    let root_ast = parser::parse(tokens)?;
-    let mut ast = flat_imports::resolve_ast(root_ast, source_path)?;
-    comptime::execute_comptime_applies(&mut ast)?;
+    let root_ast = parser::parse(tokens).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Parse,
+            "OAC-PARSE-001",
+            "failed to parse source",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+    let mut ast = flat_imports::resolve_ast(root_ast, source_path).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Import,
+            "OAC-IMPORT-001",
+            "failed to resolve imports",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+    comptime::execute_comptime_applies(&mut ast).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Comptime,
+            "OAC-COMPTIME-001",
+            "failed to execute comptime applies",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
     let ast_path = target_dir.join("ast.json");
-    std::fs::write(&ast_path, serde_json::to_string_pretty(&ast)?)?;
+    let ast_json = serde_json::to_string_pretty(&ast)
+        .map_err(|err| io_stage_error("OAC-IO-009", "failed to serialize AST", err))?;
+    std::fs::write(&ast_path, ast_json).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-010",
+            format!("failed to write {}", ast_path.display()),
+            err,
+        )
+    })?;
     debug!(ast_path = %ast_path.display(), "Parsed source file");
 
     compile_ast_to_executable(&target_dir, ast, build.arch.as_deref(), "app")?;
@@ -103,33 +231,118 @@ fn compile(current_dir: &Path, build: Build) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_tests(current_dir: &Path, test: Test) -> anyhow::Result<()> {
+fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBundle> {
     let target_dir = current_dir.join("target").join("oac").join("test");
-    std::fs::create_dir_all(&target_dir)?;
+    std::fs::create_dir_all(&target_dir).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-011",
+            format!(
+                "failed to create test target directory {}",
+                target_dir.display()
+            ),
+            err,
+        )
+    })?;
 
     let source_path = Path::new(&test.source);
-    let source = std::fs::read_to_string(source_path)?;
+    let source = std::fs::read_to_string(source_path).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-012",
+            format!("failed to read source {}", source_path.display()),
+            err,
+        )
+    })?;
     trace!(source_len = source.len(), "Read test source file");
 
-    let tokens = tokenizer::tokenize(source)?;
+    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
+        CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
+            "OAC-TOKENIZE-002",
+            &source,
+            Some(source_path),
+            &err,
+        ))
+    })?;
     let tokens_path = target_dir.join("tokens.json");
-    std::fs::write(&tokens_path, serde_json::to_string_pretty(&tokens)?)?;
+    let tokens_json = serde_json::to_string_pretty(&tokens)
+        .map_err(|err| io_stage_error("OAC-IO-013", "failed to serialize tokens", err))?;
+    std::fs::write(&tokens_path, tokens_json).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-014",
+            format!("failed to write {}", tokens_path.display()),
+            err,
+        )
+    })?;
     trace!(tokens_path = %tokens_path.display(), "Tokenized test source file");
 
-    let root_ast = parser::parse(tokens)?;
-    let mut ast = flat_imports::resolve_ast(root_ast, source_path)?;
-    comptime::execute_comptime_applies(&mut ast)?;
+    let root_ast = parser::parse(tokens).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Parse,
+            "OAC-PARSE-002",
+            "failed to parse test source",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+    let mut ast = flat_imports::resolve_ast(root_ast, source_path).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Import,
+            "OAC-IMPORT-002",
+            "failed to resolve test imports",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+    comptime::execute_comptime_applies(&mut ast).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Comptime,
+            "OAC-COMPTIME-002",
+            "failed to execute test comptime applies",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
 
-    let lowered = test_framework::lower_tests_to_program(ast)?;
+    let lowered = test_framework::lower_tests_to_program(ast).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Resolve,
+            "OAC-TEST-001",
+            "failed to lower test declarations",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
     let test_count = lowered.test_names.len();
     let lowered_ast = lowered.ast;
     let ast_path = target_dir.join("ast.json");
-    std::fs::write(&ast_path, serde_json::to_string_pretty(&lowered_ast)?)?;
+    let ast_json = serde_json::to_string_pretty(&lowered_ast)
+        .map_err(|err| io_stage_error("OAC-IO-015", "failed to serialize lowered AST", err))?;
+    std::fs::write(&ast_path, ast_json).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-016",
+            format!("failed to write {}", ast_path.display()),
+            err,
+        )
+    })?;
     debug!(ast_path = %ast_path.display(), "Lowered test AST");
 
     let executable_path = compile_ast_to_executable(&target_dir, lowered_ast, None, "app")?;
 
-    let output = std::process::Command::new(&executable_path).output()?;
+    let output = std::process::Command::new(&executable_path)
+        .output()
+        .map_err(|err| {
+            io_stage_error(
+                "OAC-IO-017",
+                format!(
+                    "failed to execute test binary {}",
+                    executable_path.display()
+                ),
+                err,
+            )
+        })?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
     eprint!("{}", String::from_utf8_lossy(&output.stderr));
     if !output.status.success() {
@@ -137,11 +350,16 @@ fn run_tests(current_dir: &Path, test: Test) -> anyhow::Result<()> {
             .status
             .code()
             .map_or("signal".to_string(), |code| code.to_string());
-        return Err(anyhow::anyhow!(
-            "test run failed after launching {} test(s) (exit code: {})",
-            test_count,
-            exit_code
-        ));
+        let diagnostic = CompilerDiagnostic::new(
+            "OAC-TEST-002",
+            DiagnosticStage::Io,
+            format!(
+                "test run failed after launching {} test(s) (exit code: {})",
+                test_count, exit_code
+            ),
+        )
+        .with_note("runtime assertion failures exit with code 242");
+        return Err(CompilerDiagnosticBundle::single(diagnostic));
     }
 
     println!("test run passed: {} test(s)", test_count);
@@ -153,19 +371,71 @@ fn compile_ast_to_executable(
     ast: parser::Ast,
     arch: Option<&str>,
     executable_name: &str,
-) -> anyhow::Result<PathBuf> {
-    let ir = ir::resolve(ast)?;
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    let ir = ir::resolve(ast).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Resolve,
+            "OAC-RESOLVE-001",
+            "failed to resolve/type-check program",
+            err,
+            None,
+            None,
+        )
+    })?;
     let ir_path = target_dir.join("ir.json");
-    std::fs::write(&ir_path, serde_json::to_string_pretty(&ir)?)?;
+    let ir_json = serde_json::to_string_pretty(&ir)
+        .map_err(|err| io_stage_error("OAC-IO-018", "failed to serialize IR", err))?;
+    std::fs::write(&ir_path, ir_json).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-019",
+            format!("failed to write {}", ir_path.display()),
+            err,
+        )
+    })?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
     let qbe_ir = qbe_backend::compile(ir.clone());
-    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, target_dir)?;
-    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, target_dir)?;
-    reject_proven_non_terminating_main(&qbe_ir)?;
+    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, target_dir).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Prove,
+            "OAC-PROVE-001",
+            "prove obligation verification failed",
+            err,
+            None,
+            None,
+        )
+    })?;
+    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, target_dir).map_err(
+        |err| {
+            stage_error_from_anyhow(
+                DiagnosticStage::StructInvariant,
+                "OAC-INV-001",
+                "struct invariant verification failed",
+                err,
+                None,
+                None,
+            )
+        },
+    )?;
+    reject_proven_non_terminating_main(&qbe_ir).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::LoopClassifier,
+            "OAC-LOOP-001",
+            "loop non-termination classification failed",
+            err,
+            None,
+            None,
+        )
+    })?;
     let qbe_ir_text = qbe_ir.to_string();
 
     let qbe_ir_path = target_dir.join("ir.qbe");
-    std::fs::write(&qbe_ir_path, &qbe_ir_text)?;
+    std::fs::write(&qbe_ir_path, &qbe_ir_text).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-020",
+            format!("failed to write {}", qbe_ir_path.display()),
+            err,
+        )
+    })?;
     info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
 
     let assembly_path = target_dir.join("assembly.s");
@@ -179,19 +449,36 @@ fn compile_ast_to_executable(
         .arg("-o")
         .arg(&assembly_path)
         .arg(&qbe_ir_path)
-        .output()?;
+        .output()
+        .map_err(|err| io_stage_error("OAC-IO-021", "failed to run qbe", err))?;
 
     if !qbe_output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Compilation of QBE IR to assembly failed: {} (valid archs: amd64_sysv, amd64_apple, arm64, arm64_apple, rv64)",
-            String::from_utf8_lossy(&qbe_output.stderr)
-        ));
+        let stderr = String::from_utf8_lossy(&qbe_output.stderr)
+            .trim()
+            .to_string();
+        let diagnostic = CompilerDiagnostic::new(
+            "OAC-QBE-001",
+            DiagnosticStage::Qbe,
+            "compilation of QBE IR to assembly failed",
+        )
+        .with_note("valid archs: amd64_sysv, amd64_apple, arm64, arm64_apple, rv64")
+        .with_note(stderr);
+        return Err(CompilerDiagnosticBundle::single(diagnostic));
     }
 
     debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
 
     let executable_path = target_dir.join(executable_name);
-    let linker_attempts = resolve_linker_attempts(arch)?;
+    let linker_attempts = resolve_linker_attempts(arch).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Zig,
+            "OAC-ZIG-001",
+            "failed to resolve linker configuration",
+            err,
+            None,
+            None,
+        )
+    })?;
     let mut failures = Vec::new();
 
     for attempt in linker_attempts {
@@ -237,11 +524,18 @@ fn compile_ast_to_executable(
         ));
     }
 
-    Err(anyhow::anyhow!(
-        "Compilation of assembly to executable failed after trying {} linker command(s):\n{}",
-        failures.len(),
-        failures.join("\n")
-    ))
+    let mut diagnostic = CompilerDiagnostic::new(
+        "OAC-ZIG-002",
+        DiagnosticStage::Zig,
+        format!(
+            "compilation of assembly to executable failed after trying {} linker command(s)",
+            failures.len()
+        ),
+    );
+    for failure in failures {
+        diagnostic = diagnostic.with_note(failure);
+    }
+    Err(CompilerDiagnosticBundle::single(diagnostic))
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -445,14 +739,46 @@ fn reject_proven_non_terminating_main(qbe_module: &qbe::Module) -> anyhow::Resul
 }
 fn initialize_logging() {
     let env_filter = env::var("RUST_LOG").unwrap_or_default();
+    let parsed_filter = EnvFilter::from_str(&env_filter).unwrap_or_else(|_| EnvFilter::default());
 
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_filter(EnvFilter::from_str(&env_filter).unwrap()),
+                .with_filter(parsed_filter),
         )
         .init();
+}
+
+fn io_stage_error(
+    code: &str,
+    message: impl Into<String>,
+    err: impl Into<anyhow::Error>,
+) -> CompilerDiagnosticBundle {
+    let error = err.into();
+    let mut diagnostic = CompilerDiagnostic::new(code, DiagnosticStage::Io, message.into());
+    for cause in error.chain() {
+        diagnostic = diagnostic.with_note(cause.to_string());
+    }
+    CompilerDiagnosticBundle::single(diagnostic)
+}
+
+fn stage_error_from_anyhow(
+    stage: DiagnosticStage,
+    code: &str,
+    message: impl Into<String>,
+    err: anyhow::Error,
+    source_path: Option<&Path>,
+    source_text: Option<&str>,
+) -> CompilerDiagnosticBundle {
+    CompilerDiagnosticBundle::single(diagnostic_from_anyhow(
+        stage,
+        code,
+        message,
+        &err,
+        source_path,
+        source_text,
+    ))
 }
 
 #[derive(clap::Parser)]
