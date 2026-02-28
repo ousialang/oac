@@ -56,6 +56,24 @@ npm run lint
 
 When debugging extension startup, verify the server command is exactly `oac lsp` (no extra `--stdio` argument).
 
+Proving benchmark suite (report-only regression tracking):
+
+```bash
+# Full curated suite (~30s target on developer machines)
+cargo run -p oac -- bench-prove
+
+# Quick suite for local iteration
+cargo run -p oac -- bench-prove --suite quick --iterations 1
+
+# Recompute committed baseline (deterministic rewrite)
+cargo run -p oac -- bench-prove --update-baseline
+```
+
+Benchmark artifacts:
+- committed baseline: `crates/oac/bench/prove_baseline.json`
+- default report output: `target/oac/bench/prove/latest.json`
+- per-run isolated fixture artifacts: `target/oac/bench/runs/<fixture>/iter_<n>/`
+
 ## Local Git Hooks
 
 This repository tracks local hooks under `.githooks/`.
@@ -79,7 +97,6 @@ Hook behavior:
 Bypass for exceptional WIP cases:
 - `git commit --no-verify`
 - `git push --no-verify`
-
 ## Snapshot-Based Testing
 
 Key tests:
@@ -129,6 +146,8 @@ Key tests:
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
 - Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
+- `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags.
+- `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, and deterministic `--update-baseline` rewrites (using a mocked fixture runner).
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Fixture compile/execute work is parallelized across worker threads, while snapshot assertions are sorted and applied deterministically afterward. Default worker count is `min(available_parallelism, 8)` and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>`. Compiler-error snapshots capture Ariadne plain-report output from the shared diagnostics layer.
 - `crates/oac/src/qbe_backend.rs` also enforces snapshot hygiene contracts for execution snapshots: no committed `*.snap.new` files, no orphan execution snapshots without matching fixtures, and no duplicated Ariadne prefix artifacts (`Error: error[...]`) in snapshot content.

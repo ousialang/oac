@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "thresholds": {
+    "regression_pct": 20.0,
+    "regression_ms": 200
+  },
+  "fixtures": [
+    {
+      "id": "prove_pass",
+      "source": "crates/oac/execution_tests/prove_pass.oa",
+      "expected_code": null,
+      "baseline_elapsed_ms": 261,
+      "baseline_prove_smt2_count": 1,
+      "baseline_prove_smt2_bytes": 5242,
+      "baseline_inv_smt2_count": 0,
+      "baseline_inv_smt2_bytes": 0
+    },
+    {
+      "id": "prove_fail",
+      "source": "crates/oac/execution_tests/prove_fail.oa",
+      "expected_code": "OAC-PROVE-001",
+      "baseline_elapsed_ms": 27,
+      "baseline_prove_smt2_count": 1,
+      "baseline_prove_smt2_bytes": 3965,
+      "baseline_inv_smt2_count": 0,
+      "baseline_inv_smt2_bytes": 0
+    },
+    {
+      "id": "struct_invariant_pass",
+      "source": "crates/oac/execution_tests/struct_invariant_pass.oa",
+      "expected_code": null,
+      "baseline_elapsed_ms": 1722,
+      "baseline_prove_smt2_count": 0,
+      "baseline_prove_smt2_bytes": 0,
+      "baseline_inv_smt2_count": 1,
+      "baseline_inv_smt2_bytes": 23023985
+    },
+    {
+      "id": "struct_invariant_fail",
+      "source": "crates/oac/execution_tests/struct_invariant_fail.oa",
+      "expected_code": "OAC-INV-001",
+      "baseline_elapsed_ms": 1460,
+      "baseline_prove_smt2_count": 0,
+      "baseline_prove_smt2_bytes": 0,
+      "baseline_inv_smt2_count": 1,
+      "baseline_inv_smt2_bytes": 23020080
+    },
+    {
+      "id": "struct_invariant_pass_complex",
+      "source": "crates/oac/execution_tests/struct_invariant_pass_complex.oa",
+      "expected_code": "OAC-INV-001",
+      "baseline_elapsed_ms": 13053,
+      "baseline_prove_smt2_count": 0,
+      "baseline_prove_smt2_bytes": 0,
+      "baseline_inv_smt2_count": 1,
+      "baseline_inv_smt2_bytes": 23379681
+    },
+    {
+      "id": "template_hash_table_i32",
+      "source": "crates/oac/execution_tests/template_hash_table_i32.oa",
+      "expected_code": "OAC-INV-001",
+      "baseline_elapsed_ms": 11015,
+      "baseline_prove_smt2_count": 0,
+      "baseline_prove_smt2_bytes": 0,
+      "baseline_inv_smt2_count": 1,
+      "baseline_inv_smt2_bytes": 811229280
+    }
+  ]
+}

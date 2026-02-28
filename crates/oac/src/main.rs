@@ -1,4 +1,5 @@
 mod ast_walk;
+mod bench_prove;
 mod builtins;
 mod comptime;
 mod diagnostics;
@@ -87,6 +88,12 @@ fn run() -> Result<(), CompilerDiagnosticBundle> {
             })?;
             process_riscv_smt(&current_dir, riscv_smt_opts)?;
         }
+        OacSubcommand::BenchProve(bench_opts) => {
+            let current_dir = std::env::current_dir().map_err(|err| {
+                io_stage_error("OAC-IO-024", "failed to get current directory", err)
+            })?;
+            bench_prove::run(&current_dir, bench_opts)?;
+        }
     }
 
     Ok(())
@@ -149,20 +156,28 @@ fn process_riscv_smt(
     Ok(())
 }
 
-struct FrontendPipelineCodes<'a> {
-    read_source_io_code: &'a str,
-    tokenize_code: &'a str,
-    serialize_tokens_io_code: &'a str,
-    write_tokens_io_code: &'a str,
-    parse_code: &'a str,
-    parse_message: &'a str,
-    import_code: &'a str,
-    import_message: &'a str,
-    comptime_code: &'a str,
-    comptime_message: &'a str,
+#[derive(Clone, Copy)]
+pub(crate) struct FrontendPipelineCodes<'a> {
+    pub read_source_io_code: &'a str,
+    pub tokenize_code: &'a str,
+    pub serialize_tokens_io_code: &'a str,
+    pub write_tokens_io_code: &'a str,
+    pub parse_code: &'a str,
+    pub parse_message: &'a str,
+    pub import_code: &'a str,
+    pub import_message: &'a str,
+    pub comptime_code: &'a str,
+    pub comptime_message: &'a str,
 }
 
-fn parse_source_to_ast_with_artifacts(
+#[derive(Clone, Copy)]
+pub(crate) struct CompileSourceCodes<'a> {
+    pub frontend: FrontendPipelineCodes<'a>,
+    pub serialize_ast_io_code: &'a str,
+    pub write_ast_io_code: &'a str,
+}
+
+pub(crate) fn parse_source_to_ast_with_artifacts(
     source_path: &Path,
     target_dir: &Path,
     codes: &FrontendPipelineCodes<'_>,
@@ -235,6 +250,38 @@ fn parse_source_to_ast_with_artifacts(
     Ok((source, ast))
 }
 
+pub(crate) fn compile_source_with_artifacts(
+    source_path: &Path,
+    target_dir: &Path,
+    arch: Option<&str>,
+    executable_name: &str,
+    codes: CompileSourceCodes<'_>,
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    let (source, ast) =
+        parse_source_to_ast_with_artifacts(source_path, target_dir, &codes.frontend)?;
+    let ast_path = target_dir.join("ast.json");
+    let ast_json = serde_json::to_string_pretty(&ast).map_err(|err| {
+        io_stage_error(codes.serialize_ast_io_code, "failed to serialize AST", err)
+    })?;
+    std::fs::write(&ast_path, ast_json).map_err(|err| {
+        io_stage_error(
+            codes.write_ast_io_code,
+            format!("failed to write {}", ast_path.display()),
+            err,
+        )
+    })?;
+    debug!(ast_path = %ast_path.display(), "Parsed source file");
+
+    compile_ast_to_executable(
+        target_dir,
+        ast,
+        arch,
+        executable_name,
+        Some(source_path),
+        Some(&source),
+    )
+}
+
 fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBundle> {
     let target_dir = current_dir.join("target").join("oac");
     std::fs::create_dir_all(&target_dir).map_err(|err| {
@@ -246,41 +293,27 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
     })?;
 
     let source_path = Path::new(&build.source);
-    let (source, ast) = parse_source_to_ast_with_artifacts(
+    compile_source_with_artifacts(
         source_path,
         &target_dir,
-        &FrontendPipelineCodes {
-            read_source_io_code: "OAC-IO-006",
-            tokenize_code: "OAC-TOKENIZE-001",
-            serialize_tokens_io_code: "OAC-IO-007",
-            write_tokens_io_code: "OAC-IO-008",
-            parse_code: "OAC-PARSE-001",
-            parse_message: "failed to parse source",
-            import_code: "OAC-IMPORT-001",
-            import_message: "failed to resolve imports",
-            comptime_code: "OAC-COMPTIME-001",
-            comptime_message: "failed to execute comptime applies",
-        },
-    )?;
-    let ast_path = target_dir.join("ast.json");
-    let ast_json = serde_json::to_string_pretty(&ast)
-        .map_err(|err| io_stage_error("OAC-IO-009", "failed to serialize AST", err))?;
-    std::fs::write(&ast_path, ast_json).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-010",
-            format!("failed to write {}", ast_path.display()),
-            err,
-        )
-    })?;
-    debug!(ast_path = %ast_path.display(), "Parsed source file");
-
-    compile_ast_to_executable(
-        &target_dir,
-        ast,
         build.arch.as_deref(),
         "app",
-        Some(source_path),
-        Some(&source),
+        CompileSourceCodes {
+            frontend: FrontendPipelineCodes {
+                read_source_io_code: "OAC-IO-006",
+                tokenize_code: "OAC-TOKENIZE-001",
+                serialize_tokens_io_code: "OAC-IO-007",
+                write_tokens_io_code: "OAC-IO-008",
+                parse_code: "OAC-PARSE-001",
+                parse_message: "failed to parse source",
+                import_code: "OAC-IMPORT-001",
+                import_message: "failed to resolve imports",
+                comptime_code: "OAC-COMPTIME-001",
+                comptime_message: "failed to execute comptime applies",
+            },
+            serialize_ast_io_code: "OAC-IO-009",
+            write_ast_io_code: "OAC-IO-010",
+        },
     )?;
 
     Ok(())
@@ -385,7 +418,7 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
     Ok(())
 }
 
-fn compile_ast_to_executable(
+pub(crate) fn compile_ast_to_executable(
     target_dir: &Path,
     ast: parser::Ast,
     arch: Option<&str>,
@@ -814,6 +847,7 @@ enum OacSubcommand {
     Test(Test),
     Lsp(LspOpts),
     RiscvSmt(RiscvSmtOpts),
+    BenchProve(bench_prove::BenchProveOpts),
 }
 
 #[derive(clap::Parser)]
@@ -853,8 +887,10 @@ struct RiscvSmtOpts {
 #[cfg(test)]
 mod tests {
     use super::{
-        reject_proven_non_terminating_main, resolve_linker_attempts_for_config, LinkerAttempt,
+        reject_proven_non_terminating_main, resolve_linker_attempts_for_config, LinkerAttempt, Oac,
+        OacSubcommand,
     };
+    use clap::Parser;
     use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
 
     fn temp(name: &str) -> Value {
@@ -979,6 +1015,54 @@ mod tests {
         ]);
 
         reject_proven_non_terminating_main(&module).expect("unknown loops should pass");
+    }
+
+    #[test]
+    fn bench_prove_cli_defaults_are_stable() {
+        let parsed = Oac::parse_from(["oac", "bench-prove"]);
+        match parsed.subcmd {
+            OacSubcommand::BenchProve(opts) => {
+                assert_eq!(opts.suite, crate::bench_prove::BenchSuite::Full);
+                assert_eq!(opts.iterations, 1);
+                assert!(opts.baseline.is_none());
+                assert!(opts.output.is_none());
+                assert!(!opts.update_baseline);
+            }
+            _ => panic!("expected bench-prove subcommand"),
+        }
+    }
+
+    #[test]
+    fn bench_prove_cli_parses_explicit_flags() {
+        let parsed = Oac::parse_from([
+            "oac",
+            "bench-prove",
+            "--suite",
+            "quick",
+            "--iterations",
+            "3",
+            "--baseline",
+            "custom-baseline.json",
+            "--output",
+            "custom-report.json",
+            "--update-baseline",
+        ]);
+        match parsed.subcmd {
+            OacSubcommand::BenchProve(opts) => {
+                assert_eq!(opts.suite, crate::bench_prove::BenchSuite::Quick);
+                assert_eq!(opts.iterations, 3);
+                assert_eq!(
+                    opts.baseline.as_deref(),
+                    Some(std::path::Path::new("custom-baseline.json"))
+                );
+                assert_eq!(
+                    opts.output.as_deref(),
+                    Some(std::path::Path::new("custom-report.json"))
+                );
+                assert!(opts.update_baseline);
+            }
+            _ => panic!("expected bench-prove subcommand"),
+        }
     }
 
     #[test]

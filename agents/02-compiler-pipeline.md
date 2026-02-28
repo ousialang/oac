@@ -8,7 +8,7 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 2. Tokenize with `tokenizer::tokenize`.
 3. Parse with `parser::parse`.
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
-   - CLI `build`/`test` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
+   - CLI `build`/`test`/`bench-prove` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` and `main.rs::compile_source_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
 5. Resolve/type-check with `ir::resolve`.
 6. Lower to QBE with `qbe_backend::compile`.
 7. Verify `prove(...)` obligations with `prove::verify_prove_obligations_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
@@ -53,6 +53,22 @@ Artifacts emitted during test runs:
 - `target/oac/test/assembly.s`
 - `target/oac/test/app`
 - prove/invariant debug artifacts under `target/oac/test/prove/` and `target/oac/test/struct_invariants/` when obligations exist
+
+## End-to-End Bench Flow
+
+Defined in `crates/oac/src/bench_prove.rs` (`run` / `run_with_runner`):
+
+1. Select fixture corpus (`full` or `quick`) and iteration count.
+2. For each fixture+iteration, compile through the same front-end+backend path as `oac build` into isolated targets under `target/oac/bench/runs/<fixture>/iter_<n>/`.
+3. Record elapsed wall time per iteration and collect checker artifact metrics (`prove/*.smt2`, `struct_invariants/*.smt2` count+bytes).
+4. Use median elapsed time per fixture as the reported value.
+5. Compare fixture medians against committed baseline (`crates/oac/bench/prove_baseline.json`) with regression policy `delta_ms >= 200 && delta_pct >= 20.0`.
+6. Emit JSON report (`target/oac/bench/prove/latest.json` by default) plus compact console table.
+7. Optional `--update-baseline` rewrites baseline JSON deterministically in canonical fixture order.
+
+Notes:
+- Timing regressions are report-only in v1 (command still exits success when outcomes match expectations).
+- Unexpected fixture outcomes (unexpected success/failure or wrong diagnostic code) fail the command.
 
 ## Front-End Details
 
@@ -189,6 +205,7 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
+- `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline]`).
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
 - LSP import crawling for project-symbol indexing now reuses `flat_imports::validate_same_dir_oa_import(...)` so editor-side import acceptance matches compiler import semantics.
 - Symbol indexing includes `extern fun` declarations in document symbols.

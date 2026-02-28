@@ -91,6 +91,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - The VS Code extension must launch `oac lsp` without appending `--stdio`; `ousia.server.args` are sanitized to ignore `--stdio`.
 - Top-level tests use declaration syntax: `test "Name" { ... }`.
 - The CLI now includes `oac test <file.oa>`: it lowers `test` declarations into generated helper functions plus a generated `main`, compiles under `target/oac/test/`, and executes tests fail-fast (assert failures exit with `242`).
+- The CLI now also includes `oac bench-prove`: end-to-end proving benchmark runner over curated execution fixtures with suites `full` (default) and `quick`, configurable iterations, optional baseline/report path overrides, and deterministic `--update-baseline` rewriting.
+- Proving benchmark baseline is committed at `crates/oac/bench/prove_baseline.json`; default report output is `target/oac/bench/prove/latest.json`, and isolated per-fixture benchmark run artifacts are emitted under `target/oac/bench/runs/<fixture>/iter_<n>/`.
+- `oac bench-prove` uses report-only timing regression policy in v1 (regression when both `delta_ms >= 200` and `delta_pct >= 20.0`), but still fails fail-closed on unexpected fixture outcomes (unexpected success/failure or diagnostic code mismatch).
 - `prove(cond)` and `assert(cond)` are statement-only builtins with call syntax. `prove` is compile-time (fail-closed); `assert` is runtime and exits with code `242` on failure.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
 - Struct type invariants are optional and support both single and grouped forms with one keyword: `invariant [identifier]? "Human label" for (v: TypeName) { ... }` and `invariant for (v: TypeName) { [identifier]? "Human label" { ... } ... }` (display string required, identifier optional in both forms).

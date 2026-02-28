@@ -16,6 +16,7 @@ Editor tooling in this repository:
 ## High-Value Paths
 
 - `crates/oac/src/main.rs`: CLI entrypoint and build pipeline orchestration.
+- `crates/oac/src/bench_prove.rs`: proving benchmark suite (`oac bench-prove`) with baseline/report handling.
 - `crates/oac/src/diagnostics.rs`: shared compiler diagnostic model and Ariadne rendering used by CLI and LSP.
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
 - `crates/oac/src/ast_walk.rs`: shared AST traversal helpers (expression-path indexing + call walking) reused across resolve and verification passes.
@@ -47,6 +48,7 @@ Editor tooling in this repository:
 - `crates/oac/src/std/std_ref.oa`: pointer wrappers (`Ref[T]`, `Mut[T]`) and typed read/write helper specializations.
 - `crates/oac/src/std/std_clib.oa`: std-owned C interop declarations for `Clib.*` namespaced API via `namespace Clib { extern fun ... }` (resolver keys remain `Clib__*`; replaces compiler hardcoded libc signature JSON).
 - `crates/oac/execution_tests/*.oa`: language behavior fixtures (positive + negative).
+- `crates/oac/bench/prove_baseline.json`: committed proving benchmark baseline used by `oac bench-prove`.
 - `crates/oac/src/snapshots/*.snap`: canonical snapshots for tests.
 - `.github/workflows/ci.yml`: CI checks (`cargo check`, `cargo test`).
 - `.githooks/pre-commit`: local Git hook that formats staged Rust files with nightly `rustfmt`.
