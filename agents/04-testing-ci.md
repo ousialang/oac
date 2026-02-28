@@ -74,6 +74,29 @@ Benchmark artifacts:
 - default report output: `target/oac/bench/prove/latest.json`
 - per-run isolated fixture artifacts: `target/oac/bench/runs/<fixture>/iter_<n>/`
 
+## Local Git Hooks
+
+This repository tracks local hooks under `.githooks/`.
+
+Enable once per clone/worktree:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Install/update formatter toolchain used by `pre-commit`:
+
+```bash
+rustup toolchain install nightly --component rustfmt
+```
+
+Hook behavior:
+- `pre-commit`: formats staged `*.rs` files with nightly `rustfmt` using `rustfmt.toml` (import sorting/grouping enabled for lower merge-conflict churn), then re-stages those files.
+- `pre-push`: no-op placeholder (does not run tests automatically).
+
+Bypass for exceptional WIP cases:
+- `git commit --no-verify`
+- `git push --no-verify`
 ## Snapshot-Based Testing
 
 Key tests:
@@ -108,7 +131,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also includes resolve coverage for builtin pointer-memory helpers (`load_u8`, `load_i32`, `load_i64`, `load_bool`, `store_u8`, `store_i32`, `store_i64`, `store_bool`) with `PtrInt` addresses.
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
 - `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` and `qbe::Module` fixtures) cover CHC/fixedpoint encoding shape (`HORN`, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, interprocedural user-call summaries (including self-recursive user calls), argument-invariant precondition assumptions, and strict rejection of unsupported operations.
-- `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
+- `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`, bounded `strlen`/`strcmp`, bounded `strcpy`, and constrained `open`/`read`/`write`/`close` return modeling) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
 - `crates/qbe-smt/src/lib.rs` also verifies reachable-only encoding behavior (unsupported instructions inside unreachable blocks are ignored).
 - `crates/qbe-smt/src/lib.rs` is also the shared CHC solver entrypoint (`solve_chc_script` and `solve_chc_script_with_diagnostics`) used by struct invariant verification.
@@ -118,9 +141,10 @@ Key tests:
 - `crates/oac/src/diagnostics.rs` tests also enforce diagnostic headline quality for Ariadne plain reports (no duplicated `Error: error[...]` prefixing) and message/cause dedup behavior in `diagnostic_from_anyhow`.
 - `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, and file-URI handling.
 - `crates/oac/src/invariant_metadata.rs` tests cover multi-binding discovery per struct and argument-assumption cross-product expansion when parameter types carry multiple invariants.
-- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, grouped invariant declarations, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, per-`(call-site, invariant)` obligation expansion, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding and fail-closed unknown external calls).
-- `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving, including multi-invariant argument preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), and no-op behavior when no prove sites exist.
+- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, grouped invariant declarations, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, per-`(call-site, invariant)` obligation expansion, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding, modeled string/io CLib calls in checker encoding, and fail-closed unknown external calls).
+- `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving, including multi-invariant argument preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), no-op behavior when no prove sites exist, and checker-encoding coverage for modeled string/io CLib calls.
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
+- Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags.
 - `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, and deterministic `--update-baseline` rewrites (using a mocked fixture runner).

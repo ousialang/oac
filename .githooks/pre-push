@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "pre-push: no test checks configured in local hooks; continuing."

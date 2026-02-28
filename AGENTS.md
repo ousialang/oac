@@ -39,6 +39,8 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 
 - For Rust test execution, use `cargo nextest run` when `cargo-nextest` is available in the environment (it is the preferred default because it is faster).
 - Fall back to `cargo test` only when `cargo-nextest` is unavailable or when parity with CI behavior must be verified explicitly.
+- Tracked Git hooks live under `.githooks/`; enable them locally with `git config core.hooksPath .githooks`.
+- The local `pre-commit` hook formats staged Rust files with nightly `rustfmt` (using `rustfmt.toml` with nightly import-sorting options), and the local `pre-push` hook is intentionally a no-op (no automatic test execution).
 
 ## Current Syntax Notes
 
@@ -99,6 +101,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - During `oac build`, proof obligations are orchestrated by `crates/oac/src/verification.rs`: it runs prove verification first and only runs struct-invariant verification if prove obligations pass.
 - During `oac build`, prove obligations are verified first at reachable `prove(...)` sites by synthesizing per-site QBE checker functions that return `1` on violated proof conditions and `0` on success (`unsat` passes, `sat` fails). Debug artifacts are emitted under `target/oac/prove/`.
 - During `oac build`, struct invariants are verified per `(call-site, invariant)` pair at user-function call return sites (reachable from `main`) by synthesizing per-site QBE checker functions from compiled QBE: the target call site is instrumented with one invariant check and checker exit is `1` on violation / `0` on success (`unsat` passes, `sat` fails).
+- Struct-invariant obligation identifiers now include the invariant key suffix in diagnostics/debug artifacts (`<caller>#<site>#<ordinal>#<invariant_key>`), and generated checker artifacts follow the same suffixing pattern (`site_<caller>_<site>_<ordinal>_<invariant_key>.qbe` / `.smt2`).
 - Checker synthesis is QBE-native and interprocedural: each site emits a checker entry function plus reachable user callees, and CHC encoding models user calls via per-function summary relations (`*_ret` / `*_abort`) instead of checker-time call inlining.
 - Prove and struct-invariant pipelines now share checker assembly utilities in `crates/oac/src/verification_checker.rs` (site-id sanitization, solver excerpt summarization, checker return normalization, reachable-callee module closure, and main-argc assumption gate).
 - Parser-AST recursion helpers are centralized in `crates/oac/src/ast_walk.rs` and reused by resolve, verification-cycle analysis, and struct-invariant site indexing/call collection to keep traversal semantics aligned.
@@ -122,6 +125,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `qbe-smt` now exposes Ariadne report helpers on `QbeSmtError` (`render_report_plain`, `render_report_terminal_auto`) and `oac` includes those reports in prove/invariant failure notes.
 - `qbe-smt` now models a wider CLib call set in CHC encoding: `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, plus `exit(code)` halting transitions (and variadic `printf` for compiler builtin `print` inlining).
 - CLib byte-effect models are bounded with deterministic inline precision (`limit = 16`) and sound fallback branches; unknown extern call targets remain strict fail-closed errors.
+- `qbe-smt` now models bounded `strlen` NUL-scan and bounded `strcmp` first-event scan (`difference` or shared NUL) with tri-state outcomes (`-1/0/1`) and fail-open fallback to constrained unknowns when precision bounds are exceeded.
+- `qbe-smt` now models `strcpy` as bounded byte copy until first NUL (including terminator) with fallback to unconstrained memory when no terminator is found within the inline bound.
+- `qbe-smt` now constrains modeled syscall-like return values: `open` returns `-1` or non-negative, `close` returns `0` or `-1`, and `read`/`write` return `-1` or a non-negative value bounded above by `count`.
 - CHC encoding only includes reachable QBE blocks from entry; unsupported instructions in unreachable blocks are ignored by design.
 - SAT struct-invariant failures now include a control-flow witness summary (checker CFG path + branch choices).
 - `oac build` no longer emits `target/oac/ir.smt2` sidecar output; SMT artifacts are only produced for struct invariant obligations under `target/oac/struct_invariants/`.
