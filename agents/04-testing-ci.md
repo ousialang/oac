@@ -114,6 +114,7 @@ Key tests:
 - `crates/oac/src/parser.rs` also includes a regression for FP32 literal parsing (`Literal::Float32`).
 - `crates/oac/src/parser.rs` also includes a regression for FP64 literal parsing (`Literal::Float64` from `f64` suffix).
 - `crates/oac/src/parser.rs` also includes a char-literal AST snapshot regression (`parser_char_literals_ast`) that locks lowering (`'x'` -> `Char__from_code` call).
+- `crates/oac/src/parser.rs` also includes a direct stdlib-parse regression (`parses_std_json_module`) to keep `crates/oac/src/std/std_json.oa` parser-compatible.
 - `crates/oac/src/flat_imports.rs` tests assert flat import resolution: merge behavior, same-directory path constraints, and cycle detection.
 - `crates/oac/src/flat_imports.rs` merge coverage also includes imported test declaration propagation.
 - `crates/oac/src/ir.rs` includes a regression test that stdlib split files are loaded through `crates/oac/src/std/std.oa` imports.
@@ -199,7 +200,8 @@ Key tests:
 - Execution fixtures also include string utility helper coverage:
   - `std_string_helpers.oa` (`String.equals`, `String.starts_with`, `String.ends_with`, `String.char_at_or`, `String.slice_clamped`, `String.is_empty`)
 - Stdlib namespacing coverage in execution fixtures:
-  - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, and `json_scan_utils.oa`.
+  - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, `json_scan_utils.oa`, and `json_value_parser.oa`.
+  - `json_value_parser.oa` specifically covers structured value parsing (`Json.parse_json_document_value_result`) with object/array lookup helpers (`Json.object_get`, `Json.array_get`) and scalar payload extraction helpers (`Json.value_string`, `Json.value_number`), including `\uXXXX`-escape acceptance and malformed-escape rejection.
   - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).
   - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), result-enum accessors (`front` / `tail` / `pop_front`), and transform helpers (`append`, `reverse`, `take`, `drop`, `at`, `at_or`) in addition to compatibility wrappers.
   - `template_hash_table_i32.oa` now snapshots runtime output that exercises insert/update/remove/contains/clear plus resize-rehash behavior across `IntTable.*` helpers.

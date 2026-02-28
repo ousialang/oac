@@ -2081,9 +2081,8 @@ fn parse_impl_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<ImplDec
 
 #[cfg(test)]
 mod tests {
-    use crate::tokenizer::tokenize;
-
     use super::parse;
+    use crate::tokenizer::tokenize;
 
     #[test]
     fn parses_generic_with_bounds_and_specialization() {
@@ -2815,5 +2814,13 @@ fun main() -> I32 {
                 .contains("unexpected end of file in function body"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn parses_std_json_module() {
+        let source = std::fs::read_to_string("src/std/std_json.oa")
+            .expect("read std_json module for parser regression");
+        let tokens = tokenize(source).expect("tokenize std_json module");
+        parse(tokens).expect("parse std_json module");
     }
 }

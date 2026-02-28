@@ -1,0 +1,175 @@
+fun kind_code(kind: JsonKind) -> I32 {
+	match kind {
+		JsonKind.True => {
+			return 1
+		}
+		JsonKind.False => {
+			return 2
+		}
+		JsonKind.Null => {
+			return 3
+		}
+		JsonKind.Object => {
+			return 4
+		}
+		JsonKind.Array => {
+			return 5
+		}
+		JsonKind.Number => {
+			return 6
+		}
+		JsonKind.String => {
+			return 7
+		}
+		JsonKind.Invalid => {
+			return 0
+		}
+	}
+}
+
+fun print_doc_value(src: String) -> I32 {
+	match Json.parse_json_document_value_result(src) {
+		JsonDocumentValueResult.Ok(value) => {
+			print(1)
+			print(kind_code(Json.value_kind(value)))
+		}
+		JsonDocumentValueResult.Err(err) => {
+			match err {
+				ParseErr.EmptyInput => {
+					print(10)
+				}
+				ParseErr.InvalidValue => {
+					print(11)
+				}
+				ParseErr.TrailingData => {
+					print(12)
+				}
+			}
+		}
+	}
+
+	return 0
+}
+
+fun print_lookup_kind(lookup: JsonValueLookup) -> I32 {
+	match lookup {
+		JsonValueLookup.Missing => {
+			print(0)
+		}
+		JsonValueLookup.Found(value) => {
+			print(1)
+			print(kind_code(Json.value_kind(value)))
+		}
+	}
+
+	return 0
+}
+
+fun print_string_lookup(lookup: JsonStringLookup, expected: String) -> I32 {
+	match lookup {
+		JsonStringLookup.Missing => {
+			print(0)
+		}
+		JsonStringLookup.Found(text) => {
+			print(1)
+			if String.equals(text, expected) {
+				print(1)
+			} else {
+				print(0)
+			}
+		}
+	}
+
+	return 0
+}
+
+fun main() -> I32 {
+	print_doc_value("  ")
+	print_doc_value("true")
+	print_doc_value("{\"a\":1}")
+	print_doc_value("true x")
+	print_doc_value("\"ok\"")
+
+	result = Json.parse_json_document_value_result("{\"a\":1,\"b\":[true,false,null],\"c\":{\"d\":\"x\"},\"n\":-12.5e+3}")
+	match result {
+		JsonDocumentValueResult.Err(_err) => {
+			print(999)
+		}
+		JsonDocumentValueResult.Ok(root) => {
+			print(Json.object_len(root))
+
+			a_lookup = Json.object_get(root, "a")
+			print_lookup_kind(a_lookup)
+			match a_lookup {
+				JsonValueLookup.Missing => {
+					print(998)
+				}
+				JsonValueLookup.Found(a_value) => {
+					print_string_lookup(Json.value_number(a_value), "1")
+				}
+			}
+
+			b_lookup = Json.object_get(root, "b")
+			print_lookup_kind(b_lookup)
+			match b_lookup {
+				JsonValueLookup.Missing => {
+					print(997)
+				}
+				JsonValueLookup.Found(b_value) => {
+					print(Json.array_len(b_value))
+					print_lookup_kind(Json.array_get(b_value, 0))
+					print_lookup_kind(Json.array_get(b_value, 1))
+					print_lookup_kind(Json.array_get(b_value, 2))
+					print_lookup_kind(Json.array_get(b_value, 3))
+				}
+			}
+
+			c_lookup = Json.object_get(root, "c")
+			print_lookup_kind(c_lookup)
+			match c_lookup {
+				JsonValueLookup.Missing => {
+					print(996)
+				}
+				JsonValueLookup.Found(c_value) => {
+					d_lookup = Json.object_get(c_value, "d")
+					print_lookup_kind(d_lookup)
+					match d_lookup {
+						JsonValueLookup.Missing => {
+							print(995)
+						}
+						JsonValueLookup.Found(d_value) => {
+							print_string_lookup(Json.value_string(d_value), "x")
+						}
+					}
+				}
+			}
+
+			n_lookup = Json.object_get(root, "n")
+			print_lookup_kind(n_lookup)
+			match n_lookup {
+				JsonValueLookup.Missing => {
+					print(994)
+				}
+				JsonValueLookup.Found(n_value) => {
+					print_string_lookup(Json.value_number(n_value), "-12.5e+3")
+				}
+			}
+
+			print_lookup_kind(Json.object_get(root, "missing"))
+		}
+	}
+
+	unicode_ok = Json.parse_json_document_value_result("\"a\\u0041b\"")
+	match unicode_ok {
+		JsonDocumentValueResult.Err(_err) => {
+			print(993)
+		}
+		JsonDocumentValueResult.Ok(unicode_value) => {
+			print_string_lookup(Json.value_string(unicode_value), "a\\u0041b")
+		}
+	}
+
+	print_doc_value("\"\\u12g4\"")
+
+	return 0
+}
