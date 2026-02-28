@@ -13,6 +13,7 @@ use crate::{
 
 const LEGACY_INVARIANT_PREFIX: &str = "__struct__";
 const LEGACY_INVARIANT_SUFFIX: &str = "__invariant";
+const LEGACY_INVARIANT_KEY: &str = "legacy";
 const RESERVED_BUILTIN_FUNCTION_NAMES: [&str; 2] = ["prove", "assert"];
 const SEMANTIC_BUILTIN_TYPES: [&str; 6] = [
     "Type",
@@ -80,7 +81,7 @@ pub struct ResolvedProgram {
     pub function_definitions: HashMap<String, FunctionDefinition>,
     pub trait_method_signatures: HashMap<String, TraitMethodSignature>,
     pub trait_impl_methods: HashMap<String, String>,
-    pub struct_invariants: HashMap<String, StructInvariantDefinition>,
+    pub struct_invariants: HashMap<String, Vec<StructInvariantDefinition>>,
     pub comptime_function_definitions: HashMap<String, FunctionDefinition>,
     pub comptime_apply_order: Vec<parser::ComptimeApply>,
     pub semantic_expr_metadata: HashMap<String, SemanticExprMetadata>,
@@ -106,6 +107,7 @@ pub struct SemanticExprMetadata {
 pub struct StructInvariantDefinition {
     pub struct_name: String,
     pub function_name: String,
+    pub key: String,
     pub identifier: Option<String>,
     pub display_name: String,
 }
@@ -1448,10 +1450,33 @@ fn parse_legacy_invariant_name(name: &str) -> Option<&str> {
     }
 }
 
-fn generated_invariant_function_name(struct_name: &str) -> String {
+fn sanitize_invariant_key(raw: &str) -> String {
+    let mut key = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            key.push(ch);
+        } else {
+            key.push('_');
+        }
+    }
+    if key.is_empty() {
+        key.push_str("anon");
+    }
+    if key
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        key.insert(0, '_');
+    }
+    key
+}
+
+fn generated_invariant_function_name(struct_name: &str, key: &str) -> String {
     format!(
-        "{}{}{}",
-        LEGACY_INVARIANT_PREFIX, struct_name, LEGACY_INVARIANT_SUFFIX
+        "{}{}{}__{}",
+        LEGACY_INVARIANT_PREFIX, struct_name, LEGACY_INVARIANT_SUFFIX, key
     )
 }
 
@@ -1459,9 +1484,13 @@ fn synthesize_invariant_functions(
     invariants: &[parser::StructInvariantDecl],
     type_definitions: &HashMap<String, TypeDef>,
     existing_functions: &[parser::Function],
-    out_struct_invariants: &mut HashMap<String, StructInvariantDefinition>,
+    out_struct_invariants: &mut HashMap<String, Vec<StructInvariantDefinition>>,
 ) -> anyhow::Result<Vec<parser::Function>> {
     let mut out = Vec::new();
+    let mut seen_explicit_identifiers = HashMap::<String, HashSet<String>>::new();
+    let mut next_anonymous_ordinal = HashMap::<String, usize>::new();
+    let mut generated_function_names = HashSet::<String>::new();
+
     for invariant in invariants {
         let struct_name = invariant.parameter.ty.clone();
         let type_def = type_definitions
@@ -1475,8 +1504,31 @@ fn synthesize_invariant_functions(
             ));
         }
 
-        let function_name = generated_invariant_function_name(&struct_name);
-        if existing_functions.iter().any(|f| f.name == function_name) {
+        let key = if let Some(identifier) = &invariant.identifier {
+            let seen = seen_explicit_identifiers
+                .entry(struct_name.clone())
+                .or_default();
+            if !seen.insert(identifier.clone()) {
+                return Err(anyhow::anyhow!(
+                    "struct {} has duplicate invariant identifier `{}`",
+                    struct_name,
+                    identifier
+                ));
+            }
+            sanitize_invariant_key(identifier)
+        } else {
+            let next = next_anonymous_ordinal
+                .entry(struct_name.clone())
+                .or_insert(0);
+            let key = format!("anon_{}", *next);
+            *next += 1;
+            key
+        };
+
+        let function_name = generated_invariant_function_name(&struct_name, &key);
+        if existing_functions.iter().any(|f| f.name == function_name)
+            || !generated_function_names.insert(function_name.clone())
+        {
             return Err(anyhow::anyhow!(
                 "invariant \"{}\" for {} conflicts with existing function {}",
                 invariant.display_name,
@@ -1485,23 +1537,25 @@ fn synthesize_invariant_functions(
             ));
         }
 
-        if let Some(existing) = out_struct_invariants.get(&struct_name) {
+        let entry = out_struct_invariants
+            .entry(struct_name.clone())
+            .or_default();
+        if let Some(existing) = entry.iter().find(|existing| existing.key == key) {
             return Err(anyhow::anyhow!(
-                "struct {} has multiple invariants: \"{}\" and \"{}\"",
+                "struct {} has duplicate invariant key `{}`: \"{}\" and \"{}\"",
                 struct_name,
+                key,
                 existing.display_name,
                 invariant.display_name
             ));
         }
-        out_struct_invariants.insert(
-            struct_name.clone(),
-            StructInvariantDefinition {
-                struct_name: struct_name.clone(),
-                function_name: function_name.clone(),
-                identifier: invariant.identifier.clone(),
-                display_name: invariant.display_name.clone(),
-            },
-        );
+        entry.push(StructInvariantDefinition {
+            struct_name: struct_name.clone(),
+            function_name: function_name.clone(),
+            key,
+            identifier: invariant.identifier.clone(),
+            display_name: invariant.display_name.clone(),
+        });
 
         out.push(parser::Function {
             name: function_name,
@@ -1520,7 +1574,7 @@ fn register_legacy_struct_invariants(
     functions: &[parser::Function],
     type_definitions: &HashMap<String, TypeDef>,
     function_sigs: &HashMap<String, FunctionSignature>,
-    out_struct_invariants: &mut HashMap<String, StructInvariantDefinition>,
+    out_struct_invariants: &mut HashMap<String, Vec<StructInvariantDefinition>>,
 ) -> anyhow::Result<()> {
     for function in functions {
         let Some(struct_name) = parse_legacy_invariant_name(&function.name) else {
@@ -1557,11 +1611,24 @@ fn register_legacy_struct_invariants(
             ));
         }
 
-        if let Some(existing) = out_struct_invariants.get(struct_name) {
+        let entry = out_struct_invariants
+            .entry(struct_name.to_string())
+            .or_default();
+        if entry
+            .iter()
+            .any(|existing| existing.function_name == function.name)
+        {
+            continue;
+        }
+        if let Some(existing) = entry
+            .iter()
+            .find(|existing| existing.key == LEGACY_INVARIANT_KEY)
+        {
             if existing.function_name != function.name {
                 return Err(anyhow::anyhow!(
-                    "struct {} has multiple invariants: \"{}\" and \"{}\"",
+                    "struct {} has duplicate invariant key `{}`: \"{}\" and \"{}\"",
                     struct_name,
+                    LEGACY_INVARIANT_KEY,
                     existing.display_name,
                     function.name
                 ));
@@ -1569,15 +1636,13 @@ fn register_legacy_struct_invariants(
             continue;
         }
 
-        out_struct_invariants.insert(
-            struct_name.to_string(),
-            StructInvariantDefinition {
-                struct_name: struct_name.to_string(),
-                function_name: function.name.clone(),
-                identifier: None,
-                display_name: function.name.clone(),
-            },
-        );
+        entry.push(StructInvariantDefinition {
+            struct_name: struct_name.to_string(),
+            function_name: function.name.clone(),
+            key: LEGACY_INVARIANT_KEY.to_string(),
+            identifier: None,
+            display_name: function.name.clone(),
+        });
     }
     Ok(())
 }
@@ -3649,8 +3714,8 @@ fun main() -> I32 {
         assert!(
             resolved
                 .function_definitions
-                .contains_key("__struct__AsciiChar__invariant"),
-            "missing __struct__AsciiChar__invariant function from split stdlib"
+                .contains_key("__struct__AsciiChar__invariant__code_in_ascii_range"),
+            "missing __struct__AsciiChar__invariant__code_in_ascii_range function from split stdlib"
         );
         assert!(
             resolved.struct_invariants.contains_key("Bytes"),
@@ -3659,8 +3724,8 @@ fun main() -> I32 {
         assert!(
             resolved
                 .function_definitions
-                .contains_key("__struct__Bytes__invariant"),
-            "missing __struct__Bytes__invariant function from split stdlib"
+                .contains_key("__struct__Bytes__invariant__non_negative_length"),
+            "missing __struct__Bytes__invariant__non_negative_length function from split stdlib"
         );
     }
 
@@ -3871,13 +3936,21 @@ fun main() -> I32 {
             .struct_invariants
             .get("Counter")
             .expect("missing Counter invariant metadata");
-        assert_eq!(invariant.function_name, "__struct__Counter__invariant");
-        assert_eq!(invariant.display_name, "counter value must be non-negative");
-        assert_eq!(invariant.identifier.as_deref(), Some("positive_value"));
+        assert_eq!(invariant.len(), 1);
+        assert_eq!(
+            invariant[0].function_name,
+            "__struct__Counter__invariant__positive_value"
+        );
+        assert_eq!(invariant[0].key, "positive_value");
+        assert_eq!(
+            invariant[0].display_name,
+            "counter value must be non-negative"
+        );
+        assert_eq!(invariant[0].identifier.as_deref(), Some("positive_value"));
 
         let function = resolved
             .function_definitions
-            .get("__struct__Counter__invariant")
+            .get("__struct__Counter__invariant__positive_value")
             .expect("missing synthesized invariant function");
         assert_eq!(function.sig.parameters.len(), 1);
         assert_eq!(function.sig.parameters[0].ty, "Counter");
@@ -3913,17 +3986,95 @@ fun main() -> I32 {
             .struct_invariants
             .get("BoxI32")
             .expect("missing BoxI32 invariant metadata");
-        assert_eq!(invariant.function_name, "__struct__BoxI32__invariant");
-        assert_eq!(invariant.display_name, "value must be non-negative");
-        assert_eq!(invariant.identifier, None);
+        assert_eq!(invariant.len(), 1);
+        assert_eq!(
+            invariant[0].function_name,
+            "__struct__BoxI32__invariant__anon_0"
+        );
+        assert_eq!(invariant[0].key, "anon_0");
+        assert_eq!(invariant[0].display_name, "value must be non-negative");
+        assert_eq!(invariant[0].identifier, None);
 
         let function = resolved
             .function_definitions
-            .get("__struct__BoxI32__invariant")
+            .get("__struct__BoxI32__invariant__anon_0")
             .expect("missing synthesized BoxI32 invariant function");
         assert_eq!(function.sig.parameters.len(), 1);
         assert_eq!(function.sig.parameters[0].ty, "BoxI32");
         assert_eq!(function.sig.return_type, "Bool");
+    }
+
+    #[test]
+    fn resolve_allows_multiple_invariants_for_same_struct() {
+        let source = r#"
+struct Counter {
+	value: I32,
+	max: I32,
+}
+
+invariant for (v: Counter) {
+	non_negative_value "counter value must be non-negative" {
+		return v.value >= 0
+	}
+	"counter max must be non-negative" {
+		return v.max >= 0
+	}
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        let invariants = resolved
+            .struct_invariants
+            .get("Counter")
+            .expect("missing Counter invariant metadata");
+        assert_eq!(invariants.len(), 2);
+        assert_eq!(
+            invariants[0].function_name,
+            "__struct__Counter__invariant__non_negative_value"
+        );
+        assert_eq!(invariants[0].key, "non_negative_value");
+        assert_eq!(
+            invariants[1].function_name,
+            "__struct__Counter__invariant__anon_0"
+        );
+        assert_eq!(invariants[1].key, "anon_0");
+    }
+
+    #[test]
+    fn resolve_rejects_duplicate_invariant_identifier_for_same_struct() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant first "counter value must be non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+invariant first "counter value must stay non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("duplicate identifier should fail");
+        assert!(err
+            .to_string()
+            .contains("duplicate invariant identifier `first`"));
     }
 
     #[test]

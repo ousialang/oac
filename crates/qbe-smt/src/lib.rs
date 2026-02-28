@@ -1,6 +1,6 @@
 use ariadne::{sources, Config, Label, Report, ReportKind};
-use std::io::IsTerminal;
 use qbe::{Function as QbeFunction, Module as QbeModule};
+use std::io::IsTerminal;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use thiserror::Error;

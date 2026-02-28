@@ -107,7 +107,7 @@ fn collect_prove_sites(
 
 fn solve_prove_sites(
     program: &ResolvedProgram,
-    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
     function_map: &HashMap<String, qbe::Function>,
     sites: &[ProveSite],
     target_dir: &Path,
@@ -209,7 +209,7 @@ fn solve_prove_sites(
 
 fn build_site_checker_module(
     program: &ResolvedProgram,
-    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
     function_map: &HashMap<String, qbe::Function>,
     site: &ProveSite,
 ) -> anyhow::Result<(qbe::Module, qbe::Function, qbe_smt::ModuleAssumptions)> {
@@ -241,7 +241,7 @@ fn build_site_checker_module(
 
 fn checker_module_with_reachable_callees(
     program: &ResolvedProgram,
-    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
     function_map: &HashMap<String, qbe::Function>,
     checker: &qbe::Function,
     checker_to_program_name: &HashMap<String, String>,
@@ -463,10 +463,10 @@ fn summarize_solver_output(stdout: &str, stderr: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ir, parser, qbe_backend, tokenizer};
     use crate::verification_cycles::{
         reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
     };
+    use crate::{ir, parser, qbe_backend, tokenizer};
 
     use super::verify_prove_obligations_with_qbe;
 
@@ -519,6 +519,41 @@ fun main() -> I32 {
         let tempdir = tempfile::tempdir().expect("tempdir");
         verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
             .expect("argument-invariant preconditions should satisfy helper prove obligations");
+    }
+
+    #[test]
+    fn prove_sites_use_all_argument_invariant_preconditions_for_multi_invariant_types() {
+        let source = r#"
+struct Counter {
+	value: I32,
+	max: I32,
+}
+
+invariant value_non_negative "value non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+invariant max_non_negative "max non-negative" for (v: Counter) {
+	return v.max >= 0
+}
+
+fun helper(v: Counter) -> I32 {
+	prove(v.value >= 0)
+	prove(v.max >= 0)
+	return 0
+}
+
+fun main() -> I32 {
+	c = Counter struct { value: sub(0, 1), max: sub(0, 2), }
+	return helper(c)
+}
+"#;
+
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect("all invariant preconditions should be applied to prove-site parameters");
     }
 
     #[test]
