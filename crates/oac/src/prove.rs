@@ -18,6 +18,16 @@ use crate::verification_cycles::{
 };
 
 const Z3_TIMEOUT_SECONDS: u64 = 10;
+const Z3_TIMEOUT_RETRY_SECONDS: u64 = 30;
+
+fn solve_chc_with_retry(smt: &str) -> Result<qbe_smt::SolverRun, qbe_smt::QbeSmtError> {
+    let run = qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_SECONDS)?;
+    if run.result == qbe_smt::SolverResult::Unknown && Z3_TIMEOUT_RETRY_SECONDS > Z3_TIMEOUT_SECONDS
+    {
+        return qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_RETRY_SECONDS);
+    }
+    Ok(run)
+}
 
 #[derive(Clone, Debug)]
 struct ProveSite {
@@ -169,7 +179,7 @@ fn solve_prove_sites(
             )
         })?;
 
-        match qbe_smt::solve_chc_script_with_diagnostics(&smt, Z3_TIMEOUT_SECONDS) {
+        match solve_chc_with_retry(&smt) {
             Ok(run) if run.result == qbe_smt::SolverResult::Unsat => {}
             Ok(run) if run.result == qbe_smt::SolverResult::Sat => {
                 let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)

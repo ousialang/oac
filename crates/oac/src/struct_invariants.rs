@@ -19,7 +19,17 @@ use crate::verification_cycles::{
 };
 
 const Z3_TIMEOUT_SECONDS: u64 = 10;
+const Z3_TIMEOUT_RETRY_SECONDS: u64 = 30;
 const COUNTEREXAMPLE_SEARCH_TIMEOUT_SECONDS: u64 = 2;
+
+fn solve_chc_with_retry(smt: &str) -> Result<qbe_smt::SolverRun, qbe_smt::QbeSmtError> {
+    let run = qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_SECONDS)?;
+    if run.result == qbe_smt::SolverResult::Unknown && Z3_TIMEOUT_RETRY_SECONDS > Z3_TIMEOUT_SECONDS
+    {
+        return qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_RETRY_SECONDS);
+    }
+    Ok(run)
+}
 
 #[allow(dead_code)]
 pub fn verify_struct_invariants(
@@ -266,7 +276,7 @@ fn solve_obligations_qbe(
         std::fs::write(&smt_path, &smt)
             .with_context(|| format!("failed to write SMT obligation {}", smt_path.display()))?;
 
-        match qbe_smt::solve_chc_script_with_diagnostics(&smt, Z3_TIMEOUT_SECONDS) {
+        match solve_chc_with_retry(&smt) {
             Ok(run) if run.result == qbe_smt::SolverResult::Unsat => {}
             Ok(run) if run.result == qbe_smt::SolverResult::Sat => {
                 let witness = sat_cfg_witness_summary(&checker_function)
@@ -403,7 +413,7 @@ fn is_sat_for_main_argc_range(
     )
     .ok()?;
 
-    match qbe_smt::solve_chc_script(&smt, Z3_TIMEOUT_SECONDS).ok()? {
+    match solve_chc_with_retry(&smt).ok()?.result {
         qbe_smt::SolverResult::Sat => Some(true),
         qbe_smt::SolverResult::Unsat => Some(false),
         qbe_smt::SolverResult::Unknown => None,
