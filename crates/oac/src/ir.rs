@@ -6,9 +6,13 @@ use serde::Serialize;
 use tracing::trace;
 
 use crate::{
+    ast_walk::{self, AstPathStyle},
     builtins::BuiltInType,
     flat_imports,
     parser::{self, Ast, Expression, Literal, StructDef, UnaryOp},
+    symbol_keys::{
+        trait_impl_function_name, trait_impl_method_key, trait_impl_target_key, trait_method_key,
+    },
 };
 
 const LEGACY_INVARIANT_PREFIX: &str = "__struct__";
@@ -1196,103 +1200,14 @@ fn collect_called_functions_in_statement(
     program: &ResolvedProgram,
     out: &mut Vec<String>,
 ) {
-    match statement {
-        parser::Statement::StructDef { .. } => {}
-        parser::Statement::Assign { value, .. } => {
-            collect_called_functions_in_expression(value, program, out)
+    ast_walk::walk_statement_calls(statement, "", AstPathStyle::Ir, &mut |_path, call_name| {
+        if call_name.contains(parser::NAMESPACE_FUNCTION_SEPARATOR)
+            && !program.function_sigs.contains_key(call_name)
+        {
+            return;
         }
-        parser::Statement::Return { expr } => {
-            collect_called_functions_in_expression(expr, program, out)
-        }
-        parser::Statement::Expression { expr } => {
-            collect_called_functions_in_expression(expr, program, out)
-        }
-        parser::Statement::Prove { condition } => {
-            collect_called_functions_in_expression(condition, program, out)
-        }
-        parser::Statement::Assert { condition } => {
-            collect_called_functions_in_expression(condition, program, out)
-        }
-        parser::Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            collect_called_functions_in_expression(condition, program, out);
-            for statement in body {
-                collect_called_functions_in_statement(statement, program, out);
-            }
-            if let Some(else_body) = else_body {
-                for statement in else_body {
-                    collect_called_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-        parser::Statement::While { condition, body } => {
-            collect_called_functions_in_expression(condition, program, out);
-            for statement in body {
-                collect_called_functions_in_statement(statement, program, out);
-            }
-        }
-        parser::Statement::Match { subject, arms } => {
-            collect_called_functions_in_expression(subject, program, out);
-            for arm in arms {
-                for statement in &arm.body {
-                    collect_called_functions_in_statement(statement, program, out);
-                }
-            }
-        }
-    }
-}
-
-fn collect_called_functions_in_expression(
-    expression: &Expression,
-    program: &ResolvedProgram,
-    out: &mut Vec<String>,
-) {
-    match expression {
-        Expression::Match { subject, arms } => {
-            collect_called_functions_in_expression(subject, program, out);
-            for arm in arms {
-                collect_called_functions_in_expression(&arm.value, program, out);
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) => {}
-        Expression::Call(name, args) => {
-            out.push(name.clone());
-            for arg in args {
-                collect_called_functions_in_expression(arg, program, out);
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            if let Expression::FieldAccess {
-                struct_variable,
-                field,
-            } = callee.as_ref()
-            {
-                let namespaced_call =
-                    parser::qualify_namespace_function_name(struct_variable, field);
-                if program.function_sigs.contains_key(&namespaced_call) {
-                    out.push(namespaced_call);
-                }
-            }
-            collect_called_functions_in_expression(callee, program, out);
-            for arg in args {
-                collect_called_functions_in_expression(arg, program, out);
-            }
-        }
-        Expression::BinOp(_, left, right) => {
-            collect_called_functions_in_expression(left, program, out);
-            collect_called_functions_in_expression(right, program, out);
-        }
-        Expression::UnaryOp(_, expr) => collect_called_functions_in_expression(expr, program, out),
-        Expression::FieldAccess { .. } => {}
-        Expression::StructValue { field_values, .. } => {
-            for (_, value) in field_values {
-                collect_called_functions_in_expression(value, program, out);
-            }
-        }
-    }
+        out.push(call_name.to_string());
+    });
 }
 
 fn index_semantic_expression_metadata(
@@ -1325,117 +1240,16 @@ fn index_statement_expression_metadata(
     path: &str,
     out: &mut HashMap<String, SemanticExprMetadata>,
 ) {
-    match statement {
-        parser::Statement::StructDef { .. } => {}
-        parser::Statement::Assign { value, .. } => {
-            index_expression_metadata(value, &format!("{path}/assign.value"), out)
-        }
-        parser::Statement::Return { expr } => {
-            index_expression_metadata(expr, &format!("{path}/return.expr"), out)
-        }
-        parser::Statement::Expression { expr } => {
-            index_expression_metadata(expr, &format!("{path}/expr"), out)
-        }
-        parser::Statement::Prove { condition } => {
-            index_expression_metadata(condition, &format!("{path}/prove.cond"), out)
-        }
-        parser::Statement::Assert { condition } => {
-            index_expression_metadata(condition, &format!("{path}/assert.cond"), out)
-        }
-        parser::Statement::Conditional {
-            condition,
-            body,
-            else_body,
-        } => {
-            index_expression_metadata(condition, &format!("{path}/if.cond"), out);
-            for (index, statement) in body.iter().enumerate() {
-                index_statement_expression_metadata(
-                    statement,
-                    &format!("{path}/if.body.{index}"),
-                    out,
-                );
-            }
-            if let Some(else_body) = else_body {
-                for (index, statement) in else_body.iter().enumerate() {
-                    index_statement_expression_metadata(
-                        statement,
-                        &format!("{path}/if.else.{index}"),
-                        out,
-                    );
-                }
-            }
-        }
-        parser::Statement::While { condition, body } => {
-            index_expression_metadata(condition, &format!("{path}/while.cond"), out);
-            for (index, statement) in body.iter().enumerate() {
-                index_statement_expression_metadata(
-                    statement,
-                    &format!("{path}/while.body.{index}"),
-                    out,
-                );
-            }
-        }
-        parser::Statement::Match { subject, arms } => {
-            index_expression_metadata(subject, &format!("{path}/match.subject"), out);
-            for (arm_index, arm) in arms.iter().enumerate() {
-                for (statement_index, statement) in arm.body.iter().enumerate() {
-                    index_statement_expression_metadata(
-                        statement,
-                        &format!("{path}/match.arm.{arm_index}.{statement_index}"),
-                        out,
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn index_expression_metadata(
-    expression: &Expression,
-    path: &str,
-    out: &mut HashMap<String, SemanticExprMetadata>,
-) {
-    out.insert(
-        path.to_string(),
-        SemanticExprMetadata {
-            id: path.to_string(),
-            ty: None,
-            source_span: None,
-        },
-    );
-
-    match expression {
-        Expression::Match { subject, arms } => {
-            index_expression_metadata(subject, &format!("{path}/match.subject"), out);
-            for (index, arm) in arms.iter().enumerate() {
-                index_expression_metadata(&arm.value, &format!("{path}/match.arm.{index}"), out);
-            }
-        }
-        Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {}
-        Expression::Call(_, args) => {
-            for (index, arg) in args.iter().enumerate() {
-                index_expression_metadata(arg, &format!("{path}/call.arg.{index}"), out);
-            }
-        }
-        Expression::PostfixCall { callee, args } => {
-            index_expression_metadata(callee, &format!("{path}/postfix.callee"), out);
-            for (index, arg) in args.iter().enumerate() {
-                index_expression_metadata(arg, &format!("{path}/postfix.arg.{index}"), out);
-            }
-        }
-        Expression::BinOp(_, left, right) => {
-            index_expression_metadata(left, &format!("{path}/bin.left"), out);
-            index_expression_metadata(right, &format!("{path}/bin.right"), out);
-        }
-        Expression::UnaryOp(_, expr) => {
-            index_expression_metadata(expr, &format!("{path}/unary"), out);
-        }
-        Expression::StructValue { field_values, .. } => {
-            for (index, (_, value)) in field_values.iter().enumerate() {
-                index_expression_metadata(value, &format!("{path}/struct.field.{index}"), out);
-            }
-        }
-    }
+    ast_walk::walk_statement_expressions(statement, path, AstPathStyle::Ir, &mut |expr_path, _| {
+        out.insert(
+            expr_path.to_string(),
+            SemanticExprMetadata {
+                id: expr_path.to_string(),
+                ty: None,
+                source_span: None,
+            },
+        );
+    });
 }
 
 fn parse_legacy_invariant_name(name: &str) -> Option<&str> {
@@ -1645,40 +1459,6 @@ fn register_legacy_struct_invariants(
         });
     }
     Ok(())
-}
-
-fn trait_method_key(trait_name: &str, method_name: &str) -> String {
-    format!("{trait_name}::{method_name}")
-}
-
-fn trait_impl_target_key(trait_name: &str, for_type: &str) -> String {
-    format!("{trait_name}::{for_type}")
-}
-
-fn trait_impl_method_key(trait_name: &str, for_type: &str, method_name: &str) -> String {
-    format!("{trait_name}::{for_type}::{method_name}")
-}
-
-fn mangle_symbol_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn trait_impl_function_name(trait_name: &str, for_type: &str, method_name: &str) -> String {
-    format!(
-        "{}__{}__{}",
-        trait_name,
-        mangle_symbol_component(for_type),
-        method_name
-    )
 }
 
 fn replace_self_type(ty: &str, concrete_self: &str) -> String {

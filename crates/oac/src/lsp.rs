@@ -840,23 +840,7 @@ fn parse_imports(text: &str) -> Vec<String> {
 }
 
 fn resolve_import_path(source_dir: &Path, import_path: &str) -> Option<PathBuf> {
-    let import = Path::new(import_path);
-    if import.is_absolute() {
-        return None;
-    }
-    let components = import.components().collect::<Vec<_>>();
-    if !(components.len() == 1 && matches!(components[0], std::path::Component::Normal(_))) {
-        return None;
-    }
-    if import.extension().and_then(|ext| ext.to_str()) != Some("oa") {
-        return None;
-    }
-    let candidate = source_dir.join(import);
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
-    }
+    flat_imports::validate_same_dir_oa_import(source_dir, import_path).ok()
 }
 
 fn text_for_uri(uri: &str, documents: &HashMap<String, DocumentState>) -> Option<String> {

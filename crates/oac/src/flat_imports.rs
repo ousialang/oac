@@ -93,7 +93,10 @@ fn resolve_ast_inner(
     Ok(merged)
 }
 
-fn resolve_import_path(source_dir: &Path, import_path: &str) -> anyhow::Result<PathBuf> {
+pub fn validate_same_dir_oa_import(
+    source_dir: &Path,
+    import_path: &str,
+) -> anyhow::Result<PathBuf> {
     let import = Path::new(import_path);
     anyhow::ensure!(
         !import.is_absolute(),
@@ -118,6 +121,10 @@ fn resolve_import_path(source_dir: &Path, import_path: &str) -> anyhow::Result<P
     anyhow::ensure!(path.exists(), "import file not found: {}", path.display());
 
     Ok(path)
+}
+
+fn resolve_import_path(source_dir: &Path, import_path: &str) -> anyhow::Result<PathBuf> {
+    validate_same_dir_oa_import(source_dir, import_path)
 }
 
 fn merge_flat_ast(dst: &mut parser::Ast, mut src: parser::Ast) {

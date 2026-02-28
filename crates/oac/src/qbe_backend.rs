@@ -7,6 +7,7 @@ use crate::{
     builtins::BuiltInType,
     ir::{self, ResolvedProgram},
     parser::{self, Op, StructDef, UnaryOp},
+    symbol_keys::{trait_impl_method_key, trait_method_key},
 };
 
 type QbeAssignName = String;
@@ -1043,70 +1044,24 @@ fn compile_statement(
             condition,
             body,
             else_body,
-        } => {
-            let then_label = new_id(&["cond", "then"]);
-            let else_label = new_id(&["cond", "else"]);
-            let end_block_label = new_id(&["cond", "end"]);
-
-            let condition_var = compile_expr(ctx, qbe_func, &condition, variables).0;
-
-            qbe_func.add_instr(qbe::Instr::Jnz(
-                qbe::Value::Temporary(condition_var),
-                then_label.clone(),
-                if else_body.is_some() {
-                    else_label.clone()
-                } else {
-                    end_block_label.clone()
-                },
-            ));
-
-            qbe_func.add_block(&then_label);
-            for statement in body {
-                compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
-            }
-            let then_falls_through = !qbe_func.blocks.last().unwrap().jumps();
-            if then_falls_through {
-                qbe_func.add_instr(qbe::Instr::Jmp(end_block_label.clone()));
-            }
-
-            let mut else_falls_through = false;
-            if let Some(else_body) = else_body {
-                qbe_func.add_block(&else_label);
-                for statement in else_body {
-                    compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
-                }
-                else_falls_through = !qbe_func.blocks.last().unwrap().jumps();
-                if else_falls_through {
-                    qbe_func.add_instr(qbe::Instr::Jmp(end_block_label.clone()));
-                }
-            }
-
-            let needs_end_block = else_body.is_none() || then_falls_through || else_falls_through;
-            if needs_end_block {
-                qbe_func.add_block(&end_block_label);
-            }
-        }
+        } => compile_conditional_statement(
+            ctx,
+            qbe_func,
+            condition,
+            body,
+            else_body.as_deref(),
+            variables,
+            prove_site_counter,
+        ),
         parser::Statement::While { condition, body } => {
-            let condition_label = new_id(&["while", "cond"]);
-            let start_label = new_id(&["while", "start"]);
-            let end_block_label = new_id(&["while", "end"]);
-
-            qbe_func.add_block(condition_label.clone());
-            let condition_var = compile_expr(ctx, qbe_func, &condition, variables).0;
-
-            qbe_func.add_instr(qbe::Instr::Jnz(
-                qbe::Value::Temporary(condition_var),
-                start_label.clone(),
-                end_block_label.clone(),
-            ));
-
-            qbe_func.add_block(&start_label);
-            for statement in body {
-                compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
-            }
-            qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
-
-            qbe_func.add_block(&end_block_label);
+            compile_while_statement(
+                ctx,
+                qbe_func,
+                condition,
+                body,
+                variables,
+                prove_site_counter,
+            );
         }
         parser::Statement::Return { expr } => {
             let (expr_var, expr_ty) = compile_expr(ctx, qbe_func, &expr, variables);
@@ -1121,59 +1076,168 @@ fn compile_statement(
             compile_expr(ctx, qbe_func, &expr, variables);
         }
         parser::Statement::Prove { condition } => {
-            let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
-            let marker_temp = format!("{PROVE_MARKER_PREFIX}{}", *prove_site_counter);
-            *prove_site_counter += 1;
-            qbe_func.assign_instr(
-                qbe::Value::Temporary(marker_temp),
-                qbe::Type::Word,
-                qbe::Instr::Copy(qbe::Value::Temporary(condition_var)),
-            );
+            compile_prove_statement(ctx, qbe_func, condition, variables, prove_site_counter);
         }
         parser::Statement::Assert { condition } => {
-            let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
-            let assert_pass_label = new_id(&["assert", "pass"]);
-            let assert_fail_label = new_id(&["assert", "fail"]);
-
-            qbe_func.add_instr(qbe::Instr::Jnz(
-                qbe::Value::Temporary(condition_var),
-                assert_pass_label.clone(),
-                assert_fail_label.clone(),
-            ));
-
-            qbe_func.add_block(assert_fail_label);
-            qbe_func.add_instr(qbe::Instr::Call(
-                "exit".to_string(),
-                vec![(qbe::Type::Word, qbe::Value::Const(ASSERT_FAILURE_EXIT_CODE))],
-                None,
-            ));
-            qbe_func.add_instr(qbe::Instr::Hlt);
-
-            qbe_func.add_block(assert_pass_label);
+            compile_assert_statement(ctx, qbe_func, condition, variables);
         }
         parser::Statement::Assign { variable, value } => {
-            trace!(%variable, "Compiling assignment");
-
-            let value_var = compile_expr(ctx, qbe_func, &value, variables);
-            if let Some(existing_var) = variables.get(variable.as_str()) {
-                let assigned_var =
-                    maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &existing_var.1);
-                let existing_type = ctx
-                    .resolved
-                    .type_definitions
-                    .get(&existing_var.1)
-                    .expect("existing variable type should exist");
-                qbe_func.assign_instr(
-                    qbe::Value::Temporary(existing_var.0.clone()),
-                    type_to_qbe(existing_type),
-                    qbe::Instr::Copy(qbe::Value::Temporary(assigned_var)),
-                );
-            } else {
-                let assigned_var =
-                    maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &value_var.1);
-                variables.insert(variable.clone(), (assigned_var, value_var.1));
-            }
+            compile_assign_statement(ctx, qbe_func, variable, value, variables);
         }
+    }
+}
+
+fn compile_conditional_statement(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    condition: &parser::Expression,
+    body: &[parser::Statement],
+    else_body: Option<&[parser::Statement]>,
+    variables: &mut Variables,
+    prove_site_counter: &mut usize,
+) {
+    let then_label = new_id(&["cond", "then"]);
+    let else_label = new_id(&["cond", "else"]);
+    let end_block_label = new_id(&["cond", "end"]);
+
+    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+
+    qbe_func.add_instr(qbe::Instr::Jnz(
+        qbe::Value::Temporary(condition_var),
+        then_label.clone(),
+        if else_body.is_some() {
+            else_label.clone()
+        } else {
+            end_block_label.clone()
+        },
+    ));
+
+    qbe_func.add_block(&then_label);
+    for statement in body {
+        compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
+    }
+    let then_falls_through = !qbe_func.blocks.last().unwrap().jumps();
+    if then_falls_through {
+        qbe_func.add_instr(qbe::Instr::Jmp(end_block_label.clone()));
+    }
+
+    let mut else_falls_through = false;
+    if let Some(else_body) = else_body {
+        qbe_func.add_block(&else_label);
+        for statement in else_body {
+            compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
+        }
+        else_falls_through = !qbe_func.blocks.last().unwrap().jumps();
+        if else_falls_through {
+            qbe_func.add_instr(qbe::Instr::Jmp(end_block_label.clone()));
+        }
+    }
+
+    let needs_end_block = else_body.is_none() || then_falls_through || else_falls_through;
+    if needs_end_block {
+        qbe_func.add_block(&end_block_label);
+    }
+}
+
+fn compile_while_statement(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    condition: &parser::Expression,
+    body: &[parser::Statement],
+    variables: &mut Variables,
+    prove_site_counter: &mut usize,
+) {
+    let condition_label = new_id(&["while", "cond"]);
+    let start_label = new_id(&["while", "start"]);
+    let end_block_label = new_id(&["while", "end"]);
+
+    qbe_func.add_block(condition_label.clone());
+    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+
+    qbe_func.add_instr(qbe::Instr::Jnz(
+        qbe::Value::Temporary(condition_var),
+        start_label.clone(),
+        end_block_label.clone(),
+    ));
+
+    qbe_func.add_block(&start_label);
+    for statement in body {
+        compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
+    }
+    qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
+
+    qbe_func.add_block(&end_block_label);
+}
+
+fn compile_prove_statement(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    condition: &parser::Expression,
+    variables: &mut Variables,
+    prove_site_counter: &mut usize,
+) {
+    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+    let marker_temp = format!("{PROVE_MARKER_PREFIX}{}", *prove_site_counter);
+    *prove_site_counter += 1;
+    qbe_func.assign_instr(
+        qbe::Value::Temporary(marker_temp),
+        qbe::Type::Word,
+        qbe::Instr::Copy(qbe::Value::Temporary(condition_var)),
+    );
+}
+
+fn compile_assert_statement(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    condition: &parser::Expression,
+    variables: &mut Variables,
+) {
+    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+    let assert_pass_label = new_id(&["assert", "pass"]);
+    let assert_fail_label = new_id(&["assert", "fail"]);
+
+    qbe_func.add_instr(qbe::Instr::Jnz(
+        qbe::Value::Temporary(condition_var),
+        assert_pass_label.clone(),
+        assert_fail_label.clone(),
+    ));
+
+    qbe_func.add_block(assert_fail_label);
+    qbe_func.add_instr(qbe::Instr::Call(
+        "exit".to_string(),
+        vec![(qbe::Type::Word, qbe::Value::Const(ASSERT_FAILURE_EXIT_CODE))],
+        None,
+    ));
+    qbe_func.add_instr(qbe::Instr::Hlt);
+
+    qbe_func.add_block(assert_pass_label);
+}
+
+fn compile_assign_statement(
+    ctx: &mut CodegenCtx,
+    qbe_func: &mut qbe::Function,
+    variable: &str,
+    value: &parser::Expression,
+    variables: &mut Variables,
+) {
+    trace!(%variable, "Compiling assignment");
+
+    let value_var = compile_expr(ctx, qbe_func, value, variables);
+    if let Some(existing_var) = variables.get(variable) {
+        let assigned_var = maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &existing_var.1);
+        let existing_type = ctx
+            .resolved
+            .type_definitions
+            .get(&existing_var.1)
+            .expect("existing variable type should exist");
+        qbe_func.assign_instr(
+            qbe::Value::Temporary(existing_var.0.clone()),
+            type_to_qbe(existing_type),
+            qbe::Instr::Copy(qbe::Value::Temporary(assigned_var)),
+        );
+    } else {
+        let assigned_var = maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &value_var.1);
+        variables.insert(variable.to_string(), (assigned_var, value_var.1));
     }
 }
 
@@ -1512,14 +1576,6 @@ fn call_target_symbol(function_name: &str, sig: &ir::FunctionSignature) -> Strin
     sig.extern_symbol_name
         .clone()
         .unwrap_or_else(|| function_name.to_string())
-}
-
-fn trait_method_key(trait_name: &str, method_name: &str) -> String {
-    format!("{trait_name}::{method_name}")
-}
-
-fn trait_impl_method_key(trait_name: &str, for_type: &str, method_name: &str) -> String {
-    format!("{trait_name}::{for_type}::{method_name}")
 }
 
 fn compile_named_call(
@@ -2332,21 +2388,12 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
-    fn compile_and_compare(fixture_name: &str) {
-        let path_str = format!("crates/oac/execution_tests/{}.oa", fixture_name);
-        let path = Path::new(&path_str);
-        let file_contents = std::fs::read_to_string(path)
-            .unwrap_or_else(|_| panic!("Could not read test fixture: {}", path.display()));
-
-        let tokens = tokenize(file_contents).unwrap();
-        let program = parse(tokens).unwrap();
-        let ir = ir::resolve(program).unwrap();
-
+    fn compile_source_to_qbe_ir(source: &str) -> String {
+        let tokens = tokenize(source.to_string()).expect("tokenize source");
+        let program = parse(tokens).expect("parse source");
+        let ir = ir::resolve(program).expect("resolve source");
         let qbe_module = compile_qbe(ir);
-
-        let qbe_ir = format!("{}", qbe_module);
-        insta::assert_snapshot!(qbe_ir);
+        format!("{qbe_module}")
     }
 
     #[test]
@@ -2369,11 +2416,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("call $Option__is_some"),
             "expected namespaced function call in qbe output, got:\n{qbe_ir}"
@@ -2390,11 +2433,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("call $Char__from_code"),
             "expected Char literal lowering call in qbe output, got:\n{qbe_ir}"
@@ -2411,11 +2450,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("call $free"),
             "expected void extern call in qbe output, got:\n{qbe_ir}"
@@ -2453,11 +2488,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("call $memcmp"),
             "expected struct equality lowering via memcmp, got:\n{qbe_ir}"
@@ -2482,11 +2513,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("function l $i32_to_i64"),
             "expected i32_to_i64 helper in qbe output, got:\n{qbe_ir}"
@@ -2516,11 +2543,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("s_1.25"),
             "expected fp32 constant in qbe output, got:\n{qbe_ir}"
@@ -2550,11 +2573,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("d_1.25"),
             "expected fp64 constant in qbe output, got:\n{qbe_ir}"
@@ -2586,11 +2605,7 @@ fun main() -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("cultw"),
             "expected unsigned U8 comparison in qbe output, got:\n{qbe_ir}"
@@ -2621,11 +2636,7 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
 "#
         .to_string();
 
-        let tokens = tokenize(source).expect("tokenize source");
-        let program = parse(tokens).expect("parse source");
-        let ir = ir::resolve(program).expect("resolve source");
-        let qbe_module = compile_qbe(ir);
-        let qbe_ir = format!("{qbe_module}");
+        let qbe_ir = compile_source_to_qbe_ir(&source);
         assert!(
             qbe_ir.contains("function w $load_u8"),
             "expected load_u8 builtin definition in qbe output, got:\n{qbe_ir}"

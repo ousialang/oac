@@ -8,6 +8,7 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 2. Tokenize with `tokenizer::tokenize`.
 3. Parse with `parser::parse`.
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
+   - CLI `build`/`test` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
 5. Resolve/type-check with `ir::resolve`.
 6. Lower to QBE with `qbe_backend::compile`.
 7. Verify `prove(...)` obligations with `prove::verify_prove_obligations_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
@@ -161,7 +162,7 @@ Important enforced invariants include:
 - `qbe-smt` is used by prove verification and struct invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
-- `qbe-smt` is parser-free: it consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`). Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), and `crates/qbe-smt/src/classify.rs` (loop classification).
+- `qbe-smt` is parser-free: it consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`). Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), `crates/qbe-smt/src/encode_extern_models.rs` (extern-call model/arity catalog), and `crates/qbe-smt/src/classify.rs` (loop classification).
 - `qbe-smt` models a broad integer + memory QBE subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - `phi` merging via predecessor-tracking state in CHC (`pred`)
@@ -186,6 +187,7 @@ Important enforced invariants include:
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
+- LSP import crawling for project-symbol indexing now reuses `flat_imports::validate_same_dir_oa_import(...)` so editor-side import acceptance matches compiler import semantics.
 - Symbol indexing includes `extern fun` declarations in document symbols.
 - Completion keywords include `generic`, `specialize`, `trait`, and `impl` (legacy `template`/`instantiate` are removed).
 - Diagnostics are produced from tokenizer/parser/import-resolution/type-resolution through the shared `diagnostics` module and then converted to LSP ranges (`textDocument/publishDiagnostics`), using span labels when available and a `0:0` fallback range otherwise.

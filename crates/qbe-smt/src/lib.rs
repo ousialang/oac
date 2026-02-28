@@ -7,6 +7,7 @@ use thiserror::Error;
 
 mod classify;
 mod encode;
+mod encode_extern_models;
 
 pub use classify::{LoopProof, LoopProofStatus};
 
