@@ -15,6 +15,7 @@ use crate::verification_cycles::{
 };
 
 const Z3_TIMEOUT_SECONDS: u64 = 10;
+const COUNTEREXAMPLE_SEARCH_TIMEOUT_SECONDS: u64 = 2;
 
 #[allow(dead_code)]
 pub fn verify_struct_invariants(
@@ -72,21 +73,25 @@ struct ObligationSite {
 
 fn discover_invariants(
     program: &ResolvedProgram,
-) -> anyhow::Result<HashMap<String, InvariantBinding>> {
+) -> anyhow::Result<HashMap<String, Vec<InvariantBinding>>> {
     discover_struct_invariant_bindings(program)
 }
 
 fn collect_obligation_sites(
     program: &ResolvedProgram,
     reachable: &HashSet<String>,
-    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
 ) -> anyhow::Result<Vec<ObligationSite>> {
     let mut sites = Vec::new();
     let mut functions = reachable.iter().cloned().collect::<Vec<_>>();
     functions.sort();
     let invariant_function_names = invariant_by_struct
         .values()
-        .map(|binding| binding.function_name.as_str())
+        .flat_map(|bindings| {
+            bindings
+                .iter()
+                .map(|binding| binding.function_name.as_str())
+        })
         .collect::<HashSet<_>>();
 
     for function_name in functions {
@@ -132,7 +137,7 @@ fn collect_obligation_sites(
                     continue;
                 };
 
-                let Some(invariant_binding) = invariant_by_struct.get(return_type) else {
+                let Some(invariant_bindings) = invariant_by_struct.get(return_type) else {
                     continue;
                 };
 
@@ -140,18 +145,22 @@ fn collect_obligation_sites(
                     anyhow::anyhow!("missing expression index for path {}", expr_path)
                 })?;
 
-                let id = format!("{}#{}#{}", function_name, top_statement_index, expr_index);
-
-                sites.push(ObligationSite {
-                    id,
-                    caller: function_name.clone(),
-                    callee: callee_name,
-                    callee_call_ordinal: current_ordinal,
-                    struct_name: return_type.clone(),
-                    invariant_fn: invariant_binding.function_name.clone(),
-                    invariant_display_name: invariant_binding.display_name.clone(),
-                    invariant_identifier: invariant_binding.identifier.clone(),
-                });
+                for invariant_binding in invariant_bindings {
+                    let id = format!(
+                        "{}#{}#{}#{}",
+                        function_name, top_statement_index, expr_index, invariant_binding.key
+                    );
+                    sites.push(ObligationSite {
+                        id,
+                        caller: function_name.clone(),
+                        callee: callee_name.clone(),
+                        callee_call_ordinal: current_ordinal,
+                        struct_name: return_type.clone(),
+                        invariant_fn: invariant_binding.function_name.clone(),
+                        invariant_display_name: invariant_binding.display_name.clone(),
+                        invariant_identifier: invariant_binding.identifier.clone(),
+                    });
+                }
             }
         }
     }
@@ -559,7 +568,7 @@ fn solve_obligations_qbe(
     qbe_module: &qbe::Module,
     sites: &[ObligationSite],
     target_dir: &Path,
-    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
 ) -> anyhow::Result<()> {
     let verification_dir = target_dir.join("struct_invariants");
     std::fs::create_dir_all(&verification_dir).with_context(|| {
@@ -964,7 +973,7 @@ fn describe_edge(
 
 fn build_site_checker_module(
     program: &ResolvedProgram,
-    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
     function_map: &HashMap<String, qbe::Function>,
     site: &ObligationSite,
 ) -> anyhow::Result<(qbe::Module, qbe::Function, qbe_smt::ModuleAssumptions)> {
@@ -996,7 +1005,7 @@ fn build_site_checker_module(
 
 fn checker_module_with_reachable_callees(
     program: &ResolvedProgram,
-    invariant_by_struct: &HashMap<String, InvariantBinding>,
+    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
     function_map: &HashMap<String, qbe::Function>,
     checker: &qbe::Function,
     checker_to_program_name: &HashMap<String, String>,
@@ -1369,7 +1378,7 @@ mod tests {
     ) -> anyhow::Result<(
         Vec<ObligationSite>,
         HashMap<String, qbe::Function>,
-        HashMap<String, InvariantBinding>,
+        HashMap<String, Vec<InvariantBinding>>,
     )> {
         let invariants = discover_invariants(program)?;
         let reachable = reachable_user_functions(program, "main")?;
@@ -1407,10 +1416,15 @@ fun main() -> I32 {
         );
 
         let invariants = discover_invariants(&program).expect("discover invariants");
-        let binding = invariants.get("Foo").expect("missing Foo invariant");
-        assert_eq!(binding.function_name, "__struct__Foo__invariant");
-        assert_eq!(binding.display_name, "positive .x");
-        assert_eq!(binding.identifier.as_deref(), Some("positive_x"));
+        let bindings = invariants.get("Foo").expect("missing Foo invariant");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(
+            bindings[0].function_name,
+            "__struct__Foo__invariant__positive_x"
+        );
+        assert_eq!(bindings[0].key, "positive_x");
+        assert_eq!(bindings[0].display_name, "positive .x");
+        assert_eq!(bindings[0].identifier.as_deref(), Some("positive_x"));
     }
 
     #[test]
@@ -1432,12 +1446,14 @@ fun main() -> I32 {
         );
 
         let invariants = discover_invariants(&program).expect("discover invariants");
-        let binding = invariants
+        let bindings = invariants
             .get("LegacyFoo")
             .expect("missing legacy Foo invariant");
-        assert_eq!(binding.function_name, "__struct__LegacyFoo__invariant");
-        assert_eq!(binding.display_name, "__struct__LegacyFoo__invariant");
-        assert_eq!(binding.identifier, None);
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].function_name, "__struct__LegacyFoo__invariant");
+        assert_eq!(bindings[0].key, "legacy");
+        assert_eq!(bindings[0].display_name, "__struct__LegacyFoo__invariant");
+        assert_eq!(bindings[0].identifier, None);
     }
 
     #[test]
@@ -1492,10 +1508,18 @@ fun main() -> I32 {
         );
 
         let invariants = discover_invariants(&program).expect("discover invariants");
-        let binding = invariants.get("BoxI32").expect("missing BoxI32 invariant");
-        assert_eq!(binding.function_name, "__struct__BoxI32__invariant");
-        assert_eq!(binding.display_name, "value must be non-negative");
-        assert_eq!(binding.identifier.as_deref(), Some("non_negative_value"));
+        let bindings = invariants.get("BoxI32").expect("missing BoxI32 invariant");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(
+            bindings[0].function_name,
+            "__struct__BoxI32__invariant__non_negative_value"
+        );
+        assert_eq!(bindings[0].key, "non_negative_value");
+        assert_eq!(bindings[0].display_name, "value must be non-negative");
+        assert_eq!(
+            bindings[0].identifier.as_deref(),
+            Some("non_negative_value")
+        );
     }
 
     #[test]
@@ -1563,6 +1587,85 @@ fun main() -> I32 {
         assert_eq!(sites.len(), 2);
         assert_eq!(sites[0].callee_call_ordinal, 0);
         assert_eq!(sites[1].callee_call_ordinal, 1);
+    }
+
+    #[test]
+    fn creates_one_obligation_per_invariant_at_call_site() {
+        let program = resolve_program(
+            r#"
+struct Counter {
+	value: I32,
+	max: I32,
+}
+
+invariant for (v: Counter) {
+	non_negative_value "counter value must be non-negative" {
+		return v.value >= 0
+	}
+	non_negative_max "counter max must be non-negative" {
+		return v.max >= 0
+	}
+}
+
+fun make_counter(v: I32) -> Counter {
+	return Counter struct { value: v, max: v, }
+}
+
+fun main() -> I32 {
+	c = make_counter(1)
+	return 0
+}
+"#,
+        );
+
+        let invariants = discover_invariants(&program).expect("discover invariants");
+        let reachable = reachable_user_functions(&program, "main").expect("reachable functions");
+        let sites = collect_obligation_sites(&program, &reachable, &invariants).expect("sites");
+
+        assert_eq!(sites.len(), 2);
+        assert_eq!(sites[0].callee_call_ordinal, 0);
+        assert_eq!(sites[1].callee_call_ordinal, 0);
+        assert!(sites[0].id.ends_with("#non_negative_max"));
+        assert!(sites[1].id.ends_with("#non_negative_value"));
+    }
+
+    #[test]
+    fn failure_diagnostic_identifies_exact_invariant_display_and_id() {
+        let program = resolve_program(
+            r#"
+struct Counter {
+	value: I32,
+	max: I32,
+}
+
+invariant non_negative_value "counter value must be non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+invariant non_negative_max "counter max must be non-negative" for (v: Counter) {
+	return v.max >= 0
+}
+
+fun make_counter() -> Counter {
+	return Counter struct { value: 1, max: sub(0, 1), }
+}
+
+fun main() -> I32 {
+	c = make_counter()
+	return 0
+}
+"#,
+        );
+
+        let qbe_module = compile_qbe(&program);
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let err = verify_struct_invariants_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect_err("non_negative_max should fail");
+        let message = err.to_string();
+        assert!(message
+            .contains("invariant=\"counter max must be non-negative (id=non_negative_max)\""));
+        assert!(!message
+            .contains("invariant=\"counter value must be non-negative (id=non_negative_value)\""));
     }
 
     #[test]

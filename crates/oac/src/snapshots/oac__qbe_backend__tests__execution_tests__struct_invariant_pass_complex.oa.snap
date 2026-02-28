@@ -1,10 +1,10 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-assertion_line: 2609
+assertion_line: 2608
 expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
 snapshot_kind: text
 ---
 COMPILATION ERROR
 
 [OAC-INV-001] Error: error[struct-invariant:OAC-INV-001]: struct invariant verification failed: struct invariant verification failed (SAT counterexamples found):
-main#1#0 (caller=main, callee=make_envelope, struct=Envelope, invariant="envelope stays normalized and stable (id=stable_envelope)", witness=cfg_path=b0, bad_ret_temp=%si_bad, qbe_artifact=site_main_1_0.qbe, smt_artifact=site_main_1_0.smt2)
+main#1#0#stable_envelope (caller=main, callee=make_envelope, struct=Envelope, invariant="envelope stays normalized and stable (id=stable_envelope)", witness=cfg_path=b0, bad_ret_temp=%si_bad, qbe_artifact=site_main_1_0_stable_envelope.qbe, smt_artifact=site_main_1_0_stable_envelope.smt2)

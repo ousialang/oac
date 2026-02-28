@@ -125,13 +125,14 @@ Important enforced invariants include:
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`
-- optional struct invariants are declared as `invariant ... for (v: TypeName) { ... }` (optionally named with an identifier); the compiler synthesizes `__struct__<TypeName>__invariant` and also validates legacy explicit invariant functions using that naming/signature pattern
+- optional struct invariants support both single and grouped syntax: `invariant [identifier]? "label" for (v: TypeName) { ... }` and `invariant for (v: TypeName) { [identifier]? "label" { ... } ... }` (display labels required; identifiers optional)
+- each invariant clause is synthesized independently as `__struct__<TypeName>__invariant__<key>` (`<key>` from identifier or deterministic anonymous ordinal such as `anon_0`); legacy explicit invariant functions named `__struct__<TypeName>__invariant(v: TypeName) -> Bool` are still validated/registered
 - `invariant_metadata.rs` centralizes struct-invariant metadata discovery and argument-invariant assumption construction, reused by both `prove` and `struct_invariants` verification entrypoints.
 - `verification_cycles.rs` centralizes reachable user-call graph discovery plus SCC-based recursion-cycle policy checks reused by both `prove` and `struct_invariants`.
 - `prove(...)` sites reachable from `main` are verified by checker QBE synthesis: the site condition is marked in QBE, checker returns `1` when the proof condition is false at the site, and proving asks reachability of exit code `1` (`unsat` = proven, `sat` = compile failure)
-- reachable user-call return sites for struct-typed values are verified with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
+- reachable user-call return sites for struct-typed values are verified per `(call-site, invariant)` with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
 - checker generation is QBE-native and interprocedural: site instrumentation happens on compiled caller QBE, checker artifacts include a checker entry plus reachable user callees, and CHC encoding models user calls through function-summary relations (no checker-time call inlining)
-- checker encoding adds argument preconditions for invariant-bearing parameter types in both pipelines: if a checker function argument’s semantic type has a struct invariant, encoding assumes the invariant relation returns non-zero at function entry (assumption-only; entry memory/heap state is not overwritten from invariant-call outputs)
+- checker encoding adds argument preconditions for invariant-bearing parameter types in both pipelines: if a checker function argument’s semantic type has one or more struct invariants, encoding assumes each invariant relation returns non-zero at function entry (assumption-only; entry memory/heap state is not overwritten from invariant-call outputs)
 - call-only recursion cycles are allowed during struct invariant/prove verification; only cycles that include argument-invariant precondition edges are rejected fail-closed on the combined verification graph
 
 ## Backend (`qbe_backend.rs`)

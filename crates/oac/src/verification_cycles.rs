@@ -199,7 +199,10 @@ fn build_combined_graph(
 
         if let Some(assumptions) = assumption_edges.get(&function_name) {
             for (invariant_function, arg_index) in assumptions {
-                if !program.function_definitions.contains_key(invariant_function) {
+                if !program
+                    .function_definitions
+                    .contains_key(invariant_function)
+                {
                     return Err(anyhow::anyhow!(
                         "missing function definition for invariant precondition target {}",
                         invariant_function
@@ -231,11 +234,17 @@ fn collect_called_user_functions_in_statement(
 ) {
     match statement {
         Statement::StructDef { .. } => {}
-        Statement::Assign { value, .. } => collect_called_user_functions_in_expr(value, program, out),
+        Statement::Assign { value, .. } => {
+            collect_called_user_functions_in_expr(value, program, out)
+        }
         Statement::Return { expr } => collect_called_user_functions_in_expr(expr, program, out),
         Statement::Expression { expr } => collect_called_user_functions_in_expr(expr, program, out),
-        Statement::Prove { condition } => collect_called_user_functions_in_expr(condition, program, out),
-        Statement::Assert { condition } => collect_called_user_functions_in_expr(condition, program, out),
+        Statement::Prove { condition } => {
+            collect_called_user_functions_in_expr(condition, program, out)
+        }
+        Statement::Assert { condition } => {
+            collect_called_user_functions_in_expr(condition, program, out)
+        }
         Statement::Conditional {
             condition,
             body,
@@ -409,7 +418,10 @@ fn render_cycle_edge((from, edge): &(String, VerificationEdge)) -> String {
     }
 }
 
-fn tarjan_scc(adjacency: &HashMap<String, Vec<VerificationEdge>>, nodes: &[String]) -> Vec<Vec<String>> {
+fn tarjan_scc(
+    adjacency: &HashMap<String, Vec<VerificationEdge>>,
+    nodes: &[String],
+) -> Vec<Vec<String>> {
     struct TarjanState<'a> {
         adjacency: &'a HashMap<String, Vec<VerificationEdge>>,
         index: usize,
@@ -440,11 +452,7 @@ fn tarjan_scc(adjacency: &HashMap<String, Vec<VerificationEdge>>, nodes: &[Strin
             self.stack.push(node.to_string());
             self.on_stack.insert(node.to_string());
 
-            let outgoing = self
-                .adjacency
-                .get(node)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
+            let outgoing = self.adjacency.get(node).map(Vec::as_slice).unwrap_or(&[]);
             for edge in outgoing {
                 let target = edge.to.as_str();
                 if !self.index_of.contains_key(target) {

@@ -1301,35 +1301,98 @@ fn parse_generic_params(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Gener
     Ok(params)
 }
 
-fn parse_struct_invariant_declaration(
+fn parse_invariant_name_components(
     tokens: &mut Vec<TokenData>,
-) -> anyhow::Result<StructInvariantDecl> {
+) -> anyhow::Result<(Option<String>, String)> {
+    match tokens.remove(0) {
+        TokenData::String(display_name) => Ok((None, display_name)),
+        TokenData::Word(identifier) => match tokens.remove(0) {
+            TokenData::String(display_name) => Ok((Some(identifier), display_name)),
+            token => Err(anyhow::anyhow!(
+                "expected invariant display name string after identifier, got {:?}",
+                token
+            )),
+        },
+        token => Err(anyhow::anyhow!(
+            "expected invariant display name string or identifier, got {:?}",
+            token
+        )),
+    }
+}
+
+fn parse_grouped_struct_invariant_declarations(
+    tokens: &mut Vec<TokenData>,
+) -> anyhow::Result<Vec<StructInvariantDecl>> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("for".to_string()),
+        "expected 'for' after 'invariant' in grouped declaration"
+    );
+    let parameter = parse_single_parameter(tokens)?;
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected '{{' after grouped invariant header"
+    );
+
+    let mut out = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Word(name)) if name == "invariant" => {
+                return Err(anyhow::anyhow!(
+                    "grouped invariant clauses do not use the inner 'invariant' keyword"
+                ));
+            }
+            Some(_) => {
+                let (identifier, display_name) = parse_invariant_name_components(tokens)?;
+                let body = parse_function_like_body(tokens)?;
+                out.push(StructInvariantDecl {
+                    identifier,
+                    display_name,
+                    parameter: parameter.clone(),
+                    body,
+                });
+            }
+            None => {
+                return Err(anyhow::anyhow!(
+                    "unexpected end of file in grouped invariant declaration"
+                ));
+            }
+        }
+    }
+
+    anyhow::ensure!(
+        !out.is_empty(),
+        "expected at least one invariant clause in grouped declaration"
+    );
+    Ok(out)
+}
+
+fn parse_struct_invariant_declarations(
+    tokens: &mut Vec<TokenData>,
+) -> anyhow::Result<Vec<StructInvariantDecl>> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("invariant".to_string()),
         "expected 'invariant' keyword"
     );
 
-    let (identifier, display_name) = match tokens.remove(0) {
-        TokenData::String(display_name) => (None, display_name),
-        TokenData::Word(identifier) => {
-            let display_name = match tokens.remove(0) {
-                TokenData::String(display_name) => display_name,
-                token => {
-                    return Err(anyhow::anyhow!(
-                        "expected invariant display name string after identifier, got {:?}",
-                        token
-                    ));
-                }
-            };
-            (Some(identifier), display_name)
-        }
-        token => {
-            return Err(anyhow::anyhow!(
-                "expected invariant display name string or identifier, got {:?}",
-                token
-            ));
-        }
-    };
+    if tokens.first() == Some(&TokenData::Word("for".to_string())) {
+        return parse_grouped_struct_invariant_declarations(tokens);
+    }
+
+    let (identifier, display_name) = parse_invariant_name_components(tokens)?;
 
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("for".to_string()),
@@ -1338,12 +1401,12 @@ fn parse_struct_invariant_declaration(
     let parameter = parse_single_parameter(tokens)?;
     let body = parse_function_like_body(tokens)?;
 
-    Ok(StructInvariantDecl {
+    Ok(vec![StructInvariantDecl {
         identifier,
         display_name,
         parameter,
         body,
-    })
+    }])
 }
 
 fn parse_comptime_apply(tokens: &mut Vec<TokenData>) -> anyhow::Result<ComptimeApply> {
@@ -1448,8 +1511,8 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
                 }
             },
             TokenData::Word(name) if name == "invariant" => {
-                let invariant = parse_struct_invariant_declaration(&mut tokens.tokens)?;
-                ast.invariants.push(invariant);
+                let invariants = parse_struct_invariant_declarations(&mut tokens.tokens)?;
+                ast.invariants.extend(invariants);
             }
             TokenData::Word(name) if name == "generic" => {
                 let generic = parse_generic_declaration(&mut tokens.tokens)?;
@@ -1797,8 +1860,8 @@ fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Gene
                 }
             },
             Some(TokenData::Word(name)) if name == "invariant" => {
-                let invariant = parse_struct_invariant_declaration(tokens)?;
-                invariants.push(invariant);
+                let parsed = parse_struct_invariant_declarations(tokens)?;
+                invariants.extend(parsed);
             }
             Some(TokenData::Newline) => {
                 tokens.remove(0);
@@ -2207,6 +2270,44 @@ invariant positive_value "positive .value" for (v: Counter) {
     }
 
     #[test]
+    fn parses_grouped_struct_invariant_declarations() {
+        let source = r#"
+struct Counter {
+	value: I32,
+	max: I32,
+}
+
+invariant for (v: Counter) {
+	non_negative_value "positive .value" {
+		return v.value >= 0
+	}
+
+	"positive .max" {
+		return v.max >= 0
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize grouped invariant source");
+        let ast = parse(tokens).expect("parse grouped invariant source");
+
+        assert_eq!(ast.invariants.len(), 2);
+        assert_eq!(
+            ast.invariants[0].identifier.as_deref(),
+            Some("non_negative_value")
+        );
+        assert_eq!(ast.invariants[0].display_name, "positive .value");
+        assert_eq!(ast.invariants[0].parameter.name, "v");
+        assert_eq!(ast.invariants[0].parameter.ty, "Counter");
+
+        assert_eq!(ast.invariants[1].identifier, None);
+        assert_eq!(ast.invariants[1].display_name, "positive .max");
+        assert_eq!(ast.invariants[1].parameter.name, "v");
+        assert_eq!(ast.invariants[1].parameter.ty, "Counter");
+    }
+
+    #[test]
     fn parses_generic_struct_invariant_declaration() {
         let source = r#"
 generic Box[T] {
@@ -2229,6 +2330,57 @@ generic Box[T] {
         assert_eq!(generic.invariants.len(), 1);
         assert_eq!(generic.invariants[0].display_name, "value must be valid");
         assert_eq!(generic.invariants[0].parameter.ty, "Box");
+    }
+
+    #[test]
+    fn parses_grouped_generic_struct_invariant_declaration() {
+        let source = r#"
+generic Box[T] {
+	struct Box {
+		value: T,
+	}
+
+	invariant for (v: Box) {
+		"value must be valid" {
+			return true
+		}
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize grouped generic invariant source");
+        let ast = parse(tokens).expect("parse grouped generic invariant source");
+
+        assert_eq!(ast.generic_definitions.len(), 1);
+        let generic = &ast.generic_definitions[0];
+        assert_eq!(generic.invariants.len(), 1);
+        assert_eq!(generic.invariants[0].identifier, None);
+        assert_eq!(generic.invariants[0].display_name, "value must be valid");
+        assert_eq!(generic.invariants[0].parameter.name, "v");
+        assert_eq!(generic.invariants[0].parameter.ty, "Box");
+    }
+
+    #[test]
+    fn rejects_grouped_invariant_clause_without_display_name() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant for (v: Counter) {
+	missing_display {
+		return v.value >= 0
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize invalid grouped invariant source");
+        let err = parse(tokens).expect_err("missing display string should fail");
+        assert!(err
+            .to_string()
+            .contains("expected invariant display name string after identifier"));
     }
 
     #[test]
@@ -2659,7 +2811,8 @@ fun main() -> I32 {
         let tokens = tokenize(source).expect("tokenize source");
         let err = parse(tokens).expect_err("unterminated function body must fail");
         assert!(
-            err.to_string().contains("unexpected end of file in function body"),
+            err.to_string()
+                .contains("unexpected end of file in function body"),
             "unexpected error: {err}"
         );
     }
