@@ -1,8 +1,26 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+expression: output
 snapshot_kind: text
 ---
-COMPILATION ERROR
-
-[OAC-PARSE-001] Error: error[parse:OAC-PARSE-001]: failed to parse source: instantiate syntax was removed; use `specialize Alias = Name[T, ...]` instead
+0
+0
+3
+0
+0
+2
+1
+2
+99
+2
+0
+2
+5
+3
+3
+3
+2
+3
+2
+0
+5

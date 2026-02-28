@@ -22,7 +22,9 @@ struct StructInfoValue {
 
 #[derive(Clone, Debug)]
 struct FieldInfoValue {
+    #[allow(dead_code)]
     owner_struct: String,
+    #[allow(dead_code)]
     index: usize,
     name: String,
     ty: String,
@@ -32,6 +34,7 @@ struct FieldInfoValue {
 enum CtValue {
     Bool(bool),
     I32(i32),
+    #[allow(dead_code)]
     I64(i64),
     String(String),
     Type(String),
@@ -39,6 +42,7 @@ enum CtValue {
     FieldInfo(FieldInfoValue),
     DeclSet(DeclSetValue),
     SemanticExpr(String),
+    #[allow(dead_code)]
     SourceSpan(SourceSpan),
     Option {
         inner: Option<Box<CtValue>>,

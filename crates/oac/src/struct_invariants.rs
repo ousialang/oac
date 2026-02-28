@@ -16,6 +16,7 @@ use crate::verification_cycles::{
 
 const Z3_TIMEOUT_SECONDS: u64 = 10;
 
+#[allow(dead_code)]
 pub fn verify_struct_invariants(
     program: &ResolvedProgram,
     target_dir: &Path,
@@ -733,7 +734,7 @@ fn is_sat_for_main_argc_range(
     )
     .ok()?;
 
-    match qbe_smt::solve_chc_script(&smt, COUNTEREXAMPLE_SEARCH_TIMEOUT_SECONDS).ok()? {
+    match qbe_smt::solve_chc_script(&smt, Z3_TIMEOUT_SECONDS).ok()? {
         qbe_smt::SolverResult::Sat => Some(true),
         qbe_smt::SolverResult::Unsat => Some(false),
         qbe_smt::SolverResult::Unknown => None,

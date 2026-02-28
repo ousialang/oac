@@ -134,6 +134,7 @@ pub struct StructInvariantDecl {
 
 #[derive(Clone, Debug, Serialize)]
 pub enum Statement {
+    #[allow(dead_code)]
     StructDef {
         def: StructDef,
     },

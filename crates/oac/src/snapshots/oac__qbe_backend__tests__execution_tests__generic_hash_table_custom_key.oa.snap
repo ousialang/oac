@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-[OAC-RESOLVE-001] Error: error[resolve:OAC-RESOLVE-001]: failed to resolve/type-check program: unsupported call target FieldAccess { struct_variable: "UserTable", field: "empty" }
+[OAC-INV-001] Error: error[struct-invariant:OAC-INV-001]: struct invariant verification failed: solver returned unknown for UserTable__insert_all_buckets#0#13

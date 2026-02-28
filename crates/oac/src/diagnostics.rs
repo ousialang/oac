@@ -111,6 +111,7 @@ impl CompilerDiagnostic {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self
@@ -120,6 +121,7 @@ impl CompilerDiagnostic {
         self.render_with_color(false)
     }
 
+    #[allow(dead_code)]
     pub fn render_terminal_auto(&self) -> String {
         self.render_with_color(std::io::stderr().is_terminal())
     }
@@ -234,6 +236,7 @@ impl CompilerDiagnosticBundle {
         ))
     }
 
+    #[allow(dead_code)]
     pub fn push(&mut self, diagnostic: CompilerDiagnostic) {
         self.diagnostics.push(diagnostic);
     }
@@ -339,6 +342,7 @@ pub fn sanitize_span(span: &Range<usize>) -> Range<usize> {
     }
 }
 
+#[allow(dead_code)]
 pub fn char_index_to_byte_index(source: &str, char_index: usize) -> usize {
     source
         .char_indices()
