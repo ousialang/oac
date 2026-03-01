@@ -2053,208 +2053,311 @@ fn expand_generics(
                     specialization.alias
                 )
             })?;
-
-        if generic.params.len() != specialization.concrete_types.len() {
-            return Err(anyhow::anyhow!(
-                "generic {} expects {} type arguments in specialization {}, got {}",
-                generic.name,
-                generic.params.len(),
-                specialization.alias,
-                specialization.concrete_types.len()
-            ));
-        }
-
-        let mut type_substitution_map: HashMap<String, String> = HashMap::new();
-        for (parameter, concrete_type) in generic.params.iter().zip(&specialization.concrete_types)
-        {
-            type_substitution_map.insert(parameter.name.clone(), concrete_type.clone());
-            for bound in &parameter.bounds {
-                if !declared_traits.contains(bound) {
-                    return Err(anyhow::anyhow!(
-                        "unknown trait bound {} for parameter {} in generic {}",
-                        bound,
-                        parameter.name,
-                        generic.name
-                    ));
-                }
-                let impl_target = trait_impl_target_key(bound, concrete_type);
-                if !trait_impl_targets.contains(&impl_target) {
-                    return Err(anyhow::anyhow!(
-                        "missing impl {} for {} required by generic {} parameter {} in specialization {}",
-                        bound,
-                        concrete_type,
-                        generic.name,
-                        parameter.name,
-                        specialization.alias
-                    ));
-                }
-            }
-        }
-
-        let mut local_type_name_map: HashMap<String, String> = HashMap::new();
-        for type_def in &generic.type_definitions {
-            let local_name = type_def_name(type_def).to_string();
-            let mapped_name = if local_name == generic.name {
-                specialization.alias.clone()
-            } else {
-                format!("{}__{}", specialization.alias, local_name)
-            };
-            local_type_name_map.insert(local_name, mapped_name);
-        }
-
-        if !local_type_name_map.contains_key(&generic.name) {
-            return Err(anyhow::anyhow!(
-                "generic {} must define a primary type named {}",
-                generic.name,
-                generic.name
-            ));
-        }
-
-        let mut local_function_name_map: HashMap<String, String> = HashMap::new();
-        for function in &generic.top_level_functions {
-            local_function_name_map.insert(
-                function.name.clone(),
-                format!("{}__{}", specialization.alias, function.name),
-            );
-        }
-
-        for mapped_name in local_type_name_map.values() {
-            if !used_type_names.insert(mapped_name.clone()) {
-                return Err(anyhow::anyhow!(
-                    "duplicate generated type name {} from specialization {}",
-                    mapped_name,
-                    specialization.alias
-                ));
-            }
-        }
-        for mapped_name in local_function_name_map.values() {
-            if !used_function_names.insert(mapped_name.clone()) {
-                return Err(anyhow::anyhow!(
-                    "duplicate generated function name {} from specialization {}",
-                    mapped_name,
-                    specialization.alias
-                ));
-            }
-        }
-
-        for type_def in &generic.type_definitions {
-            let rewritten = match type_def {
-                parser::TypeDefDecl::Struct(struct_def) => {
-                    parser::TypeDefDecl::Struct(parser::StructDef {
-                        name: local_type_name_map
-                            .get(&struct_def.name)
-                            .cloned()
-                            .unwrap_or_else(|| struct_def.name.clone()),
-                        struct_fields: struct_def
-                            .struct_fields
-                            .iter()
-                            .map(|field| parser::StructField {
-                                name: field.name.clone(),
-                                ty: rewrite_type_ref(
-                                    &field.ty,
-                                    &type_substitution_map,
-                                    &local_type_name_map,
-                                ),
-                            })
-                            .collect(),
-                    })
-                }
-                parser::TypeDefDecl::Enum(enum_def) => parser::TypeDefDecl::Enum(parser::EnumDef {
-                    name: local_type_name_map
-                        .get(&enum_def.name)
-                        .cloned()
-                        .unwrap_or_else(|| enum_def.name.clone()),
-                    variants: enum_def
-                        .variants
-                        .iter()
-                        .map(|variant| parser::EnumVariantDef {
-                            name: variant.name.clone(),
-                            payload_ty: variant.payload_ty.as_ref().map(|payload_ty| {
-                                rewrite_type_ref(
-                                    payload_ty,
-                                    &type_substitution_map,
-                                    &local_type_name_map,
-                                )
-                            }),
-                        })
-                        .collect(),
-                }),
-            };
-            generated_type_defs.push(rewritten);
-        }
-
-        for function in &generic.top_level_functions {
-            generated_functions.push(parser::Function {
-                name: local_function_name_map
-                    .get(&function.name)
-                    .cloned()
-                    .unwrap_or_else(|| function.name.clone()),
-                extern_symbol_name: function.extern_symbol_name.clone(),
-                parameters: function
-                    .parameters
-                    .iter()
-                    .map(|param| parser::Parameter {
-                        name: param.name.clone(),
-                        ty: rewrite_type_ref(
-                            &param.ty,
-                            &type_substitution_map,
-                            &local_type_name_map,
-                        ),
-                    })
-                    .collect(),
-                body: function
-                    .body
-                    .iter()
-                    .map(|statement| {
-                        rewrite_statement(
-                            statement,
-                            &type_substitution_map,
-                            &local_type_name_map,
-                            &local_function_name_map,
-                        )
-                    })
-                    .collect(),
-                return_type: rewrite_type_ref(
-                    &function.return_type,
-                    &type_substitution_map,
-                    &local_type_name_map,
-                ),
-                is_comptime: function.is_comptime,
-                is_extern: function.is_extern,
-            });
-        }
-
-        for invariant in &generic.invariants {
-            generated_invariants.push(parser::StructInvariantDecl {
-                identifier: invariant.identifier.clone(),
-                display_name: invariant.display_name.clone(),
-                parameter: parser::Parameter {
-                    name: invariant.parameter.name.clone(),
-                    ty: rewrite_type_ref(
-                        &invariant.parameter.ty,
-                        &type_substitution_map,
-                        &local_type_name_map,
-                    ),
-                },
-                body: invariant
-                    .body
-                    .iter()
-                    .map(|statement| {
-                        rewrite_statement(
-                            statement,
-                            &type_substitution_map,
-                            &local_type_name_map,
-                            &local_function_name_map,
-                        )
-                    })
-                    .collect(),
-            });
-        }
+        let mut active_generic_stack = Vec::new();
+        expand_one_generic_specialization(
+            generic,
+            &specialization.alias,
+            &specialization.concrete_types,
+            &generics_by_name,
+            &declared_traits,
+            trait_impl_targets,
+            &mut used_type_names,
+            &mut used_function_names,
+            &mut generated_type_defs,
+            &mut generated_functions,
+            &mut generated_invariants,
+            &mut active_generic_stack,
+        )?;
     }
 
     ast.type_definitions.extend(generated_type_defs);
     ast.top_level_functions.extend(generated_functions);
     ast.invariants.extend(generated_invariants);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_one_generic_specialization(
+    generic: &parser::GenericDef,
+    specialization_alias: &str,
+    concrete_types: &[String],
+    generics_by_name: &HashMap<String, parser::GenericDef>,
+    declared_traits: &HashSet<String>,
+    trait_impl_targets: &HashSet<String>,
+    used_type_names: &mut HashSet<String>,
+    used_function_names: &mut HashSet<String>,
+    generated_type_defs: &mut Vec<parser::TypeDefDecl>,
+    generated_functions: &mut Vec<parser::Function>,
+    generated_invariants: &mut Vec<parser::StructInvariantDecl>,
+    active_generic_stack: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    if generic.params.len() != concrete_types.len() {
+        return Err(anyhow::anyhow!(
+            "generic {} expects {} type arguments in specialization {}, got {}",
+            generic.name,
+            generic.params.len(),
+            specialization_alias,
+            concrete_types.len()
+        ));
+    }
+
+    if active_generic_stack.contains(&generic.name) {
+        let mut cycle = active_generic_stack.clone();
+        cycle.push(generic.name.clone());
+        return Err(anyhow::anyhow!(
+            "generic specialization cycle detected: {}",
+            cycle.join(" -> ")
+        ));
+    }
+    active_generic_stack.push(generic.name.clone());
+
+    let mut type_substitution_map: HashMap<String, String> = HashMap::new();
+    for (parameter, concrete_type) in generic.params.iter().zip(concrete_types) {
+        type_substitution_map.insert(parameter.name.clone(), concrete_type.clone());
+        for bound in &parameter.bounds {
+            if !declared_traits.contains(bound) {
+                return Err(anyhow::anyhow!(
+                    "unknown trait bound {} for parameter {} in generic {}",
+                    bound,
+                    parameter.name,
+                    generic.name
+                ));
+            }
+            let impl_target = trait_impl_target_key(bound, concrete_type);
+            if !trait_impl_targets.contains(&impl_target) {
+                return Err(anyhow::anyhow!(
+                    "missing impl {} for {} required by generic {} parameter {} in specialization {}",
+                    bound,
+                    concrete_type,
+                    generic.name,
+                    parameter.name,
+                    specialization_alias
+                ));
+            }
+        }
+    }
+
+    let mut local_type_name_map: HashMap<String, String> = HashMap::new();
+    for type_def in &generic.type_definitions {
+        let local_name = type_def_name(type_def).to_string();
+        let mapped_name = if local_name == generic.name {
+            specialization_alias.to_string()
+        } else {
+            format!("{specialization_alias}__{local_name}")
+        };
+        local_type_name_map.insert(local_name, mapped_name);
+    }
+
+    for local_specialization in &generic.generic_specializations {
+        let mapped_name = format!("{specialization_alias}__{}", local_specialization.alias);
+        if local_type_name_map
+            .insert(local_specialization.alias.clone(), mapped_name)
+            .is_some()
+        {
+            return Err(anyhow::anyhow!(
+                "duplicate local specialization alias {} in generic {}",
+                local_specialization.alias,
+                generic.name
+            ));
+        }
+    }
+
+    if !local_type_name_map.contains_key(&generic.name) {
+        return Err(anyhow::anyhow!(
+            "generic {} must define a primary type named {}",
+            generic.name,
+            generic.name
+        ));
+    }
+
+    let mut local_function_name_map: HashMap<String, String> = HashMap::new();
+    for function in &generic.top_level_functions {
+        local_function_name_map.insert(
+            function.name.clone(),
+            format!("{specialization_alias}__{}", function.name),
+        );
+    }
+
+    for type_def in &generic.type_definitions {
+        let local_name = type_def_name(type_def);
+        let Some(mapped_name) = local_type_name_map.get(local_name) else {
+            return Err(anyhow::anyhow!(
+                "internal generic expansion error: missing mapped type name {} in specialization {}",
+                local_name,
+                specialization_alias
+            ));
+        };
+        if !used_type_names.insert(mapped_name.clone()) {
+            return Err(anyhow::anyhow!(
+                "duplicate generated type name {} from specialization {}",
+                mapped_name,
+                specialization_alias
+            ));
+        }
+    }
+    for mapped_name in local_function_name_map.values() {
+        if !used_function_names.insert(mapped_name.clone()) {
+            return Err(anyhow::anyhow!(
+                "duplicate generated function name {} from specialization {}",
+                mapped_name,
+                specialization_alias
+            ));
+        }
+    }
+
+    for type_def in &generic.type_definitions {
+        let rewritten = match type_def {
+            parser::TypeDefDecl::Struct(struct_def) => {
+                parser::TypeDefDecl::Struct(parser::StructDef {
+                    name: local_type_name_map
+                        .get(&struct_def.name)
+                        .cloned()
+                        .unwrap_or_else(|| struct_def.name.clone()),
+                    struct_fields: struct_def
+                        .struct_fields
+                        .iter()
+                        .map(|field| parser::StructField {
+                            name: field.name.clone(),
+                            ty: rewrite_type_ref(
+                                &field.ty,
+                                &type_substitution_map,
+                                &local_type_name_map,
+                            ),
+                        })
+                        .collect(),
+                })
+            }
+            parser::TypeDefDecl::Enum(enum_def) => parser::TypeDefDecl::Enum(parser::EnumDef {
+                name: local_type_name_map
+                    .get(&enum_def.name)
+                    .cloned()
+                    .unwrap_or_else(|| enum_def.name.clone()),
+                variants: enum_def
+                    .variants
+                    .iter()
+                    .map(|variant| parser::EnumVariantDef {
+                        name: variant.name.clone(),
+                        payload_ty: variant.payload_ty.as_ref().map(|payload_ty| {
+                            rewrite_type_ref(
+                                payload_ty,
+                                &type_substitution_map,
+                                &local_type_name_map,
+                            )
+                        }),
+                    })
+                    .collect(),
+            }),
+        };
+        generated_type_defs.push(rewritten);
+    }
+
+    for function in &generic.top_level_functions {
+        generated_functions.push(parser::Function {
+            name: local_function_name_map
+                .get(&function.name)
+                .cloned()
+                .unwrap_or_else(|| function.name.clone()),
+            extern_symbol_name: function.extern_symbol_name.clone(),
+            parameters: function
+                .parameters
+                .iter()
+                .map(|param| parser::Parameter {
+                    name: param.name.clone(),
+                    ty: rewrite_type_ref(&param.ty, &type_substitution_map, &local_type_name_map),
+                })
+                .collect(),
+            body: function
+                .body
+                .iter()
+                .map(|statement| {
+                    rewrite_statement(
+                        statement,
+                        &type_substitution_map,
+                        &local_type_name_map,
+                        &local_function_name_map,
+                    )
+                })
+                .collect(),
+            return_type: rewrite_type_ref(
+                &function.return_type,
+                &type_substitution_map,
+                &local_type_name_map,
+            ),
+            is_comptime: function.is_comptime,
+            is_extern: function.is_extern,
+        });
+    }
+
+    for invariant in &generic.invariants {
+        generated_invariants.push(parser::StructInvariantDecl {
+            identifier: invariant.identifier.clone(),
+            display_name: invariant.display_name.clone(),
+            parameter: parser::Parameter {
+                name: invariant.parameter.name.clone(),
+                ty: rewrite_type_ref(
+                    &invariant.parameter.ty,
+                    &type_substitution_map,
+                    &local_type_name_map,
+                ),
+            },
+            body: invariant
+                .body
+                .iter()
+                .map(|statement| {
+                    rewrite_statement(
+                        statement,
+                        &type_substitution_map,
+                        &local_type_name_map,
+                        &local_function_name_map,
+                    )
+                })
+                .collect(),
+        });
+    }
+
+    for local_specialization in &generic.generic_specializations {
+        let local_generic = generics_by_name
+            .get(&local_specialization.generic_name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown generic {} in local specialization {} inside generic {}",
+                    local_specialization.generic_name,
+                    local_specialization.alias,
+                    generic.name
+                )
+            })?;
+        let local_alias = local_type_name_map
+            .get(&local_specialization.alias)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "internal generic expansion error: unresolved local specialization alias {} in generic {}",
+                    local_specialization.alias,
+                    generic.name
+                )
+            })?;
+        let rewritten_concrete_types = local_specialization
+            .concrete_types
+            .iter()
+            .map(|ty| rewrite_type_ref(ty, &type_substitution_map, &local_type_name_map))
+            .collect::<Vec<_>>();
+        expand_one_generic_specialization(
+            local_generic,
+            &local_alias,
+            &rewritten_concrete_types,
+            generics_by_name,
+            declared_traits,
+            trait_impl_targets,
+            used_type_names,
+            used_function_names,
+            generated_type_defs,
+            generated_functions,
+            generated_invariants,
+            active_generic_stack,
+        )?;
+    }
+
+    active_generic_stack.pop();
     Ok(())
 }
 
@@ -4104,6 +4207,50 @@ fun main() -> I32 {
         assert!(resolved
             .function_definitions
             .contains_key("IntIdentity__value"));
+    }
+
+    #[test]
+    fn resolve_expands_local_specialization_in_generic_body() {
+        let source = r#"
+generic Wrapper[T] {
+	struct Wrapper {
+		value: T,
+	}
+
+	specialize MaybeValue = Option[T]
+
+	fun wrap(value: T) -> MaybeValue {
+		return MaybeValue.Some(value)
+	}
+
+	fun unwrap_or(v: MaybeValue, fallback: T) -> T {
+		return match v {
+			MaybeValue.None => fallback
+			MaybeValue.Some(value) => value
+		}
+	}
+}
+
+specialize I32Wrapper = Wrapper[I32]
+
+fun main() -> I32 {
+	maybe = I32Wrapper.wrap(7)
+	return I32Wrapper.unwrap_or(maybe, 1)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        assert!(resolved
+            .type_definitions
+            .contains_key("I32Wrapper__MaybeValue"));
+        assert!(resolved.function_sigs.contains_key("I32Wrapper__wrap"));
+        assert!(resolved
+            .function_sigs
+            .contains_key("I32Wrapper__MaybeValue__unwrap_or"));
     }
 
     #[test]

@@ -45,6 +45,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 ## Current Syntax Notes
 
 - Generics use square brackets for type parameters and specialization arguments: `generic Option[T] { ... }`, `specialize OptionI32 = Option[I32]`.
+- Generic bodies also support local specialization aliases (`specialize LocalAlias = Name[TypeArgs...]`) so generic helpers can reuse other generics after specialization.
 - Traits are declaration-only method signature blocks: `trait Hash { fun hash(v: Self) -> I32 }`.
 - Trait implementations are explicit and concrete-only in v1: `impl Hash for I32 { fun hash(v: I32) -> I32 { ... } }`.
 - Generic bounds are inline on parameters: `generic HashTable[K: Hash + Eq, V] { ... }`.
@@ -64,7 +65,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `crates/oac/src/std/std_json.oa` now defines a structured JSON value surface (`JsonValue`, `JsonMembers`, `JsonValues`) plus typed lookup helpers (`Json.object_get`, `Json.array_get`, `Json.value_string`, `Json.value_number`) so callers can parse into and inspect object/array trees.
 - JSON booleans in the structured value surface now use payload form `JsonValue.Bool(Bool)` (replacing separate `True`/`False` variants), and `JsonKind` now reports booleans as `JsonKind.Bool`.
 - JSON string scanning in `crates/oac/src/std/std_json.oa` now accepts `\uXXXX` escape forms (hex-validated, fail-closed on malformed escapes).
-- The split stdlib collections now expose a richer persistent `LinkedList` template API: cached length via `len`/`length` (O(1) from node metadata), constructors/helpers (`empty`, `singleton`, `cons`, `push_front`), accessors (`front`, `tail`, `pop_front`, `at`, `at_or`), transforms (`append`, `reverse`, `take`, `drop`), and compatibility wrappers (`head_or`, `tail_or`, `length`).
+- The split stdlib collections now expose a richer persistent `LinkedList` template API: cached length via `len`/`length` (O(1) from node metadata), constructors/helpers (`empty`, `singleton`, `cons`, `push_front`), accessors (`front`, `tail`, `pop_front`, `at`, `at_or`), transforms (`append`, `reverse`, `take`, `drop`), and compatibility wrappers (`head_or`, `tail_or`, `length`); accessors now use local `Option` specializations (`FrontOption`, `TailOption`, `PopFrontOption`).
 - `LinkedList[T]::Node` now carries a declaration-based struct invariant (`len >= 1`), and `LinkedList.make_node` normalizes/saturates cached `len` metadata before constructing nodes to keep that invariant provable fail-closed.
 - The stdlib also exposes `AsciiChar` and `AsciiCharResult` with namespaced helpers (`AsciiChar.from_code`, `AsciiChar.from_string_at`, `AsciiChar.code`, `AsciiChar.is_digit`, `AsciiChar.is_whitespace`, `AsciiChar.equals`); `AsciiChar` stores a wrapped `Char`.
 - The stdlib also exposes `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with namespaced helpers (`Char.from_code`, `Char.code`, `Char.equals`).
