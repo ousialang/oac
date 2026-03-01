@@ -125,8 +125,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `qbe-smt` is CHC-only (fixedpoint/Spacer): it emits Horn-style transition rules over QBE and always queries whether halting with `exit == 1` is reachable. Encoder scripts use `(set-logic HORN)` for non-FP obligations and `(set-logic ALL)` when reachable FP32 or FP64 operations are present.
 - `qbe-smt` is strict fail-closed: unsupported instructions/operations are hard encoding errors (no conservative havoc fallback).
 - `qbe-smt` is parser-free and consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`).
-- `qbe-smt` now supports FP32/FP64 obligations end-to-end in prove/struct-invariant checking for the currently emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, and `loads`/`stores`) using SMT IEEE floating-point semantics with `RNE`.
-- `qbe-smt` remains fail-closed for unsupported float conversion ops (`exts`, `truncd`, `stosi`, `stoui`, `dtosi`, `dtoui`, `swtof`, `uwtof`, `sltof`, `ultof`).
+- `qbe-smt` now supports FP32/FP64 obligations end-to-end in prove/struct-invariant checking for the currently emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, `exts`/`truncd`, `stosi`/`stoui`/`dtosi`/`dtoui` with `RTZ`, `swtof`/`uwtof`/`sltof`/`ultof` with `RNE`, and `loads`/`stores`) using SMT IEEE floating-point semantics.
+- Float-conversion edge cases follow solver IEEE-SMT semantics in `qbe-smt` and may differ from CPU-specific runtime behavior for NaN/out-of-range float-to-int conversions.
+- `qbe-smt` remains fail-closed for unsupported instructions and invalid conversion assignment-type combinations.
 - Snapshot coverage now includes float-literal tokenizer fixtures and a parser AST snapshot regression (`parser_float_literals_ast`) to lock float literal parsing behavior.
 - `qbe-smt` CHC state now tracks predecessor-block identity (`pred`) so `phi` assignments are modeled directly in Horn transitions (with predecessor guards), instead of being rejected.
 - `qbe-smt` source split: `lib.rs` (public API + tests), `encode.rs` (core CHC/Horn encoding), `encode_extern_models.rs` (extern call model catalog/arity), `classify.rs` (loop classification).

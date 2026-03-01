@@ -132,8 +132,9 @@ Observed in parser/IR implementation:
 - Prove obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
 - Struct-invariant proof obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
-- `qbe-smt` supports FP32/FP64 obligations during prove/struct-invariant checking for the emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, and FP32/FP64 `loads`/`stores`) using IEEE floating-point semantics with `RNE`.
-- `qbe-smt` remains fail-closed for unsupported float conversion operations.
+- `qbe-smt` supports FP32/FP64 obligations during prove/struct-invariant checking for the emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, `exts`/`truncd`, `stosi`/`stoui`/`dtosi`/`dtoui`, `swtof`/`uwtof`/`sltof`/`ultof`, and FP32/FP64 `loads`/`stores`) using IEEE floating-point semantics (`RNE` for arithmetic/int->FP, `RTZ` for FP->int and `truncd`).
+- Float-conversion edge cases in proving follow solver IEEE-SMT semantics and may differ from CPU-specific runtime behavior for NaN/out-of-range float-to-int conversions.
+- `qbe-smt` remains fail-closed for unsupported operations and invalid conversion assignment-type combinations.
 - `qbe-smt` models `call $exit(code)` as a halting transition with `exit` state set from `code`.
 - `qbe-smt` also models known CLib calls (`malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`) plus variadic `printf` for builtin `print` inlined paths.
 - CLib byte-memory call models use bounded precise expansion (`limit = 16`) with sound fallback branches; unknown extern call targets remain fail-closed unsupported errors.
