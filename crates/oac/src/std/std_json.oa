@@ -14,8 +14,7 @@ enum JsonKind {
 	Array,
 	String,
 	Number,
-	True,
-	False,
+	Bool,
 	Null,
 	Invalid,
 }
@@ -25,8 +24,7 @@ enum JsonValue {
 	Array(JsonValues),
 	String(String),
 	Number(String),
-	True,
-	False,
+	Bool(Bool),
 	Null,
 }
 
@@ -458,12 +456,12 @@ namespace Json {
 
 		keyword_end = Json.parse_keyword_at(s, "true", i)
 		if keyword_end != Json.parse_fail() {
-			return Json.parsed_json_value_ok(JsonValue.True, keyword_end)
+			return Json.parsed_json_value_ok(JsonValue.Bool(true), keyword_end)
 		}
 
 		keyword_end = Json.parse_keyword_at(s, "false", i)
 		if keyword_end != Json.parse_fail() {
-			return Json.parsed_json_value_ok(JsonValue.False, keyword_end)
+			return Json.parsed_json_value_ok(JsonValue.Bool(false), keyword_end)
 		}
 
 		keyword_end = Json.parse_keyword_at(s, "null", i)
@@ -586,8 +584,7 @@ namespace Json {
 			JsonValue.Array(_values) => JsonKind.Array
 			JsonValue.String(_text) => JsonKind.String
 			JsonValue.Number(_text) => JsonKind.Number
-			JsonValue.True => JsonKind.True
-			JsonValue.False => JsonKind.False
+			JsonValue.Bool(_bool) => JsonKind.Bool
 			JsonValue.Null => JsonKind.Null
 		}
 	}
@@ -598,8 +595,7 @@ namespace Json {
 			JsonValue.Array(_values) => 0
 			JsonValue.String(_text) => 0
 			JsonValue.Number(_text) => 0
-			JsonValue.True => 0
-			JsonValue.False => 0
+			JsonValue.Bool(_bool) => 0
 			JsonValue.Null => 0
 		}
 	}
@@ -610,8 +606,7 @@ namespace Json {
 			JsonValue.Object(_members) => 0
 			JsonValue.String(_text) => 0
 			JsonValue.Number(_text) => 0
-			JsonValue.True => 0
-			JsonValue.False => 0
+			JsonValue.Bool(_bool) => 0
 			JsonValue.Null => 0
 		}
 	}
@@ -622,8 +617,7 @@ namespace Json {
 			JsonValue.Array(_values) => JsonValueLookup.Missing
 			JsonValue.String(_text) => JsonValueLookup.Missing
 			JsonValue.Number(_text) => JsonValueLookup.Missing
-			JsonValue.True => JsonValueLookup.Missing
-			JsonValue.False => JsonValueLookup.Missing
+			JsonValue.Bool(_bool) => JsonValueLookup.Missing
 			JsonValue.Null => JsonValueLookup.Missing
 		}
 	}
@@ -634,8 +628,7 @@ namespace Json {
 			JsonValue.Object(_members) => JsonValueLookup.Missing
 			JsonValue.String(_text) => JsonValueLookup.Missing
 			JsonValue.Number(_text) => JsonValueLookup.Missing
-			JsonValue.True => JsonValueLookup.Missing
-			JsonValue.False => JsonValueLookup.Missing
+			JsonValue.Bool(_bool) => JsonValueLookup.Missing
 			JsonValue.Null => JsonValueLookup.Missing
 		}
 	}
@@ -646,8 +639,7 @@ namespace Json {
 			JsonValue.Object(_members) => JsonStringLookup.Missing
 			JsonValue.Array(_values) => JsonStringLookup.Missing
 			JsonValue.Number(_text) => JsonStringLookup.Missing
-			JsonValue.True => JsonStringLookup.Missing
-			JsonValue.False => JsonStringLookup.Missing
+			JsonValue.Bool(_bool) => JsonStringLookup.Missing
 			JsonValue.Null => JsonStringLookup.Missing
 		}
 	}
@@ -658,8 +650,7 @@ namespace Json {
 			JsonValue.Object(_members) => JsonStringLookup.Missing
 			JsonValue.Array(_values) => JsonStringLookup.Missing
 			JsonValue.String(_text) => JsonStringLookup.Missing
-			JsonValue.True => JsonStringLookup.Missing
-			JsonValue.False => JsonStringLookup.Missing
+			JsonValue.Bool(_bool) => JsonStringLookup.Missing
 			JsonValue.Null => JsonStringLookup.Missing
 		}
 	}

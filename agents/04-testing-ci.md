@@ -203,6 +203,7 @@ Key tests:
   - `std_string_helpers.oa` (`String.equals`, `String.starts_with`, `String.ends_with`, `String.char_at_or`, `String.slice_clamped`, `String.is_empty`)
 - Stdlib namespacing coverage in execution fixtures:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, `json_scan_utils.oa`, and `json_value_parser.oa`.
+  - JSON kind/value coverage now treats booleans as unified `Bool` variants (`JsonKind.Bool` and `JsonValue.Bool(Bool)`).
   - `json_value_parser.oa` specifically covers structured value parsing (`Json.parse_json_document_value_result`) with object/array lookup helpers (`Json.object_get`, `Json.array_get`) and scalar payload extraction helpers (`Json.value_string`, `Json.value_number`), including `\uXXXX`-escape acceptance and malformed-escape rejection.
   - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).
   - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), result-enum accessors (`front` / `tail` / `pop_front`), and transform helpers (`append`, `reverse`, `take`, `drop`, `at`, `at_or`) in addition to compatibility wrappers.

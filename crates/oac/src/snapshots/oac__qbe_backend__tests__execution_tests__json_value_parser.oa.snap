@@ -1,6 +1,6 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-assertion_line: 2808
+assertion_line: 2804
 expression: snapshot_content
 snapshot_kind: text
 ---
@@ -23,7 +23,7 @@ snapshot_kind: text
 1
 1
 1
-2
+1
 1
 3
 0

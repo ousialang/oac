@@ -1,10 +1,7 @@
 fun print_kind(src: String) -> I32 {
 	match Json.json_kind(src) {
-		JsonKind.True => {
+		JsonKind.Bool => {
 			print(1)
-		}
-		JsonKind.False => {
-			print(2)
 		}
 		JsonKind.Null => {
 			print(3)
