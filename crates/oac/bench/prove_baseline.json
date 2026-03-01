@@ -58,7 +58,7 @@
     {
       "id": "template_hash_table_i32",
       "source": "crates/oac/execution_tests/template_hash_table_i32.oa",
-      "expected_code": "OAC-INV-001",
+      "expected_code": null,
       "baseline_elapsed_ms": 11015,
       "baseline_prove_smt2_count": 0,
       "baseline_prove_smt2_bytes": 0,

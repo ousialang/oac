@@ -133,6 +133,9 @@ Observed in parser/IR implementation:
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).
 - Prove obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
 - Struct-invariant proof obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
+- Verification outcome classes are `{sat, unsat, unknown}` per obligation; `sat`/`unsat` interpretation is unchanged (`sat` fail, `unsat` pass), and `unknown` remains fail-closed.
+- Outcome-migration policy for unknown mitigation is strict: only baseline `unknown` obligations may change outcome; baseline `sat`/`unsat` obligations must remain unchanged.
+- Default solver retry behavior is `10s` then `30s`; candidate profile may add a third attempt for large obligations still `unknown`, controlled by `OAC_Z3_LARGE_OBLIGATION_BYTES` and `OAC_Z3_TIMEOUT_LARGE_OBLIGATION_SECS`.
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
 - `qbe-smt` supports FP32/FP64 obligations during prove/struct-invariant checking for the emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, `exts`/`truncd`, `stosi`/`stoui`/`dtosi`/`dtoui`, `swtof`/`uwtof`/`sltof`/`ultof`, and FP32/FP64 `loads`/`stores`) using IEEE floating-point semantics (`RNE` for arithmetic/int->FP, `RTZ` for FP->int and `truncd`).
 - Float-conversion edge cases in proving follow solver IEEE-SMT semantics and may differ from CPU-specific runtime behavior for NaN/out-of-range float-to-int conversions.

@@ -162,6 +162,24 @@ pub fn solve_chc_script_with_diagnostics(
     timeout_seconds: u64,
 ) -> Result<SolverRun, QbeSmtError> {
     let (status, stdout, stderr) = run_z3_query(smt, timeout_seconds)?;
+    let result = classify_solver_output(&status, &stdout, &stderr)?;
+
+    Ok(SolverRun {
+        result,
+        stdout,
+        stderr,
+    })
+}
+
+pub fn solve_chc_script(smt: &str, timeout_seconds: u64) -> Result<SolverResult, QbeSmtError> {
+    Ok(solve_chc_script_with_diagnostics(smt, timeout_seconds)?.result)
+}
+
+fn classify_solver_output(
+    status: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Result<SolverResult, QbeSmtError> {
     let first = stdout
         .lines()
         .map(str::trim)
@@ -174,22 +192,13 @@ pub fn solve_chc_script_with_diagnostics(
         "unknown" | "timeout" => SolverResult::Unknown,
         _ => {
             return Err(QbeSmtError::SolverOutput {
-                status,
+                status: status.to_string(),
                 stdout: stdout.trim().to_string(),
                 stderr: stderr.trim().to_string(),
             })
         }
     };
-
-    Ok(SolverRun {
-        result,
-        stdout,
-        stderr,
-    })
-}
-
-pub fn solve_chc_script(smt: &str, timeout_seconds: u64) -> Result<SolverResult, QbeSmtError> {
-    Ok(solve_chc_script_with_diagnostics(smt, timeout_seconds)?.result)
+    Ok(result)
 }
 
 fn run_z3_query(smt: &str, timeout_seconds: u64) -> Result<(String, String, String), QbeSmtError> {
@@ -246,8 +255,9 @@ mod tests {
     use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
 
     use super::{
-        classify_simple_loops, qbe_module_to_smt, qbe_module_to_smt_with_assumptions, qbe_to_smt,
-        EncodeOptions, FunctionArgInvariantAssumption, LoopProofStatus, ModuleAssumptions,
+        classify_simple_loops, classify_solver_output, qbe_module_to_smt,
+        qbe_module_to_smt_with_assumptions, qbe_to_smt, EncodeOptions,
+        FunctionArgInvariantAssumption, LoopProofStatus, ModuleAssumptions, SolverResult,
     };
 
     fn temp(name: &str) -> Value {
@@ -352,6 +362,25 @@ mod tests {
         let plain = err.render_report_plain("checker");
         assert!(plain.contains("qbe-smt error"));
         assert!(plain.contains("z3"));
+    }
+
+    #[test]
+    fn classifies_canned_unknown_solver_outputs() {
+        let unknown =
+            classify_solver_output("exit code 0", "unknown\n(reason-unknown timeout)\n", "")
+                .expect("classify unknown");
+        assert_eq!(unknown, SolverResult::Unknown);
+
+        let timeout =
+            classify_solver_output("exit code 0", "timeout\n", "").expect("classify timeout");
+        assert_eq!(timeout, SolverResult::Unknown);
+    }
+
+    #[test]
+    fn rejects_unrecognized_solver_status_line() {
+        let err = classify_solver_output("exit code 1", "maybe\n", "parse error")
+            .expect_err("unexpected status should fail");
+        assert!(err.to_string().contains("unexpected z3 output"));
     }
 
     #[test]

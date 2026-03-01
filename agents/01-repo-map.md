@@ -21,6 +21,9 @@ Editor tooling in this repository:
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
 - `crates/oac/src/ast_walk.rs`: shared AST traversal helpers (expression-path indexing + call walking) reused across resolve and verification passes.
 - `crates/oac/src/verification_checker.rs`: shared prove/invariant checker assembly helpers for QBE+CHC verification.
+- `crates/oac/src/verification_profile.rs`: baseline/candidate verification profile selection used by solver policy and benchmark gating.
+- `crates/oac/src/verification_solver.rs`: shared solver-attempt policy (`10s/30s` + optional large-obligation third attempt) and attempt-metadata formatting.
+- `crates/oac/src/verification_outcomes.rs`: baseline-vs-candidate outcome capture/comparison helpers used by strict transition gating.
 - `crates/oac/src/symbol_keys.rs`: shared trait symbol key/mangling helpers used by resolve + codegen.
 - `crates/oac/src/lsp.rs`: stdio LSP server loop (`oac lsp`) and diagnostics publishing.
 - `tools/vscode-ousia/src/extension.ts`: VS Code client activation and `oac lsp` process launch.

@@ -7,7 +7,14 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticBundle, DiagnosticStage};
-use crate::{compile_source_with_artifacts, CompileSourceCodes, FrontendPipelineCodes};
+use crate::verification_outcomes::{
+    begin_outcome_collection, end_outcome_collection, forbidden_transition_deltas,
+};
+use crate::verification_profile::VerificationProfile;
+use crate::{
+    compile_source_with_artifacts, compile_source_with_artifacts_with_profile, CompileSourceCodes,
+    FrontendPipelineCodes,
+};
 
 const BASELINE_SCHEMA_VERSION: u32 = 1;
 const REPORT_SCHEMA_VERSION: u32 = 1;
@@ -32,6 +39,8 @@ pub struct BenchProveOpts {
     pub output: Option<PathBuf>,
     #[clap(long, default_value_t = false)]
     pub update_baseline: bool,
+    #[clap(long, default_value_t = false)]
+    pub strict_outcome_gate: bool,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -177,7 +186,7 @@ const FULL_SUITE_FIXTURES: [FixtureSpec; 6] = [
     FixtureSpec {
         id: "template_hash_table_i32",
         source: "crates/oac/execution_tests/template_hash_table_i32.oa",
-        expected_code: Some("OAC-INV-001"),
+        expected_code: None,
     },
 ];
 
@@ -310,6 +319,10 @@ where
         .unwrap_or_default();
 
     validate_baseline_for_suite(&baseline_map, &fixtures)?;
+
+    if opts.strict_outcome_gate {
+        run_verification_outcome_gate(current_dir, &fixtures)?;
+    }
 
     let mut report_fixtures = Vec::new();
     let mut updated_baseline_entries = Vec::new();
@@ -456,6 +469,126 @@ where
         baseline_updated,
         unexpected,
     })
+}
+
+const VERIFICATION_OUTCOME_FIXTURE_ENV: &str = "OAC_VERIFICATION_OUTCOME_FIXTURE";
+
+fn run_verification_outcome_gate(
+    current_dir: &Path,
+    fixtures: &[FixtureSpec],
+) -> anyhow::Result<()> {
+    let root = current_dir
+        .join("target")
+        .join("oac")
+        .join("verification_outcomes");
+    let runs_root = root.join("runs");
+    if runs_root.exists() {
+        std::fs::remove_dir_all(&runs_root)
+            .with_context(|| format!("failed to clear {}", runs_root.display()))?;
+    }
+    std::fs::create_dir_all(&runs_root)
+        .with_context(|| format!("failed to create {}", runs_root.display()))?;
+
+    let baseline_path = root.join("baseline.json");
+    let candidate_path = root.join("candidate.json");
+
+    let baseline = capture_verification_outcomes_for_profile(
+        current_dir,
+        fixtures,
+        VerificationProfile::Baseline,
+        &runs_root,
+        &baseline_path,
+    )?;
+    let candidate = capture_verification_outcomes_for_profile(
+        current_dir,
+        fixtures,
+        VerificationProfile::Candidate,
+        &runs_root,
+        &candidate_path,
+    )?;
+
+    let deltas = forbidden_transition_deltas(&baseline, &candidate)?;
+    if deltas.is_empty() {
+        return Ok(());
+    }
+
+    let mut details = Vec::new();
+    for delta in deltas {
+        details.push(format!(
+            "{}: baseline={:?}, candidate={:?}",
+            delta.key, delta.baseline, delta.candidate
+        ));
+    }
+    anyhow::bail!(
+        "verification outcome gate failed with forbidden transitions:\n{}",
+        details.join("\n")
+    );
+}
+
+fn capture_verification_outcomes_for_profile(
+    current_dir: &Path,
+    fixtures: &[FixtureSpec],
+    profile: VerificationProfile,
+    runs_root: &Path,
+    output_path: &Path,
+) -> anyhow::Result<crate::verification_outcomes::VerificationOutcomeFile> {
+    let profile_runs = runs_root.join(profile.as_str());
+    std::fs::create_dir_all(&profile_runs)
+        .with_context(|| format!("failed to create {}", profile_runs.display()))?;
+
+    begin_outcome_collection(profile)?;
+
+    let capture_result = (|| -> anyhow::Result<()> {
+        for fixture in fixtures {
+            let source_path = current_dir.join(fixture.source);
+            let fixture_dir = profile_runs.join(fixture.id);
+            if fixture_dir.exists() {
+                std::fs::remove_dir_all(&fixture_dir)
+                    .with_context(|| format!("failed to clear {}", fixture_dir.display()))?;
+            }
+            std::fs::create_dir_all(&fixture_dir)
+                .with_context(|| format!("failed to create {}", fixture_dir.display()))?;
+
+            let _result = with_fixture_outcome_env(fixture.id, || {
+                compile_source_with_artifacts_with_profile(
+                    &source_path,
+                    &fixture_dir,
+                    None,
+                    "app",
+                    bench_compile_codes(),
+                    profile,
+                )
+            });
+        }
+        Ok(())
+    })();
+
+    let end_result = end_outcome_collection(output_path);
+    match (capture_result, end_result) {
+        (Err(err), _) => Err(err),
+        (Ok(_), Err(err)) => Err(err),
+        (Ok(_), Ok(file)) => {
+            if file.records.is_empty() {
+                anyhow::bail!(
+                    "verification outcome capture for profile {} produced no records",
+                    profile.as_str()
+                );
+            }
+            Ok(file)
+        }
+    }
+}
+
+fn with_fixture_outcome_env<T>(fixture_id: &str, run: impl FnOnce() -> T) -> T {
+    let previous = std::env::var(VERIFICATION_OUTCOME_FIXTURE_ENV).ok();
+    std::env::set_var(VERIFICATION_OUTCOME_FIXTURE_ENV, fixture_id);
+    let output = run();
+    if let Some(value) = previous {
+        std::env::set_var(VERIFICATION_OUTCOME_FIXTURE_ENV, value);
+    } else {
+        std::env::remove_var(VERIFICATION_OUTCOME_FIXTURE_ENV);
+    }
+    output
 }
 
 fn run_fixture_iteration(
@@ -835,12 +968,13 @@ fn print_report_table(report: &ProveBenchReport) {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::tempdir;
+
     use super::{
         median_u64, outcome_matches, run_with_runner, suite_fixtures, BaselineFixture,
         BenchProveOpts, BenchSuite, IterationOutcome, IterationSample, ProveBenchBaseline,
         RegressionThresholds,
     };
-    use tempfile::tempdir;
 
     fn sample_success(elapsed_ms: u64) -> IterationSample {
         IterationSample {
@@ -966,6 +1100,7 @@ mod tests {
             baseline: Some(baseline_path),
             output: Some(output_path.clone()),
             update_baseline: false,
+            strict_outcome_gate: false,
         };
 
         let result = run_with_runner(dir.path(), &opts, |_current_dir, fixture, _iter, _root| {
@@ -999,6 +1134,7 @@ mod tests {
             baseline: Some(baseline_path.clone()),
             output: Some(output_path),
             update_baseline: true,
+            strict_outcome_gate: false,
         };
 
         run_with_runner(dir.path(), &opts, |_current_dir, fixture, _iter, _root| {
@@ -1024,5 +1160,15 @@ mod tests {
         let second = std::fs::read_to_string(&baseline_path).expect("baseline text");
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn strict_outcome_gate_quick_suite_has_no_forbidden_transitions() {
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+        let fixtures = super::suite_fixtures(BenchSuite::Quick);
+        super::run_verification_outcome_gate(&workspace_root, &fixtures)
+            .expect("quick suite should preserve sat/unsat outcomes");
     }
 }

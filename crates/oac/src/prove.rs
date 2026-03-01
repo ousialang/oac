@@ -16,18 +16,11 @@ use crate::verification_checker::{
 use crate::verification_cycles::{
     reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
 };
-
-const Z3_TIMEOUT_SECONDS: u64 = 10;
-const Z3_TIMEOUT_RETRY_SECONDS: u64 = 30;
-
-fn solve_chc_with_retry(smt: &str) -> Result<qbe_smt::SolverRun, qbe_smt::QbeSmtError> {
-    let run = qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_SECONDS)?;
-    if run.result == qbe_smt::SolverResult::Unknown && Z3_TIMEOUT_RETRY_SECONDS > Z3_TIMEOUT_SECONDS
-    {
-        return qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_RETRY_SECONDS);
-    }
-    Ok(run)
-}
+use crate::verification_outcomes::{
+    record_outcome, VerificationKind, VerificationOutcome, VerificationOutcomeRecord,
+};
+use crate::verification_profile::VerificationProfile;
+use crate::verification_solver::{format_attempts, solve_chc_with_policy};
 
 #[derive(Clone, Debug)]
 struct ProveSite {
@@ -36,10 +29,25 @@ struct ProveSite {
     marker_temp: String,
 }
 
+#[allow(dead_code)]
 pub fn verify_prove_obligations_with_qbe(
     program: &ResolvedProgram,
     qbe_module: &qbe::Module,
     target_dir: &Path,
+) -> anyhow::Result<()> {
+    verify_prove_obligations_with_qbe_with_profile(
+        program,
+        qbe_module,
+        target_dir,
+        VerificationProfile::default(),
+    )
+}
+
+pub fn verify_prove_obligations_with_qbe_with_profile(
+    program: &ResolvedProgram,
+    qbe_module: &qbe::Module,
+    target_dir: &Path,
+    profile: VerificationProfile,
 ) -> anyhow::Result<()> {
     let invariant_by_struct = discover_struct_invariant_bindings(program)?;
     let reachable = reachable_user_functions(program, "main")?;
@@ -74,6 +82,7 @@ pub fn verify_prove_obligations_with_qbe(
         &function_map,
         &sites,
         target_dir,
+        profile,
     )
 }
 
@@ -124,6 +133,7 @@ fn solve_prove_sites(
     function_map: &HashMap<String, qbe::Function>,
     sites: &[ProveSite],
     target_dir: &Path,
+    profile: VerificationProfile,
 ) -> anyhow::Result<()> {
     let verification_dir = target_dir.join("prove");
     std::fs::create_dir_all(&verification_dir).with_context(|| {
@@ -179,12 +189,32 @@ fn solve_prove_sites(
             )
         })?;
 
-        match solve_chc_with_retry(&smt) {
-            Ok(run) if run.result == qbe_smt::SolverResult::Unsat => {}
-            Ok(run) if run.result == qbe_smt::SolverResult::Sat => {
-                let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
-                    .map(|excerpt| format!(", solver_excerpt={excerpt}"))
-                    .unwrap_or_default();
+        match solve_chc_with_policy(&smt, profile) {
+            Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
+                record_outcome(VerificationOutcomeRecord {
+                    kind: VerificationKind::Prove,
+                    obligation_id: site.id.clone(),
+                    caller: site.caller.clone(),
+                    callee: None,
+                    invariant_key: None,
+                    outcome: verification_outcome_from_solver_result(run.final_run.result),
+                    fixture: None,
+                });
+            }
+            Ok(run) if run.final_run.result == qbe_smt::SolverResult::Sat => {
+                record_outcome(VerificationOutcomeRecord {
+                    kind: VerificationKind::Prove,
+                    obligation_id: site.id.clone(),
+                    caller: site.caller.clone(),
+                    callee: None,
+                    invariant_key: None,
+                    outcome: verification_outcome_from_solver_result(run.final_run.result),
+                    fixture: None,
+                });
+                let solver_excerpt =
+                    summarize_solver_output(&run.final_run.stdout, &run.final_run.stderr)
+                        .map(|excerpt| format!(", solver_excerpt={excerpt}"))
+                        .unwrap_or_default();
                 let mut failure = format!(
                     "{} (caller={}, qbe_artifact={}, smt_artifact={}",
                     site.id, site.caller, qbe_filename, smt_filename
@@ -194,15 +224,27 @@ fn solve_prove_sites(
                 failures.push(failure);
             }
             Ok(run) => {
-                let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
-                    .map(|excerpt| format!(", solver_excerpt={excerpt}"))
-                    .unwrap_or_default();
+                record_outcome(VerificationOutcomeRecord {
+                    kind: VerificationKind::Prove,
+                    obligation_id: site.id.clone(),
+                    caller: site.caller.clone(),
+                    callee: None,
+                    invariant_key: None,
+                    outcome: verification_outcome_from_solver_result(run.final_run.result),
+                    fixture: None,
+                });
+                let solver_excerpt =
+                    summarize_solver_output(&run.final_run.stdout, &run.final_run.stderr)
+                        .map(|excerpt| format!(", solver_excerpt={excerpt}"))
+                        .unwrap_or_default();
+                let attempts = format_attempts(&run.attempts);
                 return Err(anyhow::anyhow!(
-                    "solver returned unknown for prove obligation {} (caller={}, qbe_artifact={}, smt_artifact={}{}). verification is fail-closed until this obligation is proven unsat",
+                    "solver returned unknown for prove obligation {} (caller={}, qbe_artifact={}, smt_artifact={}, attempts={}{}). verification is fail-closed until this obligation is proven unsat",
                     site.id,
                     site.caller,
                     qbe_filename,
                     smt_filename,
+                    attempts,
                     solver_excerpt
                 ));
             }
@@ -224,6 +266,14 @@ fn solve_prove_sites(
             "prove verification failed (SAT counterexamples found):\n{}",
             failures.join("\n")
         ))
+    }
+}
+
+fn verification_outcome_from_solver_result(result: qbe_smt::SolverResult) -> VerificationOutcome {
+    match result {
+        qbe_smt::SolverResult::Sat => VerificationOutcome::Sat,
+        qbe_smt::SolverResult::Unsat => VerificationOutcome::Unsat,
+        qbe_smt::SolverResult::Unknown => VerificationOutcome::Unknown,
     }
 }
 
@@ -318,16 +368,28 @@ fn inject_site_check_and_return(
 mod tests {
     use std::collections::HashMap;
 
-    use super::verify_prove_obligations_with_qbe;
+    use super::{
+        verify_prove_obligations_with_qbe, verify_prove_obligations_with_qbe_with_profile,
+    };
     use crate::verification_cycles::{
         reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
     };
+    use crate::verification_profile::VerificationProfile;
+    use crate::verification_solver::test_support;
     use crate::{ir, parser, qbe_backend, tokenizer};
 
     fn resolve_program(source: &str) -> ir::ResolvedProgram {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
         let ast = parser::parse(tokens).expect("parse source");
         ir::resolve(ast).expect("resolve source")
+    }
+
+    fn run(result: qbe_smt::SolverResult, stdout: &str, stderr: &str) -> qbe_smt::SolverRun {
+        qbe_smt::SolverRun {
+            result,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+        }
     }
 
     #[test]
@@ -408,6 +470,46 @@ fun main() -> I32 {
         let tempdir = tempfile::tempdir().expect("tempdir");
         verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
             .expect("all invariant preconditions should be applied to prove-site parameters");
+    }
+
+    #[test]
+    fn unknown_prove_obligations_fail_closed_with_attempt_ladder() {
+        let source = r#"
+fun main() -> I32 {
+	prove(true)
+	return 0
+}
+"#;
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+
+        let err = test_support::with_mock_solver_runs(
+            vec![
+                Ok(run(
+                    qbe_smt::SolverResult::Unknown,
+                    "unknown\n(reason-unknown timeout)",
+                    "",
+                )),
+                Ok(run(qbe_smt::SolverResult::Unknown, "unknown", "timeout")),
+            ],
+            || {
+                verify_prove_obligations_with_qbe_with_profile(
+                    &program,
+                    &qbe_module,
+                    tempdir.path(),
+                    VerificationProfile::Candidate,
+                )
+                .expect_err("unknown prove obligation must fail closed")
+            },
+        );
+        let message = err.to_string();
+        assert!(message.contains("solver returned unknown for prove obligation"));
+        assert!(message.contains("qbe_artifact="));
+        assert!(message.contains("smt_artifact="));
+        assert!(message.contains("attempts=[10s:unknown"));
+        assert!(message.contains("30s:unknown(timeout)"));
+        assert_eq!(test_support::observed_timeouts(), vec![10, 30]);
     }
 
     #[test]
@@ -621,7 +723,7 @@ fun main() -> I32 {
             "expected tri-state strcmp ordering branch in SMT: {smt}"
         );
         assert!(
-            smt.contains("(not false)"),
+            smt.contains("__oac_strcpy_found0") && smt.contains("(not __oac_strcpy_found"),
             "expected bounded strcpy copy loop guard in SMT: {smt}"
         );
         assert!(

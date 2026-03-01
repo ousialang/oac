@@ -17,19 +17,11 @@ use crate::verification_checker::{
 use crate::verification_cycles::{
     reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
 };
-
-const Z3_TIMEOUT_SECONDS: u64 = 10;
-const Z3_TIMEOUT_RETRY_SECONDS: u64 = 30;
-const COUNTEREXAMPLE_SEARCH_TIMEOUT_SECONDS: u64 = 2;
-
-fn solve_chc_with_retry(smt: &str) -> Result<qbe_smt::SolverRun, qbe_smt::QbeSmtError> {
-    let run = qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_SECONDS)?;
-    if run.result == qbe_smt::SolverResult::Unknown && Z3_TIMEOUT_RETRY_SECONDS > Z3_TIMEOUT_SECONDS
-    {
-        return qbe_smt::solve_chc_script_with_diagnostics(smt, Z3_TIMEOUT_RETRY_SECONDS);
-    }
-    Ok(run)
-}
+use crate::verification_outcomes::{
+    record_outcome, VerificationKind, VerificationOutcome, VerificationOutcomeRecord,
+};
+use crate::verification_profile::VerificationProfile;
+use crate::verification_solver::{format_attempts, solve_chc_with_policy};
 
 #[allow(dead_code)]
 pub fn verify_struct_invariants(
@@ -37,13 +29,33 @@ pub fn verify_struct_invariants(
     target_dir: &Path,
 ) -> anyhow::Result<()> {
     let qbe_module = crate::qbe_backend::compile(program.clone());
-    verify_struct_invariants_with_qbe(program, &qbe_module, target_dir)
+    verify_struct_invariants_with_qbe_with_profile(
+        program,
+        &qbe_module,
+        target_dir,
+        VerificationProfile::default(),
+    )
 }
 
+#[allow(dead_code)]
 pub fn verify_struct_invariants_with_qbe(
     program: &ResolvedProgram,
     qbe_module: &qbe::Module,
     target_dir: &Path,
+) -> anyhow::Result<()> {
+    verify_struct_invariants_with_qbe_with_profile(
+        program,
+        qbe_module,
+        target_dir,
+        VerificationProfile::default(),
+    )
+}
+
+pub fn verify_struct_invariants_with_qbe_with_profile(
+    program: &ResolvedProgram,
+    qbe_module: &qbe::Module,
+    target_dir: &Path,
+    profile: VerificationProfile,
 ) -> anyhow::Result<()> {
     let invariant_by_struct = discover_invariants(program)?;
     let reachable = reachable_user_functions(program, "main")?;
@@ -70,6 +82,7 @@ pub fn verify_struct_invariants_with_qbe(
         &sites,
         target_dir,
         &invariant_by_struct,
+        profile,
     )
 }
 
@@ -80,6 +93,7 @@ struct ObligationSite {
     callee: String,
     callee_call_ordinal: usize,
     struct_name: String,
+    invariant_key: String,
     invariant_fn: String,
     invariant_display_name: String,
     invariant_identifier: Option<String>,
@@ -170,6 +184,7 @@ fn collect_obligation_sites(
                         callee: callee_name.clone(),
                         callee_call_ordinal: current_ordinal,
                         struct_name: return_type.clone(),
+                        invariant_key: invariant_binding.key.clone(),
                         invariant_fn: invariant_binding.function_name.clone(),
                         invariant_display_name: invariant_binding.display_name.clone(),
                         invariant_identifier: invariant_binding.identifier.clone(),
@@ -221,6 +236,7 @@ fn solve_obligations_qbe(
     sites: &[ObligationSite],
     target_dir: &Path,
     invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
+    profile: VerificationProfile,
 ) -> anyhow::Result<()> {
     let verification_dir = target_dir.join("struct_invariants");
     std::fs::create_dir_all(&verification_dir).with_context(|| {
@@ -276,14 +292,34 @@ fn solve_obligations_qbe(
         std::fs::write(&smt_path, &smt)
             .with_context(|| format!("failed to write SMT obligation {}", smt_path.display()))?;
 
-        match solve_chc_with_retry(&smt) {
-            Ok(run) if run.result == qbe_smt::SolverResult::Unsat => {}
-            Ok(run) if run.result == qbe_smt::SolverResult::Sat => {
+        match solve_chc_with_policy(&smt, profile) {
+            Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
+                record_outcome(VerificationOutcomeRecord {
+                    kind: VerificationKind::StructInvariant,
+                    obligation_id: site.id.clone(),
+                    caller: site.caller.clone(),
+                    callee: Some(site.callee.clone()),
+                    invariant_key: Some(site.invariant_key.clone()),
+                    outcome: verification_outcome_from_solver_result(run.final_run.result),
+                    fixture: None,
+                });
+            }
+            Ok(run) if run.final_run.result == qbe_smt::SolverResult::Sat => {
+                record_outcome(VerificationOutcomeRecord {
+                    kind: VerificationKind::StructInvariant,
+                    obligation_id: site.id.clone(),
+                    caller: site.caller.clone(),
+                    callee: Some(site.callee.clone()),
+                    invariant_key: Some(site.invariant_key.clone()),
+                    outcome: verification_outcome_from_solver_result(run.final_run.result),
+                    fixture: None,
+                });
                 let witness = sat_cfg_witness_summary(&checker_function)
                     .unwrap_or_else(|| "unavailable".to_string());
-                let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
-                    .map(|excerpt| format!(", solver_excerpt={excerpt}"))
-                    .unwrap_or_default();
+                let solver_excerpt =
+                    summarize_solver_output(&run.final_run.stdout, &run.final_run.stderr)
+                        .map(|excerpt| format!(", solver_excerpt={excerpt}"))
+                        .unwrap_or_default();
                 let program_input = try_find_program_input_counterexample(
                     site,
                     &checker_function,
@@ -312,16 +348,27 @@ fn solve_obligations_qbe(
                 ));
             }
             Ok(run) => {
-                let solver_excerpt = summarize_solver_output(&run.stdout, &run.stderr)
-                    .map(|excerpt| format!(", solver_excerpt={excerpt}"))
-                    .unwrap_or_default();
+                record_outcome(VerificationOutcomeRecord {
+                    kind: VerificationKind::StructInvariant,
+                    obligation_id: site.id.clone(),
+                    caller: site.caller.clone(),
+                    callee: Some(site.callee.clone()),
+                    invariant_key: Some(site.invariant_key.clone()),
+                    outcome: verification_outcome_from_solver_result(run.final_run.result),
+                    fixture: None,
+                });
+                let solver_excerpt =
+                    summarize_solver_output(&run.final_run.stdout, &run.final_run.stderr)
+                        .map(|excerpt| format!(", solver_excerpt={excerpt}"))
+                        .unwrap_or_default();
+                let attempts = format_attempts(&run.attempts);
                 let invariant_label = if let Some(identifier) = &site.invariant_identifier {
                     format!("{} (id={})", site.invariant_display_name, identifier)
                 } else {
                     site.invariant_display_name.clone()
                 };
                 return Err(anyhow::anyhow!(
-                    "solver returned unknown for struct invariant obligation {} (caller={}, callee={}, struct={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}{}). verification is fail-closed until this obligation is proven unsat",
+                    "solver returned unknown for struct invariant obligation {} (caller={}, callee={}, struct={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}, attempts={}{}). verification is fail-closed until this obligation is proven unsat",
                     site.id,
                     site.caller,
                     site.callee,
@@ -329,6 +376,7 @@ fn solve_obligations_qbe(
                     invariant_label,
                     qbe_filename,
                     smt_filename,
+                    attempts,
                     solver_excerpt
                 ));
             }
@@ -350,6 +398,14 @@ fn solve_obligations_qbe(
             "struct invariant verification failed (SAT counterexamples found):\n{}",
             failures.join("\n")
         ))
+    }
+}
+
+fn verification_outcome_from_solver_result(result: qbe_smt::SolverResult) -> VerificationOutcome {
+    match result {
+        qbe_smt::SolverResult::Sat => VerificationOutcome::Sat,
+        qbe_smt::SolverResult::Unsat => VerificationOutcome::Unsat,
+        qbe_smt::SolverResult::Unknown => VerificationOutcome::Unknown,
     }
 }
 
@@ -413,7 +469,11 @@ fn is_sat_for_main_argc_range(
     )
     .ok()?;
 
-    match solve_chc_with_retry(&smt).ok()?.result {
+    match solve_chc_with_policy(&smt, VerificationProfile::Baseline)
+        .ok()?
+        .final_run
+        .result
+    {
         qbe_smt::SolverResult::Sat => Some(true),
         qbe_smt::SolverResult::Unsat => Some(false),
         qbe_smt::SolverResult::Unknown => None,
@@ -896,6 +956,8 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::verification_profile::VerificationProfile;
+    use crate::verification_solver::test_support;
     use crate::{ir, parser, tokenizer};
 
     fn resolve_program(source: &str) -> ResolvedProgram {
@@ -906,6 +968,14 @@ mod tests {
 
     fn compile_qbe(program: &ResolvedProgram) -> qbe::Module {
         crate::qbe_backend::compile(program.clone())
+    }
+
+    fn run(result: qbe_smt::SolverResult, stdout: &str, stderr: &str) -> qbe_smt::SolverRun {
+        qbe_smt::SolverRun {
+            result,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+        }
     }
 
     fn site_function_map(
@@ -1201,6 +1271,60 @@ fun main() -> I32 {
             .contains("invariant=\"counter max must be non-negative (id=non_negative_max)\""));
         assert!(!message
             .contains("invariant=\"counter value must be non-negative (id=non_negative_value)\""));
+    }
+
+    #[test]
+    fn unknown_struct_invariant_obligations_fail_closed_with_attempt_ladder() {
+        let program = resolve_program(
+            r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+fun make_counter(v: I32) -> Counter {
+	return Counter struct { value: v, }
+}
+
+fun main() -> I32 {
+	c = make_counter(0)
+	return 0
+}
+"#,
+        );
+        let qbe_module = compile_qbe(&program);
+        let tempdir = tempfile::tempdir().expect("tempdir");
+
+        let err = test_support::with_mock_solver_runs(
+            vec![
+                Ok(run(
+                    qbe_smt::SolverResult::Unknown,
+                    "unknown\n(reason-unknown timeout)",
+                    "",
+                )),
+                Ok(run(qbe_smt::SolverResult::Unknown, "unknown", "timeout")),
+            ],
+            || {
+                verify_struct_invariants_with_qbe_with_profile(
+                    &program,
+                    &qbe_module,
+                    tempdir.path(),
+                    VerificationProfile::Candidate,
+                )
+                .expect_err("unknown struct invariant obligation must fail closed")
+            },
+        );
+
+        let message = err.to_string();
+        assert!(message.contains("solver returned unknown for struct invariant obligation"));
+        assert!(message.contains("qbe_artifact="));
+        assert!(message.contains("smt_artifact="));
+        assert!(message.contains("attempts=[10s:unknown"));
+        assert!(message.contains("30s:unknown(timeout)"));
+        assert_eq!(test_support::observed_timeouts(), vec![10, 30]);
     }
 
     #[test]
@@ -1596,7 +1720,7 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
             "expected tri-state strcmp ordering branch in SMT: {smt}"
         );
         assert!(
-            smt.contains("(not false)"),
+            smt.contains("__oac_strcpy_found0") && smt.contains("(not __oac_strcpy_found"),
             "expected bounded strcpy copy loop guard in SMT: {smt}"
         );
         assert!(
