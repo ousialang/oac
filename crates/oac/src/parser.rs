@@ -45,6 +45,7 @@ pub struct GenericDef {
     pub params: Vec<GenericParam>,
     pub type_definitions: Vec<TypeDefDecl>,
     pub top_level_functions: Vec<Function>,
+    pub generic_specializations: Vec<GenericSpecialization>,
     pub invariants: Vec<StructInvariantDecl>,
 }
 
@@ -1820,6 +1821,7 @@ fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Gene
 
     let mut type_definitions = vec![];
     let mut top_level_functions = vec![];
+    let mut generic_specializations = vec![];
     let mut invariants = vec![];
     loop {
         match tokens.first() {
@@ -1842,9 +1844,13 @@ fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Gene
                 let function = parse_function_declaration(tokens, false)?;
                 top_level_functions.push(function);
             }
+            Some(TokenData::Word(name)) if name == "specialize" => {
+                let specialization = parse_generic_specialization(tokens)?;
+                generic_specializations.push(specialization);
+            }
             Some(TokenData::Word(name)) if name == "extern" => {
                 return Err(anyhow::anyhow!(
-                    "generic body only supports `fun`, `comptime fun`, type declarations, and invariants in v1"
+                    "generic body only supports `fun`, `comptime fun`, `specialize`, type declarations, and invariants in v1"
                 ));
             }
             Some(TokenData::Word(name)) if name == "comptime" => match tokens.get(1) {
@@ -1881,6 +1887,7 @@ fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Gene
         params,
         type_definitions,
         top_level_functions,
+        generic_specializations,
         invariants,
     })
 }
@@ -2105,6 +2112,7 @@ specialize IntToInt = HashMap[I32, I32]
         let generic = &ast.generic_definitions[0];
         assert_eq!(generic.name, "HashMap");
         assert_eq!(generic.params.len(), 2);
+        assert!(generic.generic_specializations.is_empty());
         assert_eq!(generic.params[0].name, "K");
         assert_eq!(generic.params[0].bounds, vec!["Hash", "Eq"]);
         assert_eq!(generic.params[1].name, "V");
@@ -2114,6 +2122,37 @@ specialize IntToInt = HashMap[I32, I32]
         assert_eq!(
             ast.generic_specializations[0].concrete_types,
             vec!["I32".to_string(), "I32".to_string()]
+        );
+    }
+
+    #[test]
+    fn parses_local_specialization_in_generic_body() {
+        let source = r#"
+generic List[T] {
+	struct List {
+		value: T,
+	}
+
+	specialize MaybeValue = Option[T]
+
+	fun wrap(value: T) -> MaybeValue {
+		return MaybeValue.Some(value)
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize generic source");
+        let ast = parse(tokens).expect("parse generic source");
+
+        assert_eq!(ast.generic_definitions.len(), 1);
+        let generic = &ast.generic_definitions[0];
+        assert_eq!(generic.generic_specializations.len(), 1);
+        assert_eq!(generic.generic_specializations[0].alias, "MaybeValue");
+        assert_eq!(generic.generic_specializations[0].generic_name, "Option");
+        assert_eq!(
+            generic.generic_specializations[0].concrete_types,
+            vec!["T".to_string()]
         );
     }
 

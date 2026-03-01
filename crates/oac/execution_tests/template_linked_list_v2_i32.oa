@@ -1,38 +1,38 @@
 specialize IntList = LinkedList[I32]
 
-fun print_front(v: IntList__FrontResult) -> I32 {
+fun print_front(v: IntList__FrontOption) -> I32 {
 	match v {
-		IntList__FrontResult.Empty => {
+		IntList__FrontOption.None => {
 			print(99)
 			return 0
 		}
-		IntList__FrontResult.Value(x) => {
+		IntList__FrontOption.Some(x) => {
 			print(x)
 			return 0
 		}
 	}
 }
 
-fun print_tail(v: IntList__TailResult) -> I32 {
+fun print_tail(v: IntList__TailOption) -> I32 {
 	match v {
-		IntList__TailResult.Empty => {
+		IntList__TailOption.None => {
 			print(99)
 			return 0
 		}
-		IntList__TailResult.Value(rest) => {
+		IntList__TailOption.Some(rest) => {
 			print(IntList.len(rest))
 			return 0
 		}
 	}
 }
 
-fun print_pop(v: IntList__PopFrontResult) -> I32 {
+fun print_pop(v: IntList__PopFrontOption) -> I32 {
 	match v {
-		IntList__PopFrontResult.Empty => {
+		IntList__PopFrontOption.None => {
 			print(99)
 			return 0
 		}
-		IntList__PopFrontResult.Value(r) => {
+		IntList__PopFrontOption.Some(r) => {
 			print(r.value)
 			print(IntList.len(r.rest))
 			return 0

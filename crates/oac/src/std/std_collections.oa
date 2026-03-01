@@ -14,25 +14,15 @@ generic LinkedList[T] {
 		Cons(Node),
 	}
 
-	enum FrontResult {
-		Empty,
-		Value(T),
-	}
-
-	enum TailResult {
-		Empty,
-		Value(LinkedList),
-	}
+	specialize FrontOption = Option[T]
+	specialize TailOption = Option[LinkedList]
 
 	struct PopFrontValue {
 		value: T,
 		rest: LinkedList,
 	}
 
-	enum PopFrontResult {
-		Empty,
-		Value(PopFrontValue),
-	}
+	specialize PopFrontOption = Option[PopFrontValue]
 
 	fun empty() -> LinkedList {
 		return LinkedList.Empty
@@ -77,46 +67,46 @@ generic LinkedList[T] {
 		return len(list) == 0
 	}
 
-	fun front(list: LinkedList) -> FrontResult {
+	fun front(list: LinkedList) -> FrontOption {
 		return match list {
-			LinkedList.Empty => FrontResult.Empty
-			LinkedList.Cons(node) => FrontResult.Value(node.value)
+			LinkedList.Empty => FrontOption.None
+			LinkedList.Cons(node) => FrontOption.Some(node.value)
 		}
 	}
 
-	fun tail(list: LinkedList) -> TailResult {
+	fun tail(list: LinkedList) -> TailOption {
 		return match list {
-			LinkedList.Empty => TailResult.Empty
-			LinkedList.Cons(node) => TailResult.Value(node.next)
+			LinkedList.Empty => TailOption.None
+			LinkedList.Cons(node) => TailOption.Some(node.next)
 		}
 	}
 
-	fun pop_front(list: LinkedList) -> PopFrontResult {
+	fun pop_front(list: LinkedList) -> PopFrontOption {
 		match list {
 			LinkedList.Empty => {
-				return PopFrontResult.Empty
+				return PopFrontOption.None
 			}
 			LinkedList.Cons(node) => {
 				v = PopFrontValue struct {
 					value: node.value,
 					rest: node.next,
 				}
-				return PopFrontResult.Value(v)
+				return PopFrontOption.Some(v)
 			}
 		}
 	}
 
 	fun head_or(list: LinkedList, fallback: T) -> T {
 		return match front(list) {
-			FrontResult.Empty => fallback
-			FrontResult.Value(value) => value
+			FrontOption.None => fallback
+			FrontOption.Some(value) => value
 		}
 	}
 
 	fun tail_or(list: LinkedList, fallback: LinkedList) -> LinkedList {
 		return match tail(list) {
-			TailResult.Empty => fallback
-			TailResult.Value(next) => next
+			TailOption.None => fallback
+			TailOption.Some(next) => next
 		}
 	}
 
@@ -206,9 +196,9 @@ generic LinkedList[T] {
 		return cursor
 	}
 
-	fun at(list: LinkedList, index: I32) -> FrontResult {
+	fun at(list: LinkedList, index: I32) -> FrontOption {
 		if index < 0 {
-			return FrontResult.Empty
+			return FrontOption.None
 		}
 
 		cursor = list
@@ -216,11 +206,11 @@ generic LinkedList[T] {
 		while !is_empty(cursor) {
 			match cursor {
 				LinkedList.Empty => {
-					return FrontResult.Empty
+					return FrontOption.None
 				}
 				LinkedList.Cons(node) => {
 					if i == index {
-						return FrontResult.Value(node.value)
+						return FrontOption.Some(node.value)
 					}
 
 					i = i + 1
@@ -229,13 +219,13 @@ generic LinkedList[T] {
 			}
 		}
 
-		return FrontResult.Empty
+		return FrontOption.None
 	}
 
 	fun at_or(list: LinkedList, index: I32, fallback: T) -> T {
 		return match at(list, index) {
-			FrontResult.Empty => fallback
-			FrontResult.Value(value) => value
+			FrontOption.None => fallback
+			FrontOption.Some(value) => value
 		}
 	}
 }

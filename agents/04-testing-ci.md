@@ -108,7 +108,7 @@ Key tests:
 - `crates/oac/src/tokenizer.rs` also has a unit regression for FP32 decimal tokenization (`TokenData::Float`).
 - `crates/oac/src/tokenizer.rs` also covers `f64` suffix tokenization (`Float` token followed by `Word(\"f64\")`).
 - `crates/oac/src/tokenizer.rs` includes EOF word-lexing regressions to prevent LSP crash loops on partial files (`tokenizes_identifier_at_eof_without_panicking`, `tokenizes_underscore_identifier_at_eof_without_panicking`).
-- `crates/oac/src/parser.rs` tests assert generic bracket syntax parsing (including multi-parameter inline bounds), nested generic type arguments, trait/impl parsing, hard-cut legacy `template`/`instantiate` rejection with migration hints, struct-invariant declaration syntax for both single and grouped forms (`invariant [id]? "label" for (...)` and `invariant for (...) { ... }`, including inside generics), mandatory display labels, and optional identifiers.
+- `crates/oac/src/parser.rs` tests assert generic bracket syntax parsing (including multi-parameter inline bounds), nested generic type arguments, local generic-body specialization parsing (`specialize LocalAlias = Name[...]`), trait/impl parsing, hard-cut legacy `template`/`instantiate` rejection with migration hints, struct-invariant declaration syntax for both single and grouped forms (`invariant [id]? "label" for (...)` and `invariant for (...) { ... }`, including inside generics), mandatory display labels, and optional identifiers.
 - `crates/oac/src/parser.rs` also includes top-level test declaration parsing coverage (`test "..." { ... }`).
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
 - `crates/oac/src/parser.rs` also covers top-level `extern fun` parsing plus namespace-scoped extern parsing (`namespace Name { extern fun ... }`) including internal-name mangling and preserved extern symbol names.
@@ -205,7 +205,7 @@ Key tests:
   - JSON helpers are exercised through `Json.*` calls in `json_parser.oa`, `json_document.oa`, `json_scan_utils.oa`, and `json_value_parser.oa`.
   - `json_value_parser.oa` specifically covers structured value parsing (`Json.parse_json_document_value_result`) with object/array lookup helpers (`Json.object_get`, `Json.array_get`) and scalar payload extraction helpers (`Json.value_string`, `Json.value_number`), including `\uXXXX`-escape acceptance and malformed-escape rejection.
   - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).
-  - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), result-enum accessors (`front` / `tail` / `pop_front`), and transform helpers (`append`, `reverse`, `take`, `drop`, `at`, `at_or`) in addition to compatibility wrappers.
+  - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), `Option`-style accessors (`front` / `tail` / `at` via local `FrontOption` / `TailOption` aliases), `pop_front` via local `PopFrontOption` payloads, and transform helpers (`append`, `reverse`, `take`, `drop`, `at_or`) in addition to compatibility wrappers.
   - `template_hash_table_i32.oa` now snapshots runtime output that exercises insert/update/remove/contains/clear plus resize-rehash behavior across `IntTable.*` helpers.
 
 Snapshots live in:

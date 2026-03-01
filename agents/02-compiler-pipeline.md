@@ -84,7 +84,7 @@ Notes:
 
 Core AST includes:
 - Type defs: `Struct`, `Enum`
-- Generic definitions and specializations (`generic Name[T]`, `specialize Alias = Name[ConcreteType]`)
+- Generic definitions and specializations (`generic Name[T]`, `specialize Alias = Name[ConcreteType]`), including local `specialize` declarations inside generic bodies.
 - Trait declarations and concrete impl blocks (`trait Name { ... }`, `impl Name for Type { ... }`)
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
 - Top-level test declarations (`test "Name" { ... }`).
@@ -102,7 +102,7 @@ Operator precedence is explicitly encoded in parser.
 `resolve(ast)` performs:
 - stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
-- generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages
+- generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages, including recursive expansion of local generic-body specializations after parent type substitutions are applied.
 - type definition graph creation
 - function signature collection
 - function body semantic checks
