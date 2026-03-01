@@ -95,6 +95,7 @@ Observed in parser/IR implementation:
 - `String` namespaced helpers include structural accessors (`bytes`, `ptr`, `len`) and convenience operations (`is_empty`, `equals`, `starts_with`, `ends_with`, `char_at_or`, `slice_clamped`).
 - C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) and exposes both scanner-style APIs (`Json.parse_json_document_result`, `Json.json_kind`) and value-tree APIs (`Json.parse_json_document_value_result` returning `JsonValue` trees with `JsonMembers`/`JsonValues`).
+- JSON booleans in `JsonValue` are modeled as `JsonValue.Bool(Bool)` (not separate `True`/`False` variants), and `Json.json_kind` classifies both `true` and `false` as `JsonKind.Bool`.
 - JSON result and value carrier types are top-level stdlib declarations (`ParseErr`, `ParseResult`, `JsonKind`, `JsonValue`, `JsonValueParseResult`, `JsonDocumentValueResult`, `JsonValueLookup`, `JsonStringLookup`).
 - JSON string scanning now accepts `\uXXXX` escapes (exactly four hex digits) and remains fail-closed for malformed escape sequences.
 - The split stdlib now also uses namespaced file-descriptor IO helpers (`Io.*`) from `crates/oac/src/std/std_io.oa` with explicit result enums (`IoError`, `IoReadResult`, `IoWriteResult`) layered over `Clib.open/read/write/close`.

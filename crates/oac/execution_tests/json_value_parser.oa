@@ -1,10 +1,7 @@
 fun kind_code(kind: JsonKind) -> I32 {
 	match kind {
-		JsonKind.True => {
+		JsonKind.Bool => {
 			return 1
-		}
-		JsonKind.False => {
-			return 2
 		}
 		JsonKind.Null => {
 			return 3

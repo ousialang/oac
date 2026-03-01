@@ -125,6 +125,7 @@ Important enforced invariants include:
 - arithmetic/comparison on numerics requires matching widths/types (`U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - `U8` comparisons/codegen are unsigned (`ult/ule/ugt/uge`), and `U8` division lowers to unsigned division (`udiv`)
 - stdlib split modules intentionally expose namespaced helper APIs for JSON (`Json.*`), now including both scanner/validator helpers (`json_kind`, `parse_json_document_result`) and value-tree parsing helpers (`parse_json_document_value_result`, `object_get`, `array_get`)
+- JSON structured values now represent booleans as `JsonValue.Bool(Bool)` (instead of separate `True`/`False` variants), and kind classification uses `JsonKind.Bool`.
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `crates/oac/src/std/std_ascii.oa`, loaded through `crates/oac/src/std/std.oa` like other std modules
 - stdlib split modules also include `Char` helper API in `crates/oac/src/std/std_char.oa`, loaded through `crates/oac/src/std/std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `crates/oac/src/std/std_null.oa` (with `Null.value()` helper), loaded through `crates/oac/src/std/std.oa` like other std modules
