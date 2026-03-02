@@ -300,6 +300,13 @@ generic HashTable[K: Hash + Eq, V] {
 		return threshold
 	}
 
+	fun assert_metadata(table: HashTable) -> HashTable {
+		assert(table.len >= 0)
+		assert(table.resize_threshold >= 1)
+		assert(table.len <= table.resize_threshold)
+		return table
+	}
+
 	fun next_power_of_two(min_capacity: I32) -> I32 {
 		n = HashTable.min_bucket_count()
 		if min_capacity <= n {
@@ -502,12 +509,13 @@ generic HashTable[K: Hash + Eq, V] {
 	fun with_capacity(min_capacity: I32) -> HashTable {
 		cap = HashTable.next_power_of_two(min_capacity)
 		buckets = HashTable.empty_buckets(cap)
-		return HashTable struct {
+		table = HashTable struct {
 			buckets: buckets,
 			bucket_count: cap,
 			len: 0,
 			resize_threshold: HashTable.threshold_for_capacity(cap),
 		}
+		return HashTable.assert_metadata(table)
 	}
 
 	fun set_no_resize(table: HashTable, key: K, value: V) -> SetResult {
@@ -521,12 +529,13 @@ generic HashTable[K: Hash + Eq, V] {
 			next_len = next_len + 1
 		}
 
-		next_table = HashTable struct {
+		next_table_raw = HashTable struct {
 			buckets: next_buckets,
 			bucket_count: table.bucket_count,
 			len: next_len,
 			resize_threshold: table.resize_threshold,
 		}
+		next_table = HashTable.assert_metadata(next_table_raw)
 		return SetResult struct {
 			table: next_table,
 			inserted_new: bucket_result.inserted_new,
@@ -568,14 +577,14 @@ generic HashTable[K: Hash + Eq, V] {
 			out = HashTable.insert_bucket_entries(out, bucket)
 			i = i + 1
 		}
-		return out
+		return HashTable.assert_metadata(out)
 	}
 
 	fun maybe_resize_before_insert(table: HashTable) -> HashTable {
 		if table.len + 1 > table.resize_threshold {
 			return HashTable.rehash(table, table.bucket_count + table.bucket_count)
 		}
-		return table
+		return HashTable.assert_metadata(table)
 	}
 
 	fun set(table: HashTable, key: K, value: V) -> SetResult {
@@ -604,12 +613,13 @@ generic HashTable[K: Hash + Eq, V] {
 			}
 		}
 
-		next_table = HashTable struct {
+		next_table_raw = HashTable struct {
 			buckets: next_buckets,
 			bucket_count: table.bucket_count,
 			len: next_len,
 			resize_threshold: table.resize_threshold,
 		}
+		next_table = HashTable.assert_metadata(next_table_raw)
 		return RemoveResult struct {
 			table: next_table,
 			removed: bucket_result.removed,
@@ -618,12 +628,13 @@ generic HashTable[K: Hash + Eq, V] {
 
 	fun clear(table: HashTable) -> HashTable {
 		buckets = HashTable.empty_buckets(table.bucket_count)
-		return HashTable struct {
+		cleared = HashTable struct {
 			buckets: buckets,
 			bucket_count: table.bucket_count,
 			len: 0,
 			resize_threshold: table.resize_threshold,
 		}
+		return HashTable.assert_metadata(cleared)
 	}
 
 	fun contains_key(table: HashTable, key: K) -> Bool {

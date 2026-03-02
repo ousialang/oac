@@ -82,7 +82,8 @@ pub(crate) fn direct_user_callees(
     function_map: &HashMap<String, qbe::Function>,
 ) -> BTreeSet<String> {
     let mut callees = BTreeSet::new();
-    for block in &function.blocks {
+    for block_index in entry_reachable_block_indices(function) {
+        let block = &function.blocks[block_index];
         for item in &block.items {
             let qbe::BlockItem::Statement(statement) = item else {
                 continue;
@@ -97,9 +98,77 @@ pub(crate) fn direct_user_callees(
                     callees.insert(name.clone());
                 }
             }
+
+            if let qbe::Statement::Volatile(instr) = statement {
+                if matches!(
+                    instr,
+                    qbe::Instr::Ret(_)
+                        | qbe::Instr::Jmp(_)
+                        | qbe::Instr::Jnz(_, _, _)
+                        | qbe::Instr::Hlt
+                ) {
+                    break;
+                }
+            }
         }
     }
     callees
+}
+
+fn entry_reachable_block_indices(function: &qbe::Function) -> BTreeSet<usize> {
+    if function.blocks.is_empty() {
+        return BTreeSet::new();
+    }
+
+    let mut label_to_index = HashMap::<String, usize>::new();
+    for (idx, block) in function.blocks.iter().enumerate() {
+        label_to_index.insert(block.label.clone(), idx);
+    }
+
+    let mut reachable = BTreeSet::<usize>::new();
+    let mut queue = VecDeque::<usize>::new();
+    queue.push_back(0);
+
+    while let Some(index) = queue.pop_front() {
+        if !reachable.insert(index) {
+            continue;
+        }
+
+        let block = &function.blocks[index];
+        match block_terminator(block) {
+            Some(qbe::Instr::Jmp(label)) => {
+                if let Some(next_index) = label_to_index.get(label) {
+                    queue.push_back(*next_index);
+                }
+            }
+            Some(qbe::Instr::Jnz(_, then_label, else_label)) => {
+                if let Some(next_index) = label_to_index.get(then_label) {
+                    queue.push_back(*next_index);
+                }
+                if let Some(next_index) = label_to_index.get(else_label) {
+                    queue.push_back(*next_index);
+                }
+            }
+            Some(qbe::Instr::Ret(_) | qbe::Instr::Hlt) => {}
+            _ => {
+                let fallthrough = index + 1;
+                if fallthrough < function.blocks.len() {
+                    queue.push_back(fallthrough);
+                }
+            }
+        }
+    }
+
+    reachable
+}
+
+fn block_terminator(block: &qbe::Block) -> Option<&qbe::Instr> {
+    for item in block.items.iter().rev() {
+        if let qbe::BlockItem::Statement(qbe::Statement::Volatile(instr)) = item {
+            return Some(instr);
+        }
+    }
+    None
 }
 
 pub(crate) fn rewrite_returns_to_zero(function: &mut qbe::Function) {
@@ -170,5 +239,89 @@ pub(crate) fn summarize_solver_output(stdout: &str, stderr: &str) -> Option<Stri
         None
     } else {
         Some(snippets.join(" | "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::direct_user_callees;
+
+    #[test]
+    fn direct_user_callees_ignores_unreachable_blocks() {
+        let live = qbe::Function {
+            linkage: qbe::Linkage::private(),
+            name: "live".to_string(),
+            arguments: vec![],
+            return_ty: Some(qbe::Type::Word),
+            blocks: vec![qbe::Block {
+                label: "start".to_string(),
+                items: vec![qbe::BlockItem::Statement(qbe::Statement::Volatile(
+                    qbe::Instr::Ret(Some(qbe::Value::Const(0))),
+                ))],
+            }],
+        };
+        let dead = qbe::Function {
+            linkage: qbe::Linkage::private(),
+            name: "dead".to_string(),
+            arguments: vec![],
+            return_ty: Some(qbe::Type::Word),
+            blocks: vec![qbe::Block {
+                label: "start".to_string(),
+                items: vec![qbe::BlockItem::Statement(qbe::Statement::Volatile(
+                    qbe::Instr::Ret(Some(qbe::Value::Const(0))),
+                ))],
+            }],
+        };
+
+        let caller = qbe::Function {
+            linkage: qbe::Linkage::private(),
+            name: "caller".to_string(),
+            arguments: vec![],
+            return_ty: Some(qbe::Type::Word),
+            blocks: vec![
+                qbe::Block {
+                    label: "start".to_string(),
+                    items: vec![qbe::BlockItem::Statement(qbe::Statement::Volatile(
+                        qbe::Instr::Jmp("live_block".to_string()),
+                    ))],
+                },
+                qbe::Block {
+                    label: "live_block".to_string(),
+                    items: vec![
+                        qbe::BlockItem::Statement(qbe::Statement::Assign(
+                            qbe::Value::Temporary("tmp_live".to_string()),
+                            qbe::Type::Word,
+                            qbe::Instr::Call("live".to_string(), vec![], None),
+                        )),
+                        qbe::BlockItem::Statement(qbe::Statement::Volatile(qbe::Instr::Ret(Some(
+                            qbe::Value::Const(0),
+                        )))),
+                    ],
+                },
+                qbe::Block {
+                    label: "dead_block".to_string(),
+                    items: vec![
+                        qbe::BlockItem::Statement(qbe::Statement::Assign(
+                            qbe::Value::Temporary("tmp_dead".to_string()),
+                            qbe::Type::Word,
+                            qbe::Instr::Call("dead".to_string(), vec![], None),
+                        )),
+                        qbe::BlockItem::Statement(qbe::Statement::Volatile(qbe::Instr::Ret(Some(
+                            qbe::Value::Const(0),
+                        )))),
+                    ],
+                },
+            ],
+        };
+
+        let mut function_map = HashMap::new();
+        function_map.insert("live".to_string(), live);
+        function_map.insert("dead".to_string(), dead);
+
+        let callees = direct_user_callees(&caller, &function_map);
+        assert!(callees.contains("live"));
+        assert!(!callees.contains("dead"));
     }
 }
