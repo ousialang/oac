@@ -239,7 +239,8 @@ fun main() -> I32 {
             merged.invariants[0].display_name,
             "counter value must be non-negative"
         );
-        assert_eq!(merged.invariants[0].parameter.ty, "Counter");
+        assert_eq!(merged.invariants[0].parameters.len(), 1);
+        assert_eq!(merged.invariants[0].parameters[0].ty, "Counter");
     }
 
     #[test]

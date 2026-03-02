@@ -13,12 +13,13 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 6. Lower to QBE with `qbe_backend::compile`.
 7. Verify `prove(...)` obligations with `prove::verify_prove_obligations_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
 8. Verify struct invariants with `struct_invariants::verify_struct_invariants_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
-9. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
-10. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
+9. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module).
+10. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
+11. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
     - QBE runtime backend: emit `target/oac/ir.qbe`, run `qbe`, emit `target/oac/assembly.s`.
     - LLVM runtime backend: emit `target/oac/ir.ll`, run `clang -x ir -c`, emit `target/oac/object.o`.
-11. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
-12. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+12. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+13. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -30,6 +31,8 @@ Artifacts emitted during build:
 - `target/oac/prove/site_*.smt2` (when prove obligations exist)
 - `target/oac/struct_invariants/site_*.qbe` (generated checker programs, when obligations exist)
 - `target/oac/struct_invariants/site_*.smt2` (when invariant obligations exist)
+- `target/oac/model_invariants/site_*.qbe` (generated checker programs, when model-invariant obligations exist)
+- `target/oac/model_invariants/site_*.smt2` (when model-invariant obligations exist)
 - `target/oac/assembly.s`
 - `target/oac/object.o` (LLVM runtime backend)
 - `target/oac/app`
@@ -44,7 +47,7 @@ Defined in `crates/oac/src/main.rs` (`run_tests` function):
 4. Resolve flat imports via `flat_imports` and execute comptime applies.
 5. Lower top-level `test "..." { ... }` declarations via `test_framework::lower_tests_to_program` into generated test functions plus a generated `main`.
 6. Resolve/type-check with `ir::resolve`.
-7. Lower to QBE, run prove/invariant checks, run non-termination classification, emit runtime backend artifacts (`qbe` or `llvm`), and link executable (same backend path as `oac build`).
+7. Lower to QBE, run prove/struct-invariant/model-invariant checks, run non-termination classification, emit runtime backend artifacts (`qbe` or `llvm`), and link executable (same backend path as `oac build`).
 8. Execute `target/oac/test/app` and treat non-zero exit status as test failure.
 9. Map failures into shared compiler diagnostics and render Ariadne reports for CLI users.
 
@@ -57,7 +60,7 @@ Artifacts emitted during test runs:
 - `target/oac/test/assembly.s`
 - `target/oac/test/object.o` (LLVM runtime backend)
 - `target/oac/test/app`
-- prove/invariant debug artifacts under `target/oac/test/prove/` and `target/oac/test/struct_invariants/` when obligations exist
+- prove/invariant debug artifacts under `target/oac/test/prove/`, `target/oac/test/struct_invariants/`, and `target/oac/test/model_invariants/` when obligations exist
 
 ## End-to-End Bench Flow
 
@@ -65,7 +68,7 @@ Defined in `crates/oac/src/bench_prove.rs` (`run` / `run_with_runner`):
 
 1. Select fixture corpus (`full` or `quick`) and iteration count.
 2. For each fixture+iteration, compile through the same front-end+backend path as `oac build` into isolated targets under `target/oac/bench/runs/<fixture>/iter_<n>/`.
-3. Record elapsed wall time per iteration and collect checker artifact metrics (`prove/*.smt2`, `struct_invariants/*.smt2` count+bytes).
+3. Record elapsed wall time per iteration and collect checker artifact metrics (`prove/*.smt2` plus `struct_invariants/*.smt2` and `model_invariants/*.smt2`, aggregated for invariant stats).
 4. Use median elapsed time per fixture as the reported value.
 5. Compare fixture medians against committed baseline (`crates/oac/bench/prove_baseline.json`) with regression policy `delta_ms >= 200 && delta_pct >= 20.0`.
 6. Emit JSON report (`target/oac/bench/prove/latest.json` by default) plus compact console table.
@@ -74,6 +77,7 @@ Defined in `crates/oac/src/bench_prove.rs` (`run` / `run_with_runner`):
 Notes:
 - Timing regressions are report-only in v1 (command still exits success when outcomes match expectations).
 - Unexpected fixture outcomes (unexpected success/failure or wrong diagnostic code) fail the command.
+- Full suite fixture set includes prove, struct-invariant, template-hash-table, and model-invariant pass/fail checks; quick suite remains the first four fixtures for fast local iteration.
 
 ## Front-End Details
 
@@ -156,15 +160,20 @@ Important enforced invariants include:
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`
-- optional struct invariants support both single and grouped syntax: `invariant [identifier]? "label" for (v: TypeName) { ... }` and `invariant for (v: TypeName) { [identifier]? "label" { ... } ... }` (display labels required; identifiers optional)
-- each invariant clause is synthesized independently as `__struct__<TypeName>__invariant__<key>` (`<key>` from identifier or deterministic anonymous ordinal such as `anon_0`); legacy explicit invariant functions named `__struct__<TypeName>__invariant(v: TypeName) -> Bool` are still validated/registered
-- `invariant_metadata.rs` centralizes struct-invariant metadata discovery and argument-invariant assumption construction, reused by both `prove` and `struct_invariants` verification entrypoints.
-- `verification_cycles.rs` centralizes reachable user-call graph discovery plus SCC-based recursion-cycle policy checks reused by both `prove` and `struct_invariants`.
+- invariant declarations support one or more parameters in `for (...)` for both single and grouped syntax; empty parameter lists are parser errors.
+- arity-sensitive invariant semantics are enforced in resolve:
+  - unary (`for (v: StructType)`) invariants remain struct invariants and synthesize `__struct__<TypeName>__invariant__<key>`
+  - multi-argument (`for (a: ..., b: ..., ...)`) invariants become model invariants and synthesize `__model__invariant__<key>`
+- unary invariants keep legacy compatibility for explicit `__struct__<TypeName>__invariant(v: TypeName) -> Bool` functions.
+- model invariants are resolve-validated as a strict pure subset over their transitive user-call graph (reject `prove`, `assert`, extern calls, pointer load/store builtins, and side-effect builtins `print`/`print_str`).
+- `invariant_metadata.rs` centralizes struct-invariant metadata discovery and argument-invariant assumption construction, reused by prove, struct-invariant, and model-invariant verification entrypoints.
+- `verification_cycles.rs` centralizes reachable user-call graph discovery plus SCC-based recursion-cycle policy checks reused by prove, struct-invariants, and model invariants.
 - `prove(...)` sites reachable from `main` are verified by checker QBE synthesis: the site condition is marked in QBE, checker returns `1` when the proof condition is false at the site, and proving asks reachability of exit code `1` (`unsat` = proven, `sat` = compile failure)
 - reachable user-call return sites for struct-typed values are verified per `(call-site, invariant)` with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
+- model invariants are verified globally (independent of `main` reachability): one checker obligation per declaration, where checker return is rewritten to `1` when invariant result is `0`.
 - checker generation is QBE-native and interprocedural: site instrumentation happens on compiled caller QBE, checker artifacts include a checker entry plus reachable user callees, and CHC encoding models user calls through function-summary relations (no checker-time call inlining)
-- checker encoding adds argument preconditions for invariant-bearing parameter types in both pipelines: if a checker function argument’s semantic type has one or more struct invariants, encoding assumes each invariant relation returns non-zero at function entry (assumption-only; entry memory/heap state is not overwritten from invariant-call outputs)
-- call-only recursion cycles are allowed during struct invariant/prove verification; only cycles that include argument-invariant precondition edges are rejected fail-closed on the combined verification graph
+- checker encoding adds argument preconditions for invariant-bearing parameter types in all verification pipelines: if a checker function argument’s semantic type has one or more struct invariants, encoding assumes each invariant relation returns non-zero at function entry (assumption-only; entry memory/heap state is not overwritten from invariant-call outputs)
+- call-only recursion cycles are allowed during struct-invariant/prove/model-invariant verification; only cycles that include argument-invariant precondition edges are rejected fail-closed on the combined verification graph
 
 ## Backend (`qbe_backend.rs`)
 
@@ -201,10 +210,10 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `riscv-smt` subcommand.
 - `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
-- `verification.rs` is the shared in-crate verification entrypoint; it runs prove obligations first and short-circuits before struct-invariant obligations when prove fails.
-- `qbe-smt` is used by prove verification and struct invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
-- `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
-- `oac` routes prove/struct-invariant solver calls through `crates/oac/src/verification_solver.rs`, which preserves baseline two-step retries (`10s`, `30s`) and can add a candidate-only third attempt for large obligations that remain `unknown`.
+- `verification.rs` is the shared in-crate verification entrypoint; it runs prove obligations first, then struct invariants, then model invariants.
+- `qbe-smt` is used by prove, struct-invariant, and model-invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
+- `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so invariant/prove verification shares one encode+solve backend path.
+- `oac` routes prove/struct-invariant/model-invariant solver calls through `crates/oac/src/verification_solver.rs`, which preserves baseline two-step retries (`10s`, `30s`) and can add a candidate-only third attempt for large obligations that remain `unknown`.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
 - `qbe-smt` is parser-free: it consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`). Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), `crates/qbe-smt/src/encode_extern_models.rs` (extern-call model/arity catalog), and `crates/qbe-smt/src/classify.rs` (loop classification).
 - `qbe-smt` models a broad integer + memory QBE subset plus an FP32/FP64 proving subset:

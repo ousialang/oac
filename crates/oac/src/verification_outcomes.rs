@@ -14,6 +14,7 @@ const OUTCOME_SCHEMA_VERSION: u32 = 1;
 pub(crate) enum VerificationKind {
     Prove,
     StructInvariant,
+    ModelInvariant,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -298,5 +299,34 @@ mod tests {
 
         let deltas = forbidden_transition_deltas(&baseline, &candidate).expect("compare");
         assert_eq!(deltas.len(), 1);
+    }
+
+    #[test]
+    fn detects_forbidden_transition_for_model_invariant_kind() {
+        let baseline = VerificationOutcomeFile {
+            schema_version: 1,
+            profile: "baseline".to_string(),
+            records: vec![record(
+                VerificationKind::ModelInvariant,
+                "__model__invariant__anon_0",
+                VerificationOutcome::Unsat,
+            )],
+        };
+        let candidate = VerificationOutcomeFile {
+            schema_version: 1,
+            profile: "candidate".to_string(),
+            records: vec![record(
+                VerificationKind::ModelInvariant,
+                "__model__invariant__anon_0",
+                VerificationOutcome::Sat,
+            )],
+        };
+
+        let deltas = forbidden_transition_deltas(&baseline, &candidate).expect("compare");
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(
+            deltas[0].key,
+            "ModelInvariant:__model__invariant__anon_0".to_string()
+        );
     }
 }

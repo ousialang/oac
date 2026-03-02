@@ -129,7 +129,7 @@ pub struct Function {
 pub struct StructInvariantDecl {
     pub identifier: Option<String>,
     pub display_name: String,
-    pub parameter: Parameter,
+    pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
 }
 
@@ -714,7 +714,7 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
     Ok(parameters)
 }
 
-fn parse_single_parameter(tokens: &mut Vec<TokenData>) -> anyhow::Result<Parameter> {
+fn parse_parameter_list(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parameter>> {
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -723,26 +723,7 @@ fn parse_single_parameter(tokens: &mut Vec<TokenData>) -> anyhow::Result<Paramet
             },
         "expected opening parenthesis"
     );
-    let parameter = match tokens.remove(0) {
-        TokenData::Word(name) => {
-            anyhow::ensure!(
-                tokens.remove(0) == TokenData::Symbols(":".to_string()),
-                "expected ':' after parameter name"
-            );
-            let ty = parse_type_reference(tokens)?;
-            Parameter { name, ty }
-        }
-        _ => return Err(anyhow::anyhow!("expected parameter name")),
-    };
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: ')',
-                is_opening: false
-            },
-        "expected closing parenthesis"
-    );
-    Ok(parameter)
+    parse_function_args(tokens)
 }
 
 fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Statement>> {
@@ -965,16 +946,7 @@ fn parse_function_declaration(
         _ => return Err(anyhow::anyhow!("expected function name")),
     };
 
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: '(',
-                is_opening: true
-            },
-        "expected opening parenthesis"
-    );
-
-    let parameters = parse_function_args(tokens)?;
+    let parameters = parse_parameter_list(tokens)?;
 
     // parse -> return type
     anyhow::ensure!(
@@ -1012,15 +984,7 @@ fn parse_extern_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Res
         _ => return Err(anyhow::anyhow!("expected function name")),
     };
 
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: '(',
-                is_opening: true
-            },
-        "expected opening parenthesis"
-    );
-    let parameters = parse_function_args(tokens)?;
+    let parameters = parse_parameter_list(tokens)?;
 
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Symbols("->".to_string()),
@@ -1328,7 +1292,11 @@ fn parse_grouped_struct_invariant_declarations(
         tokens.remove(0) == TokenData::Word("for".to_string()),
         "expected 'for' after 'invariant' in grouped declaration"
     );
-    let parameter = parse_single_parameter(tokens)?;
+    let parameters = parse_parameter_list(tokens)?;
+    anyhow::ensure!(
+        !parameters.is_empty(),
+        "invariant requires at least one parameter"
+    );
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1362,7 +1330,7 @@ fn parse_grouped_struct_invariant_declarations(
                 out.push(StructInvariantDecl {
                     identifier,
                     display_name,
-                    parameter: parameter.clone(),
+                    parameters: parameters.clone(),
                     body,
                 });
             }
@@ -1399,13 +1367,17 @@ fn parse_struct_invariant_declarations(
         tokens.remove(0) == TokenData::Word("for".to_string()),
         "expected 'for' after invariant name"
     );
-    let parameter = parse_single_parameter(tokens)?;
+    let parameters = parse_parameter_list(tokens)?;
+    anyhow::ensure!(
+        !parameters.is_empty(),
+        "invariant requires at least one parameter"
+    );
     let body = parse_function_like_body(tokens)?;
 
     Ok(vec![StructInvariantDecl {
         identifier,
         display_name,
-        parameter,
+        parameters,
         body,
     }])
 }
@@ -2279,8 +2251,9 @@ invariant "positive .value" for (v: Counter) {
         assert_eq!(ast.invariants.len(), 1);
         assert_eq!(ast.invariants[0].identifier, None);
         assert_eq!(ast.invariants[0].display_name, "positive .value");
-        assert_eq!(ast.invariants[0].parameter.name, "v");
-        assert_eq!(ast.invariants[0].parameter.ty, "Counter");
+        assert_eq!(ast.invariants[0].parameters.len(), 1);
+        assert_eq!(ast.invariants[0].parameters[0].name, "v");
+        assert_eq!(ast.invariants[0].parameters[0].ty, "Counter");
     }
 
     #[test]
@@ -2336,13 +2309,64 @@ invariant for (v: Counter) {
             Some("non_negative_value")
         );
         assert_eq!(ast.invariants[0].display_name, "positive .value");
-        assert_eq!(ast.invariants[0].parameter.name, "v");
-        assert_eq!(ast.invariants[0].parameter.ty, "Counter");
+        assert_eq!(ast.invariants[0].parameters.len(), 1);
+        assert_eq!(ast.invariants[0].parameters[0].name, "v");
+        assert_eq!(ast.invariants[0].parameters[0].ty, "Counter");
 
         assert_eq!(ast.invariants[1].identifier, None);
         assert_eq!(ast.invariants[1].display_name, "positive .max");
-        assert_eq!(ast.invariants[1].parameter.name, "v");
-        assert_eq!(ast.invariants[1].parameter.ty, "Counter");
+        assert_eq!(ast.invariants[1].parameters.len(), 1);
+        assert_eq!(ast.invariants[1].parameters[0].name, "v");
+        assert_eq!(ast.invariants[1].parameters[0].ty, "Counter");
+    }
+
+    #[test]
+    fn parses_multi_parameter_struct_invariant_declaration() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter add preserves ordering" for (lhs: Counter, rhs: Counter) {
+	return lhs.value <= rhs.value
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize multi parameter invariant source");
+        let ast = parse(tokens).expect("parse multi parameter invariant source");
+
+        assert_eq!(ast.invariants.len(), 1);
+        assert_eq!(ast.invariants[0].identifier, None);
+        assert_eq!(
+            ast.invariants[0].display_name,
+            "counter add preserves ordering"
+        );
+        assert_eq!(ast.invariants[0].parameters.len(), 2);
+        assert_eq!(ast.invariants[0].parameters[0].name, "lhs");
+        assert_eq!(ast.invariants[0].parameters[0].ty, "Counter");
+        assert_eq!(ast.invariants[0].parameters[1].name, "rhs");
+        assert_eq!(ast.invariants[0].parameters[1].ty, "Counter");
+    }
+
+    #[test]
+    fn rejects_struct_invariant_declaration_without_parameters() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter value must be non-negative" for () {
+	return true
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize missing parameter invariant source");
+        let err = parse(tokens).expect_err("missing invariant parameters should fail");
+        assert!(err
+            .to_string()
+            .contains("invariant requires at least one parameter"));
     }
 
     #[test]
@@ -2367,7 +2391,8 @@ generic Box[T] {
         let generic = &ast.generic_definitions[0];
         assert_eq!(generic.invariants.len(), 1);
         assert_eq!(generic.invariants[0].display_name, "value must be valid");
-        assert_eq!(generic.invariants[0].parameter.ty, "Box");
+        assert_eq!(generic.invariants[0].parameters.len(), 1);
+        assert_eq!(generic.invariants[0].parameters[0].ty, "Box");
     }
 
     #[test]
@@ -2395,8 +2420,61 @@ generic Box[T] {
         assert_eq!(generic.invariants.len(), 1);
         assert_eq!(generic.invariants[0].identifier, None);
         assert_eq!(generic.invariants[0].display_name, "value must be valid");
-        assert_eq!(generic.invariants[0].parameter.name, "v");
-        assert_eq!(generic.invariants[0].parameter.ty, "Box");
+        assert_eq!(generic.invariants[0].parameters.len(), 1);
+        assert_eq!(generic.invariants[0].parameters[0].name, "v");
+        assert_eq!(generic.invariants[0].parameters[0].ty, "Box");
+    }
+
+    #[test]
+    fn parses_grouped_multi_parameter_struct_invariant_declarations() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant for (lhs: Counter, rhs: Counter) {
+	"counter pair ordering" {
+		return lhs.value <= rhs.value
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize grouped multi parameter invariant source");
+        let ast = parse(tokens).expect("parse grouped multi parameter invariant source");
+
+        assert_eq!(ast.invariants.len(), 1);
+        assert_eq!(ast.invariants[0].display_name, "counter pair ordering");
+        assert_eq!(ast.invariants[0].parameters.len(), 2);
+        assert_eq!(ast.invariants[0].parameters[0].name, "lhs");
+        assert_eq!(ast.invariants[0].parameters[1].name, "rhs");
+    }
+
+    #[test]
+    fn parses_generic_multi_parameter_struct_invariant_declaration() {
+        let source = r#"
+generic Pair[T] {
+	struct Pair {
+		left: T,
+		right: T,
+	}
+
+	invariant "pair equality is reflexive" for (lhs: Pair, rhs: Pair) {
+		return true
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize generic multi parameter invariant source");
+        let ast = parse(tokens).expect("parse generic multi parameter invariant source");
+
+        assert_eq!(ast.generic_definitions.len(), 1);
+        let generic = &ast.generic_definitions[0];
+        assert_eq!(generic.invariants.len(), 1);
+        assert_eq!(generic.invariants[0].parameters.len(), 2);
+        assert_eq!(generic.invariants[0].parameters[0].ty, "Pair");
+        assert_eq!(generic.invariants[0].parameters[1].ty, "Pair");
     }
 
     #[test]

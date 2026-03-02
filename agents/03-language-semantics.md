@@ -100,6 +100,13 @@ Observed in parser/IR implementation:
 - `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`.
 - `String.make_bytes` normalizes `Bytes.len` fail-closed (`len < 0` clamps to `0`) and is used by `String.from_literal_parts` / `String.from_heap_parts`; `String.bytes` performs equivalent inline normalization through `String.normalize_len` before constructing `Bytes` so payload invariants remain provable at call sites.
 - `String` namespaced helpers include structural accessors (`bytes`, `ptr`, `len`) and convenience operations (`is_empty`, `equals`, `starts_with`, `ends_with`, `char_at_or`, `slice_clamped`).
+- Stdlib now includes a small set of global model invariants (2+ args) chosen for solver stability:
+  - `Char.from_code_roundtrip`: `Char.code(Char.from_code(x)) == x` for multiple inputs
+  - `Char.equals_matches_code_equality`: `Char.equals(Char.from_code(x), Char.from_code(y)) == (x == y)`
+  - `String.make_bytes_normalizes_len_and_keeps_ptr`: `String.make_bytes(ptr, len)` preserves `ptr` and sets `len` to `String.normalize_len(len)`
+  - `String.normalize_len_is_non_negative`: `String.normalize_len(x) >= 0`
+  - `Option.none must agree with presence predicates`: `Option.is_none(Option.none()) && !Option.is_some(Option.none())`
+  - `Ref`/`Mut` pointer wrapper laws: `ptr(from_ptr(p)) == p` and `ptr(add_bytes(from_ptr(p), d)) == p + d`
 - C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) and exposes both scanner-style APIs (`Json.parse_json_document_result`, `Json.json_kind`) and value-tree APIs (`Json.parse_json_document_value_result` returning `JsonValue` trees with `JsonMembers`/`JsonValues`).
 - JSON booleans in `JsonValue` are modeled as `JsonValue.Bool(Bool)` (not separate `True`/`False` variants), and `Json.json_kind` classifies both `true` and `false` as `JsonKind.Bool`.
@@ -115,16 +122,23 @@ Observed in parser/IR implementation:
 - `HashTable.set` returns `SetResult { table: HashTable, inserted_new: Bool }` and `HashTable.remove` returns `RemoveResult { table: HashTable, removed: Lookup }`.
 - `HashTable[K: Hash + Eq, V]` currently has no declaration-based struct invariant; the former `coherent_state` declaration was removed after fail-closed solver-unknown obligations on resize/rehash call sites.
 - Hash table metadata now has explicit runtime assertion guards in `HashTable.assert_metadata(...)` (`len >= 0`, `resize_threshold >= 1`, `len <= resize_threshold`) and this helper is applied on constructor/mutation return paths (`with_capacity`, `set_no_resize`, `rehash`, `maybe_resize_before_insert` passthrough, `remove`, `clear`).
-- Struct invariants are optional per struct type and support both single and grouped declarations: `invariant [identifier]? "Human label" for (v: TypeName) { ... }` and `invariant for (v: TypeName) { [identifier]? "Human label" { ... } ... }`.
-- Invariant clauses synthesize internal functions named `__struct__<TypeName>__invariant__<key>` with signature `fun ...(v: <TypeName>) -> Bool` (`<key>` is identifier-based or deterministic anonymous ordinal like `anon_0`); legacy explicit functions named `__struct__<TypeName>__invariant(v: TypeName) -> Bool` are still accepted for compatibility.
+- Invariant declarations accept one or more parameters in `for (...)` for both single and grouped syntax. Empty parameter lists are rejected.
+- Arity-sensitive invariant semantics:
+  - unary invariants (`for (v: TypeName)`) are struct invariants;
+  - multi-argument invariants (`for (a: ..., b: ..., ...)`) are model invariants.
+- Unary invariant clauses synthesize internal functions named `__struct__<TypeName>__invariant__<key>` with signature `fun ...(v: <TypeName>) -> Bool` (`<key>` is identifier-based or deterministic anonymous ordinal like `anon_0`); legacy explicit functions named `__struct__<TypeName>__invariant(v: TypeName) -> Bool` are still accepted for compatibility.
+- Multi-argument model-invariant clauses synthesize internal functions named `__model__invariant__<key>` and are tracked globally (identifier uniqueness is global across model invariants).
 - Malformed legacy invariant functions are compile errors.
 - Build-time verification checks struct invariants per `(call-site, invariant)` at return sites of user-defined function calls reachable from `main` (excluding invariant function bodies).
 - Build-time verification also checks `prove(...)` obligations at reachable statement sites from `main` by synthesizing checker QBE functions that return `1` on proof-condition violation.
+- Build-time verification checks model invariants globally (independent of `main` reachability): one obligation per declaration.
 - Verification synthesizes each site checker from compiled QBE by instrumenting the target call with an invariant check and returning `1` on violation / `0` on success, then asks if exit code `1` is reachable (`unsat` means invariant proven, `sat` means compile failure).
 - `prove(...)` checker synthesis instruments QBE marker assignments (`.oac_prove_site_*`) and rewrites checker return to `1` when the proved condition is false at the targeted site.
+- Model-invariant checker synthesis rewrites invariant returns to checker `bad` (`ret == 0`) and queries reachability of `exit == 1`.
+- Model invariants are resolve-validated as a strict pure subset over transitive user calls: reject `prove(...)`, `assert(...)`, extern calls, pointer load/store builtins, and side-effect builtins (`print`, `print_str`).
 - Checker construction is interprocedural: the checker artifact includes entry + reachable user callees, and CHC encoding models user calls through function summary relations (`*_ret` / `*_abort`) instead of checker-time inlining.
 - Checker reachable-callee discovery now traverses only entry-reachable CFG blocks per QBE function (and stops scanning a block after terminators), so dead instrumentation blocks do not contribute spurious call targets/argument-invariant assumptions.
-- Checker entry preconditions now include argument-type invariants in both verification pipelines: for each checker function argument whose semantic type has struct invariants, encoding adds one invariant relation precondition per invariant (`*_ret` relation + non-zero return).
+- Checker entry preconditions now include argument-type invariants in prove/struct-invariant/model-invariant pipelines: for each checker function argument whose semantic type has struct invariants, encoding adds one invariant relation precondition per invariant (`*_ret` relation + non-zero return).
 - These argument-invariant preconditions are assumptions only: the checker’s entry memory/heap state is not replaced with the invariant-call output memory/heap.
 - Shared recursion-cycle analysis lives in `verification_cycles.rs` and uses SCCs over the combined verification graph with deterministic cycle witness reconstruction for fail-closed diagnostics.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
@@ -134,16 +148,16 @@ Observed in parser/IR implementation:
 - `oac test <file.oa>` is fail-fast: each `test` block is lowered to a generated zero-arg `I32` function, and a generated `main` executes tests in declaration order. A failing runtime `assert` exits immediately with code `242`.
 - `oac test` requires at least one `test` declaration and rejects source files that already define `main` (because `main` is synthesized by the test runner).
 - `oac build` does not lower or execute `test` declarations; test lowering is isolated to the `oac test` command path.
-- Call-only recursion cycles are allowed for struct invariant and prove verification; cycles containing argument-invariant precondition edges are rejected fail-closed on the combined verification graph.
+- Call-only recursion cycles are allowed for struct-invariant/prove/model-invariant verification; cycles containing argument-invariant precondition edges are rejected fail-closed on the combined verification graph.
 - Unsupported proving constructs at QBE level fail closed through `qbe-smt` (hard `Unsupported` encoding errors).
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).
-- Prove obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
-- Struct-invariant proof obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
+- Prove and model-invariant obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
+- Prove/struct-invariant/model-invariant obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
 - Verification outcome classes are `{sat, unsat, unknown}` per obligation; `sat`/`unsat` interpretation is unchanged (`sat` fail, `unsat` pass), and `unknown` remains fail-closed.
 - Outcome-migration policy for unknown mitigation is strict: only baseline `unknown` obligations may change outcome; baseline `sat`/`unsat` obligations must remain unchanged.
 - Default solver retry behavior is `10s` then `30s`; candidate profile may add a third attempt for large obligations still `unknown`, controlled by `OAC_Z3_LARGE_OBLIGATION_BYTES` and `OAC_Z3_TIMEOUT_LARGE_OBLIGATION_SECS`.
 - `qbe-smt` is strict fail-closed: unsupported QBE operations are hard errors (no conservative havoc fallback).
-- `qbe-smt` supports FP32/FP64 obligations during prove/struct-invariant checking for the emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, `exts`/`truncd`, `stosi`/`stoui`/`dtosi`/`dtoui`, `swtof`/`uwtof`/`sltof`/`ultof`, and FP32/FP64 `loads`/`stores`) using IEEE floating-point semantics (`RNE` for arithmetic/int->FP, `RTZ` for FP->int and `truncd`).
+- `qbe-smt` supports FP32/FP64 obligations during prove/struct-invariant/model-invariant checking for the emitted subset (FP32/FP64 args/results, `copy`, `add/sub/mul/div`, `cmp` `eq/ne/lt/le/gt/ge/o/uo`, `phi`, `exts`/`truncd`, `stosi`/`stoui`/`dtosi`/`dtoui`, `swtof`/`uwtof`/`sltof`/`ultof`, and FP32/FP64 `loads`/`stores`) using IEEE floating-point semantics (`RNE` for arithmetic/int->FP, `RTZ` for FP->int and `truncd`).
 - Float-conversion edge cases in proving follow solver IEEE-SMT semantics and may differ from CPU-specific runtime behavior for NaN/out-of-range float-to-int conversions.
 - `qbe-smt` remains fail-closed for unsupported operations and invalid conversion assignment-type combinations.
 - `qbe-smt` models `call $exit(code)` as a halting transition with `exit` state set from `code`.
@@ -156,8 +170,7 @@ Observed in parser/IR implementation:
 - `qbe-smt` is parser-free: proving consumes direct in-memory QBE IR (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`), not re-parsed QBE text.
 - `qbe-smt` flattens only entry-reachable blocks; unreachable unsupported instructions do not affect encoding.
 - When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions).
-- `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced only for struct invariant obligations under `target/oac/struct_invariants/`.
-- `oac build` emits prove artifacts under `target/oac/prove/` when prove obligations exist.
+- `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced under `target/oac/prove/`, `target/oac/struct_invariants/`, and `target/oac/model_invariants/` when obligations exist.
 - `oac build` runs a conservative non-termination classifier over QBE `main` loops and rejects builds only when non-termination is proven (current proof shape: canonical while-loop with initially true guard and identity body update on guard variable, including simple `sub(x, 0)` forms). Unproven loops are treated as unknown and allowed.
 
 ## Notes on Specs vs Reality
