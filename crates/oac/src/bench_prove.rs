@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticBundle, DiagnosticStage};
 use crate::verification_outcomes::{
     begin_outcome_collection, end_outcome_collection, forbidden_transition_deltas,
+    with_fixture_context,
 };
 use crate::verification_profile::VerificationProfile;
 use crate::{
@@ -471,8 +472,6 @@ where
     })
 }
 
-const VERIFICATION_OUTCOME_FIXTURE_ENV: &str = "OAC_VERIFICATION_OUTCOME_FIXTURE";
-
 fn run_verification_outcome_gate(
     current_dir: &Path,
     fixtures: &[FixtureSpec],
@@ -506,6 +505,12 @@ fn run_verification_outcome_gate(
         &runs_root,
         &candidate_path,
     )?;
+    let expected_fixtures = fixtures
+        .iter()
+        .map(|fixture| fixture.id)
+        .collect::<HashSet<_>>();
+    let baseline = filter_outcomes_to_expected_fixtures(baseline, &expected_fixtures);
+    let candidate = filter_outcomes_to_expected_fixtures(candidate, &expected_fixtures);
 
     let deltas = forbidden_transition_deltas(&baseline, &candidate)?;
     if deltas.is_empty() {
@@ -523,6 +528,19 @@ fn run_verification_outcome_gate(
         "verification outcome gate failed with forbidden transitions:\n{}",
         details.join("\n")
     );
+}
+
+fn filter_outcomes_to_expected_fixtures(
+    mut file: crate::verification_outcomes::VerificationOutcomeFile,
+    expected_fixtures: &HashSet<&'static str>,
+) -> crate::verification_outcomes::VerificationOutcomeFile {
+    file.records.retain(|record| {
+        let Some(fixture) = record.fixture.as_deref() else {
+            return false;
+        };
+        expected_fixtures.contains(fixture)
+    });
+    file
 }
 
 fn capture_verification_outcomes_for_profile(
@@ -580,15 +598,7 @@ fn capture_verification_outcomes_for_profile(
 }
 
 fn with_fixture_outcome_env<T>(fixture_id: &str, run: impl FnOnce() -> T) -> T {
-    let previous = std::env::var(VERIFICATION_OUTCOME_FIXTURE_ENV).ok();
-    std::env::set_var(VERIFICATION_OUTCOME_FIXTURE_ENV, fixture_id);
-    let output = run();
-    if let Some(value) = previous {
-        std::env::set_var(VERIFICATION_OUTCOME_FIXTURE_ENV, value);
-    } else {
-        std::env::remove_var(VERIFICATION_OUTCOME_FIXTURE_ENV);
-    }
-    output
+    with_fixture_context(fixture_id, run)
 }
 
 fn run_fixture_iteration(
