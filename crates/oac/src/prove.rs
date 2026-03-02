@@ -445,6 +445,12 @@ struct Counter {
 	max: I32,
 }
 
+impl Copy for Counter {
+	fun copy(v: Counter) -> Counter {
+		return v
+	}
+}
+
 invariant value_non_negative "value non-negative" for (v: Counter) {
 	return v.value >= 0
 }
@@ -517,6 +523,12 @@ fun main() -> I32 {
         let source = r#"
 struct Foo {
 	x: I32,
+}
+
+impl Copy for Foo {
+	fun copy(v: Foo) -> Foo {
+		return v
+	}
 }
 
 invariant "foo invariant" for (v: Foo) {

@@ -1064,10 +1064,9 @@ fn compile_statement(
             );
         }
         parser::Statement::Return { expr } => {
-            let (expr_var, expr_ty) = compile_expr(ctx, qbe_func, &expr, variables);
-            let return_var = maybe_clone_struct_value(ctx, qbe_func, &expr_var, &expr_ty);
+            let (expr_var, _expr_ty) = compile_expr(ctx, qbe_func, &expr, variables);
             trace!(%expr_var, "Emitting return instruction");
-            qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(return_var))));
+            qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
         }
         parser::Statement::Expression { expr } => {
             if compile_void_call_statement(ctx, qbe_func, expr, variables) {
@@ -1223,22 +1222,21 @@ fn compile_assign_statement(
     trace!(%variable, "Compiling assignment");
 
     let value_var = compile_expr(ctx, qbe_func, value, variables);
-    if let Some(existing_var) = variables.get(variable) {
-        let assigned_var = maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &existing_var.1);
-        let existing_type = ctx
+    if let Some((existing_var, existing_ty)) = variables.get(variable).cloned() {
+        let existing_type_def = ctx
             .resolved
             .type_definitions
-            .get(&existing_var.1)
+            .get(&existing_ty)
             .expect("existing variable type should exist");
         qbe_func.assign_instr(
-            qbe::Value::Temporary(existing_var.0.clone()),
-            type_to_qbe(existing_type),
-            qbe::Instr::Copy(qbe::Value::Temporary(assigned_var)),
+            qbe::Value::Temporary(existing_var.clone()),
+            type_to_qbe(existing_type_def),
+            qbe::Instr::Copy(qbe::Value::Temporary(value_var.0)),
         );
-    } else {
-        let assigned_var = maybe_clone_struct_value(ctx, qbe_func, &value_var.0, &value_var.1);
-        variables.insert(variable.to_string(), (assigned_var, value_var.1));
+        variables.insert(variable.to_string(), (existing_var, existing_ty));
+        return;
     }
+    variables.insert(variable.to_string(), value_var);
 }
 
 fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
@@ -1262,12 +1260,17 @@ fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
         .type_definitions
         .get(&func_def.sig.return_type)
         .unwrap();
+    let returns_void = matches!(return_type_def, ir::TypeDef::BuiltIn(BuiltInType::Void));
 
     let mut qbe_func = qbe::Function::new(
         qbe::Linkage::public(),
         func_def.name.clone(),
         qbe_args,
-        Some(type_to_qbe(return_type_def)),
+        if returns_void {
+            None
+        } else {
+            Some(type_to_qbe(return_type_def))
+        },
     );
 
     qbe_func.add_block("start".to_string());
@@ -1286,6 +1289,9 @@ fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
             &mut variables,
             &mut prove_site_counter,
         );
+    }
+    if returns_void && !qbe_func.blocks.last().unwrap().jumps() {
+        qbe_func.add_instr(qbe::Instr::Ret(None));
     }
 
     ctx.module.add_function(qbe_func);
@@ -1414,39 +1420,166 @@ fn alloc_struct_zeroed(func: &mut qbe::Function, size: u64) -> QbeAssignName {
     id
 }
 
-fn clone_struct_bytes(
-    ctx: &CodegenCtx,
-    func: &mut qbe::Function,
-    source_ptr: &str,
-    struct_name: &str,
-) -> QbeAssignName {
-    let size = struct_size_bytes_by_name(ctx, struct_name);
-    let cloned_ptr = alloc_struct_zeroed(func, size);
-    func.add_instr(Instr::Call(
-        "memcpy".to_string(),
-        vec![
-            (qbe::Type::Long, qbe::Value::Temporary(cloned_ptr.clone())),
-            (
-                qbe::Type::Long,
-                qbe::Value::Temporary(source_ptr.to_string()),
-            ),
-            (qbe::Type::Long, qbe::Value::Const(size)),
-        ],
-        None,
-    ));
-    cloned_ptr
+fn normalize_trait_target_type(ty: &str) -> &str {
+    match ty {
+        "Int" => "I32",
+        "PtrInt" => "I64",
+        _ => ty,
+    }
 }
 
-fn maybe_clone_struct_value(
+fn copy_impl_target_for_type(ctx: &CodegenCtx, value_ty: &str) -> Option<String> {
+    let impl_key = trait_impl_method_key("Copy", normalize_trait_target_type(value_ty), "copy");
+    ctx.resolved.trait_impl_methods.get(&impl_key).cloned()
+}
+
+fn emit_copy_ref_argument(
+    ctx: &CodegenCtx,
+    func: &mut qbe::Function,
+    value_var: &str,
+    value_ty: &str,
+    ref_ty: &str,
+) -> QbeAssignName {
+    let value_slot = new_id(&["implicit", "copy", "value", "slot"]);
+    func.assign_instr(
+        qbe::Value::Temporary(value_slot.clone()),
+        qbe::Type::Long,
+        qbe::Instr::Alloc8(non_zero_allocation_size(type_offset(ctx, value_ty))),
+    );
+    func.add_instr(qbe::Instr::Store(
+        type_ref_to_qbe(ctx, value_ty),
+        qbe::Value::Temporary(value_slot.clone()),
+        qbe::Value::Temporary(value_var.to_string()),
+    ));
+
+    let ref_def = match ctx
+        .resolved
+        .type_definitions
+        .get(ref_ty)
+        .unwrap_or_else(|| panic!("unknown Copy.copy receiver type {}", ref_ty))
+    {
+        ir::TypeDef::Struct(def) => def,
+        _ => panic!(
+            "Copy.copy receiver type {} must be a ref-like struct wrapper",
+            ref_ty
+        ),
+    };
+    let ptr_field = ref_def
+        .struct_fields
+        .iter()
+        .find(|field| field.name == "ptr")
+        .unwrap_or_else(|| {
+            panic!(
+                "Copy.copy receiver type {} must include ptr: PtrInt field",
+                ref_ty
+            )
+        });
+    if normalize_trait_target_type(&ptr_field.ty) != "I64" {
+        panic!(
+            "Copy.copy receiver type {} must include ptr field typed as PtrInt",
+            ref_ty
+        );
+    }
+
+    let ref_slot = new_id(&["implicit", "copy", "ref", "slot"]);
+    func.assign_instr(
+        qbe::Value::Temporary(ref_slot.clone()),
+        qbe::Type::Long,
+        qbe::Instr::Alloc8(non_zero_allocation_size(struct_size_bytes(ctx, ref_def))),
+    );
+
+    let mut ptr_offset = 0u64;
+    for field in &ref_def.struct_fields {
+        if field.name == "ptr" {
+            break;
+        }
+        ptr_offset += type_offset(ctx, &field.ty);
+    }
+    let ptr_addr = if ptr_offset == 0 {
+        ref_slot.clone()
+    } else {
+        let addr = new_id(&["implicit", "copy", "ref", "ptr", "addr"]);
+        func.assign_instr(
+            qbe::Value::Temporary(addr.clone()),
+            qbe::Type::Long,
+            qbe::Instr::Add(
+                qbe::Value::Temporary(ref_slot.clone()),
+                qbe::Value::Const(ptr_offset),
+            ),
+        );
+        addr
+    };
+    func.add_instr(qbe::Instr::Store(
+        qbe::Type::Long,
+        qbe::Value::Temporary(ptr_addr),
+        qbe::Value::Temporary(value_slot),
+    ));
+
+    ref_slot
+}
+
+fn maybe_emit_implicit_copy(
     ctx: &CodegenCtx,
     func: &mut qbe::Function,
     value_var: &str,
     value_ty: &str,
 ) -> QbeAssignName {
-    match ctx.resolved.type_definitions.get(value_ty) {
-        Some(ir::TypeDef::Struct(_)) => clone_struct_bytes(ctx, func, value_var, value_ty),
-        _ => value_var.to_string(),
+    let Some(copy_function) = copy_impl_target_for_type(ctx, value_ty) else {
+        return value_var.to_string();
+    };
+
+    let copy_sig = ctx
+        .resolved
+        .function_sigs
+        .get(&copy_function)
+        .expect("copy impl function signature should exist");
+    let copy_param_ty = copy_sig
+        .parameters
+        .first()
+        .map(|parameter| parameter.ty.clone())
+        .expect("copy impl function should have one parameter");
+    let copy_arg_var =
+        if normalize_trait_target_type(&copy_param_ty) == normalize_trait_target_type(value_ty) {
+            value_var.to_string()
+        } else {
+            emit_copy_ref_argument(ctx, func, value_var, value_ty, &copy_param_ty)
+        };
+
+    let result = new_id(&["implicit", "copy"]);
+    let qbe_ret_ty = type_ref_to_qbe(ctx, value_ty);
+    let qbe_arg_ty = type_ref_to_qbe(ctx, &copy_param_ty);
+    func.assign_instr(
+        qbe::Value::Temporary(result.clone()),
+        qbe_ret_ty,
+        qbe::Instr::Call(
+            call_target_symbol(&copy_function, copy_sig),
+            vec![(qbe_arg_ty, qbe::Value::Temporary(copy_arg_var))],
+            None,
+        ),
+    );
+    result
+}
+
+fn compile_variable_read(
+    ctx: &CodegenCtx,
+    func: &mut qbe::Function,
+    variables: &mut Variables,
+    variable_name: &str,
+) -> (QbeAssignName, ir::TypeRef) {
+    let (stored_var, stored_ty) = variables
+        .get(variable_name)
+        .unwrap_or_else(|| panic!("unknown variable {}", variable_name))
+        .clone();
+
+    if let Some(copy_impl_fn) = copy_impl_target_for_type(ctx, &stored_ty) {
+        if copy_impl_fn == func.name {
+            return (stored_var, stored_ty);
+        }
+        let copied = maybe_emit_implicit_copy(ctx, func, &stored_var, &stored_ty);
+        return (copied, stored_ty);
     }
+
+    (stored_var, stored_ty)
 }
 
 fn emit_struct_memcmp(
@@ -1547,16 +1680,12 @@ fn compile_void_call_statement(
     let mut lowered_args = vec![];
     for arg in args {
         let (arg_var, arg_ty) = compile_expr(ctx, func, arg, variables);
-        let lowered_var = maybe_clone_struct_value(ctx, func, &arg_var, &arg_ty);
         let arg_type_def = ctx
             .resolved
             .type_definitions
             .get(&arg_ty)
             .expect("call argument type should exist");
-        lowered_args.push((
-            type_to_qbe(arg_type_def),
-            qbe::Value::Temporary(lowered_var),
-        ));
+        lowered_args.push((type_to_qbe(arg_type_def), qbe::Value::Temporary(arg_var)));
     }
 
     let sig = ctx
@@ -1589,8 +1718,7 @@ fn compile_named_call(
     let mut arg_vars = vec![];
     for arg in args {
         let (arg_var, arg_ty) = compile_expr(ctx, func, arg, variables);
-        let lowered_var = maybe_clone_struct_value(ctx, func, &arg_var, &arg_ty);
-        arg_vars.push((lowered_var, arg_ty));
+        arg_vars.push((arg_var, arg_ty));
     }
 
     let sig = ctx
@@ -1712,10 +1840,11 @@ fn compile_expr(
             struct_variable,
             field: field_name,
         } => {
-            if let Some((struct_pointer_var, struct_name)) = variables.get(struct_variable.as_str())
-            {
+            if variables.contains_key(struct_variable.as_str()) {
+                let (struct_pointer_var, struct_name) =
+                    compile_variable_read(ctx, func, variables, struct_variable);
                 let resolved = ctx.resolved.clone();
-                let typedef = resolved.type_definitions.get(struct_name).unwrap();
+                let typedef = resolved.type_definitions.get(&struct_name).unwrap();
                 let ir::TypeDef::Struct(structdef) = typedef else {
                     panic!("Not really a struct: {struct_name}");
                 };
@@ -1738,7 +1867,7 @@ fn compile_expr(
                     Value::Temporary(struct_field_address_id.clone()),
                     qbe::Type::Long,
                     Instr::Add(
-                        Value::Temporary(struct_pointer_var.clone()),
+                        Value::Temporary(struct_pointer_var),
                         Value::Const(field_offset),
                     ),
                 );
@@ -2101,7 +2230,7 @@ fn compile_expr(
             (id, "Bool".to_string())
         }
         parser::Expression::Variable(name) => {
-            return variables.get(name).unwrap().clone();
+            return compile_variable_read(ctx, func, variables, name);
         }
         parser::Expression::UnaryOp(op, expr) => {
             let id = new_id(&["unary_op"]);
@@ -2477,26 +2606,17 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn qbe_codegen_structs_use_copy_barriers_and_memcmp_equality() {
+    fn qbe_codegen_structs_are_move_only_and_keep_memcmp_equality() {
         let source = r#"
 struct Box {
 	value: I32,
 }
 
-fun id(v: Box) -> Box {
-	return v
-}
-
-fun consume(v: Box) -> I32 {
-	return v.value
-}
-
 fun main() -> I32 {
 	a = Box struct { value: 7 }
-	b = a
-	c = id(b)
-	if a == c {
-		return consume(c)
+	b = Box struct { value: 7 }
+	if a == b {
+		return 1
 	}
 	return 0
 }
@@ -2509,12 +2629,8 @@ fun main() -> I32 {
             "expected struct equality lowering via memcmp, got:\n{qbe_ir}"
         );
         assert!(
-            qbe_ir.matches("call $memcpy").count() >= 4,
-            "expected struct copy barriers to emit memcpy calls, got:\n{qbe_ir}"
-        );
-        assert!(
-            qbe_ir.matches("call $calloc").count() >= 3,
-            "expected struct allocations/clones to emit calloc calls, got:\n{qbe_ir}"
+            !qbe_ir.contains("cannot move from uninitialized value"),
+            "move-only struct program should still resolve and lower, got:\n{qbe_ir}"
         );
     }
 

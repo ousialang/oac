@@ -388,8 +388,640 @@ pub struct FunctionDefinition {
     pub sig: FunctionSignature,
 }
 
+#[derive(Clone, Debug)]
+struct OwnershipLocal {
+    ty: TypeRef,
+    state: OwnershipBindingState,
+    order: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnershipBindingState {
+    Initialized,
+    Moved,
+    Uninitialized,
+}
+
+#[derive(Clone, Debug, Default)]
+struct OwnershipState {
+    locals: HashMap<String, OwnershipLocal>,
+    next_order: usize,
+}
+
+impl OwnershipState {
+    fn with_params(parameters: &[FunctionParameter]) -> Self {
+        let mut out = OwnershipState::default();
+        for parameter in parameters {
+            out.locals.insert(
+                parameter.name.clone(),
+                OwnershipLocal {
+                    ty: parameter.ty.clone(),
+                    state: OwnershipBindingState::Initialized,
+                    order: out.next_order,
+                },
+            );
+            out.next_order += 1;
+        }
+        out
+    }
+
+    fn as_var_types(&self) -> HashMap<String, TypeRef> {
+        self.locals
+            .iter()
+            .map(|(name, local)| (name.clone(), local.ty.clone()))
+            .collect()
+    }
+}
+
+impl ResolvedProgram {
+    fn has_copy_impl_for_type(&self, ty: &str) -> bool {
+        let impl_key = trait_impl_method_key("Copy", normalize_numeric_alias(ty), "copy");
+        self.trait_impl_methods.contains_key(&impl_key)
+    }
+
+    fn drop_impl_for_type(&self, ty: &str) -> Option<String> {
+        let impl_key = trait_impl_method_key("Drop", normalize_numeric_alias(ty), "drop");
+        self.trait_impl_methods.get(&impl_key).cloned()
+    }
+
+    fn ownership_consume_local(
+        &self,
+        name: &str,
+        state: &mut OwnershipState,
+    ) -> anyhow::Result<()> {
+        let local = state
+            .locals
+            .get_mut(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown variable {}", name))?;
+        match local.state {
+            OwnershipBindingState::Initialized => {}
+            OwnershipBindingState::Moved => {
+                return Err(anyhow::anyhow!("use of moved value {}", name))
+            }
+            OwnershipBindingState::Uninitialized => {
+                return Err(anyhow::anyhow!(
+                    "cannot move from uninitialized value {}",
+                    name
+                ))
+            }
+        }
+        if !self.has_copy_impl_for_type(&local.ty) {
+            local.state = OwnershipBindingState::Moved;
+        }
+        Ok(())
+    }
+
+    fn ownership_insert_or_assign_local(&self, state: &mut OwnershipState, name: &str, ty: &str) {
+        if let Some(existing) = state.locals.get_mut(name) {
+            existing.ty = ty.to_string();
+            existing.state = OwnershipBindingState::Initialized;
+            return;
+        }
+        state.locals.insert(
+            name.to_string(),
+            OwnershipLocal {
+                ty: ty.to_string(),
+                state: OwnershipBindingState::Initialized,
+                order: state.next_order,
+            },
+        );
+        state.next_order += 1;
+    }
+
+    fn ownership_analyze_expression(
+        &self,
+        expr: &Expression,
+        state: &mut OwnershipState,
+    ) -> anyhow::Result<TypeRef> {
+        let var_types = state.as_var_types();
+        let expr_ty = self.expression_type(expr, &var_types)?;
+        match expr {
+            Expression::Literal(_) => {}
+            Expression::Variable(name) => {
+                self.ownership_consume_local(name, state)?;
+            }
+            Expression::UnaryOp(_, inner) => {
+                let _ = self.ownership_analyze_expression(inner, state)?;
+            }
+            Expression::BinOp(_, left, right) => {
+                let _ = self.ownership_analyze_expression(left, state)?;
+                let _ = self.ownership_analyze_expression(right, state)?;
+            }
+            Expression::Call(_, arguments) => {
+                for argument in arguments {
+                    let _ = self.ownership_analyze_expression(argument, state)?;
+                }
+            }
+            Expression::PostfixCall { callee, args } => {
+                if !matches!(callee.as_ref(), Expression::FieldAccess { .. }) {
+                    let _ = self.ownership_analyze_expression(callee, state)?;
+                }
+                for argument in args {
+                    let _ = self.ownership_analyze_expression(argument, state)?;
+                }
+            }
+            Expression::FieldAccess {
+                struct_variable, ..
+            } => {
+                if state.locals.contains_key(struct_variable) {
+                    self.ownership_consume_local(struct_variable, state)?;
+                }
+            }
+            Expression::StructValue { field_values, .. } => {
+                for (_, value) in field_values {
+                    let _ = self.ownership_analyze_expression(value, state)?;
+                }
+            }
+            Expression::Match { subject, arms } => {
+                let subject_ty = {
+                    let var_types = state.as_var_types();
+                    self.expression_type(subject, &var_types)?
+                };
+                let enum_def = match self.type_definitions.get(&subject_ty) {
+                    Some(TypeDef::Enum(enum_def)) => enum_def,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "match subject must be an enum, got {:?}",
+                            subject_ty
+                        ));
+                    }
+                };
+
+                let _ = self.ownership_analyze_expression(subject, state)?;
+                let base_after_subject = state.clone();
+
+                let mut arm_states = vec![];
+                for arm in arms {
+                    let mut arm_state = base_after_subject.clone();
+                    let (variant_name, binder) = match &arm.pattern {
+                        parser::MatchPattern::Variant {
+                            type_name,
+                            variant_name,
+                            binder,
+                        } => {
+                            if type_name != &subject_ty {
+                                return Err(anyhow::anyhow!(
+                                    "match arm type {:?} does not match subject type {:?}",
+                                    type_name,
+                                    subject_ty
+                                ));
+                            }
+                            (variant_name, binder)
+                        }
+                    };
+                    let variant = enum_def
+                        .variants
+                        .iter()
+                        .find(|v| &v.name == variant_name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unknown variant {} for enum {}",
+                                variant_name,
+                                enum_def.name
+                            )
+                        })?;
+                    if let (Some(payload_ty), Some(binder_name)) = (&variant.payload_ty, binder) {
+                        self.ownership_insert_or_assign_local(
+                            &mut arm_state,
+                            binder_name,
+                            payload_ty,
+                        );
+                    }
+                    let _ = self.ownership_analyze_expression(&arm.value, &mut arm_state)?;
+                    arm_states.push(arm_state);
+                }
+                *state = self.ownership_merge_states(&base_after_subject, &arm_states)?;
+            }
+        }
+        Ok(expr_ty)
+    }
+
+    fn ownership_merge_states(
+        &self,
+        base: &OwnershipState,
+        branch_states: &[OwnershipState],
+    ) -> anyhow::Result<OwnershipState> {
+        if branch_states.is_empty() {
+            return Ok(base.clone());
+        }
+
+        let mut merged = OwnershipState::default();
+        merged.next_order = branch_states
+            .iter()
+            .fold(base.next_order, |max_seen, state| {
+                std::cmp::max(max_seen, state.next_order)
+            });
+
+        let mut all_names = HashSet::new();
+        all_names.extend(base.locals.keys().cloned());
+        for state in branch_states {
+            all_names.extend(state.locals.keys().cloned());
+        }
+
+        for name in all_names {
+            let mut selected: Option<OwnershipLocal> = base.locals.get(&name).cloned();
+            for branch in branch_states {
+                if let Some(local) = branch.locals.get(&name) {
+                    match &selected {
+                        Some(existing) => {
+                            if normalize_numeric_alias(&existing.ty)
+                                != normalize_numeric_alias(&local.ty)
+                            {
+                                return Err(anyhow::anyhow!(
+                                    "incompatible variable type for {} across control-flow branches: {} vs {}",
+                                    name,
+                                    existing.ty,
+                                    local.ty
+                                ));
+                            }
+                        }
+                        None => {
+                            selected = Some(local.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(mut local) = selected {
+                let branch_locals = branch_states
+                    .iter()
+                    .map(|branch| branch.locals.get(&name))
+                    .collect::<Vec<_>>();
+
+                local.state = if branch_locals.iter().all(|candidate| {
+                    matches!(
+                        candidate,
+                        Some(candidate) if candidate.state == OwnershipBindingState::Initialized
+                    )
+                }) {
+                    OwnershipBindingState::Initialized
+                } else if branch_locals.iter().all(|candidate| {
+                    matches!(
+                        candidate,
+                        Some(candidate) if candidate.state == OwnershipBindingState::Moved
+                    )
+                }) {
+                    OwnershipBindingState::Moved
+                } else {
+                    OwnershipBindingState::Uninitialized
+                };
+                local.order = branch_states.iter().fold(local.order, |min_order, branch| {
+                    branch
+                        .locals
+                        .get(&name)
+                        .map(|candidate| std::cmp::min(min_order, candidate.order))
+                        .unwrap_or(min_order)
+                });
+                merged.locals.insert(name, local);
+            }
+        }
+        Ok(merged)
+    }
+
+    fn ownership_drop_statements_in_reverse(
+        &self,
+        state: &OwnershipState,
+    ) -> Vec<parser::Statement> {
+        let mut live = state
+            .locals
+            .iter()
+            .filter_map(|(name, local)| {
+                if local.state != OwnershipBindingState::Initialized {
+                    return None;
+                }
+                self.drop_impl_for_type(&local.ty)
+                    .map(|drop_impl| (name.clone(), local.order, drop_impl))
+            })
+            .collect::<Vec<_>>();
+        live.sort_by_key(|(_, order, _)| std::cmp::Reverse(*order));
+        live.into_iter()
+            .map(|(name, _order, drop_impl)| parser::Statement::Expression {
+                expr: Expression::Call(drop_impl, vec![Expression::Variable(name)]),
+            })
+            .collect()
+    }
+
+    fn ownership_drop_statements_for_scope_exit(
+        &self,
+        from: &OwnershipState,
+        to: &OwnershipState,
+    ) -> Vec<parser::Statement> {
+        let mut live = from
+            .locals
+            .iter()
+            .filter_map(|(name, local)| {
+                if local.state != OwnershipBindingState::Initialized {
+                    return None;
+                }
+                let destination_is_initialized = to
+                    .locals
+                    .get(name)
+                    .map(|target| target.state == OwnershipBindingState::Initialized)
+                    .unwrap_or(false);
+                if destination_is_initialized {
+                    return None;
+                }
+                self.drop_impl_for_type(&local.ty)
+                    .map(|drop_impl| (name.clone(), local.order, drop_impl))
+            })
+            .collect::<Vec<_>>();
+        live.sort_by_key(|(_, order, _)| std::cmp::Reverse(*order));
+        live.into_iter()
+            .map(|(name, _order, drop_impl)| parser::Statement::Expression {
+                expr: Expression::Call(drop_impl, vec![Expression::Variable(name)]),
+            })
+            .collect()
+    }
+
+    fn ownership_rewrite_block(
+        &self,
+        body: &[parser::Statement],
+        state: &mut OwnershipState,
+    ) -> anyhow::Result<Vec<parser::Statement>> {
+        let mut out = Vec::new();
+        for statement in body {
+            let mut rewritten = self.ownership_rewrite_statement(statement, state)?;
+            out.append(&mut rewritten);
+        }
+        Ok(out)
+    }
+
+    fn ownership_rewrite_statement(
+        &self,
+        statement: &parser::Statement,
+        state: &mut OwnershipState,
+    ) -> anyhow::Result<Vec<parser::Statement>> {
+        match statement {
+            parser::Statement::StructDef { .. } => Ok(vec![statement.clone()]),
+            parser::Statement::Expression { expr } => {
+                let _ = self.ownership_analyze_expression(expr, state)?;
+                Ok(vec![statement.clone()])
+            }
+            parser::Statement::Prove { condition } => {
+                let condition_ty = self.ownership_analyze_expression(condition, state)?;
+                if condition_ty != "Bool" {
+                    return Err(anyhow::anyhow!(
+                        "prove expects Bool condition, got {:?}",
+                        condition_ty
+                    ));
+                }
+                Ok(vec![statement.clone()])
+            }
+            parser::Statement::Assert { condition } => {
+                let condition_ty = self.ownership_analyze_expression(condition, state)?;
+                if condition_ty != "Bool" {
+                    return Err(anyhow::anyhow!(
+                        "assert expects Bool condition, got {:?}",
+                        condition_ty
+                    ));
+                }
+                Ok(vec![statement.clone()])
+            }
+            parser::Statement::Assign { variable, value } => {
+                let value_ty = self.ownership_analyze_expression(value, state)?;
+                if value_ty == "Void" {
+                    return Err(anyhow::anyhow!(
+                        "cannot assign expression of type Void to variable {}",
+                        variable
+                    ));
+                }
+
+                let mut out = vec![];
+                if let Some(existing) = state.locals.get_mut(variable) {
+                    if existing.state == OwnershipBindingState::Initialized {
+                        if let Some(drop_impl) = self.drop_impl_for_type(&existing.ty) {
+                            out.push(parser::Statement::Expression {
+                                expr: Expression::Call(
+                                    drop_impl,
+                                    vec![Expression::Variable(variable.clone())],
+                                ),
+                            });
+                            existing.state = OwnershipBindingState::Uninitialized;
+                        }
+                    }
+                }
+
+                self.ownership_insert_or_assign_local(state, variable, &value_ty);
+                out.push(statement.clone());
+                Ok(out)
+            }
+            parser::Statement::Return { expr } => {
+                let _ = self.ownership_analyze_expression(expr, state)?;
+                let mut out = self.ownership_drop_statements_in_reverse(state);
+                out.push(statement.clone());
+                Ok(out)
+            }
+            parser::Statement::Conditional {
+                condition,
+                body,
+                else_body,
+            } => {
+                let condition_ty = self.ownership_analyze_expression(condition, state)?;
+                if condition_ty != "Bool" {
+                    return Err(anyhow::anyhow!(
+                        "expected condition to be of type Bool, but got {:?}",
+                        condition_ty
+                    ));
+                }
+                let state_after_condition = state.clone();
+
+                let mut then_state = state_after_condition.clone();
+                let mut rewritten_then = self.ownership_rewrite_block(body, &mut then_state)?;
+
+                let mut else_state = state_after_condition.clone();
+                let mut rewritten_else = if let Some(else_body) = else_body {
+                    Some(self.ownership_rewrite_block(else_body, &mut else_state)?)
+                } else {
+                    None
+                };
+
+                let merged = if rewritten_else.is_some() {
+                    self.ownership_merge_states(
+                        &state_after_condition,
+                        &[then_state.clone(), else_state.clone()],
+                    )?
+                } else {
+                    self.ownership_merge_states(
+                        &state_after_condition,
+                        &[then_state.clone(), state_after_condition.clone()],
+                    )?
+                };
+                rewritten_then
+                    .extend(self.ownership_drop_statements_for_scope_exit(&then_state, &merged));
+                if let Some(else_body) = rewritten_else.as_mut() {
+                    else_body.extend(
+                        self.ownership_drop_statements_for_scope_exit(&else_state, &merged),
+                    );
+                }
+                *state = merged;
+
+                Ok(vec![parser::Statement::Conditional {
+                    condition: condition.clone(),
+                    body: rewritten_then,
+                    else_body: rewritten_else,
+                }])
+            }
+            parser::Statement::Match { subject, arms } => {
+                let subject_ty = {
+                    let var_types = state.as_var_types();
+                    self.expression_type(subject, &var_types)?
+                };
+                let enum_def = match self.type_definitions.get(&subject_ty) {
+                    Some(TypeDef::Enum(enum_def)) => enum_def,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "match subject must be an enum, got {:?}",
+                            subject_ty
+                        ));
+                    }
+                };
+                let _ = self.ownership_analyze_expression(subject, state)?;
+                let state_after_subject = state.clone();
+
+                let mut rewritten_arms = vec![];
+                let mut arm_states = vec![];
+                for arm in arms {
+                    let mut arm_state = state_after_subject.clone();
+                    let (variant_name, binder) = match &arm.pattern {
+                        parser::MatchPattern::Variant {
+                            type_name,
+                            variant_name,
+                            binder,
+                        } => {
+                            if type_name != &subject_ty {
+                                return Err(anyhow::anyhow!(
+                                    "match arm type {:?} does not match subject type {:?}",
+                                    type_name,
+                                    subject_ty
+                                ));
+                            }
+                            (variant_name, binder)
+                        }
+                    };
+                    let variant = enum_def
+                        .variants
+                        .iter()
+                        .find(|v| &v.name == variant_name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unknown variant {} for enum {}",
+                                variant_name,
+                                enum_def.name
+                            )
+                        })?;
+                    if let (Some(payload_ty), Some(binder_name)) = (&variant.payload_ty, binder) {
+                        self.ownership_insert_or_assign_local(
+                            &mut arm_state,
+                            binder_name,
+                            payload_ty,
+                        );
+                    }
+                    let rewritten_body = self.ownership_rewrite_block(&arm.body, &mut arm_state)?;
+                    arm_states.push(arm_state);
+                    rewritten_arms.push(parser::MatchArm {
+                        pattern: arm.pattern.clone(),
+                        body: rewritten_body,
+                    });
+                }
+
+                let merged = self.ownership_merge_states(&state_after_subject, &arm_states)?;
+                for (rewritten_arm, arm_state) in rewritten_arms.iter_mut().zip(arm_states.iter()) {
+                    rewritten_arm
+                        .body
+                        .extend(self.ownership_drop_statements_for_scope_exit(arm_state, &merged));
+                }
+                *state = merged;
+                Ok(vec![parser::Statement::Match {
+                    subject: subject.clone(),
+                    arms: rewritten_arms,
+                }])
+            }
+            parser::Statement::While { condition, body } => {
+                let condition_ty = self.ownership_analyze_expression(condition, state)?;
+                if condition_ty != "Bool" {
+                    return Err(anyhow::anyhow!(
+                        "expected condition to be of type Bool, but got {:?}",
+                        condition_ty
+                    ));
+                }
+                let state_after_condition = state.clone();
+
+                let mut body_state = state_after_condition.clone();
+                let mut rewritten_body = self.ownership_rewrite_block(body, &mut body_state)?;
+                rewritten_body.extend(
+                    self.ownership_drop_statements_for_scope_exit(
+                        &body_state,
+                        &state_after_condition,
+                    ),
+                );
+
+                *state = self.ownership_merge_states(
+                    &state_after_condition,
+                    &[state_after_condition.clone(), body_state],
+                )?;
+
+                Ok(vec![parser::Statement::While {
+                    condition: condition.clone(),
+                    body: rewritten_body,
+                }])
+            }
+        }
+    }
+
+    fn apply_ownership_model(
+        &mut self,
+        ownership_target_functions: &HashSet<String>,
+    ) -> anyhow::Result<()> {
+        let function_names = self
+            .function_definitions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for function_name in function_names {
+            if !ownership_target_functions.contains(&function_name) {
+                continue;
+            }
+            let (sig, body) = {
+                let definition =
+                    self.function_definitions
+                        .get(&function_name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("missing function definition {}", function_name)
+                        })?;
+                (definition.sig.clone(), definition.body.clone())
+            };
+
+            let mut state = OwnershipState::with_params(&sig.parameters);
+            let mut rewritten = self.ownership_rewrite_block(&body, &mut state)?;
+            rewritten.extend(self.ownership_drop_statements_in_reverse(&state));
+
+            let definition = self
+                .function_definitions
+                .get_mut(&function_name)
+                .ok_or_else(|| anyhow::anyhow!("missing function definition {}", function_name))?;
+            definition.body = rewritten;
+        }
+        Ok(())
+    }
+}
+
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
+    let mut ownership_target_functions = ast
+        .top_level_functions
+        .iter()
+        .filter(|f| !f.is_comptime && !f.is_extern)
+        .map(|f| f.name.clone())
+        .collect::<HashSet<_>>();
+    for impl_decl in &ast.impl_declarations {
+        for method in &impl_decl.methods {
+            ownership_target_functions.insert(trait_impl_function_name(
+                &impl_decl.trait_name,
+                &impl_decl.for_type,
+                &method.name,
+            ));
+        }
+    }
+
     {
         let stdlib_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src")
@@ -1056,6 +1688,10 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     for func_def in program.function_definitions.values() {
         program.type_check(func_def)?;
     }
+    program.apply_ownership_model(&ownership_target_functions)?;
+    for func_def in program.function_definitions.values() {
+        program.type_check(func_def)?;
+    }
 
     reject_runtime_semantic_builtin_usage(&program)?;
     program.semantic_expr_metadata = index_semantic_expression_metadata(&program);
@@ -1121,13 +1757,6 @@ fn validate_function_signature_types(
             "extern function {} cannot return struct type {} in v2 ABI; use PtrInt wrappers for C interop",
             function_name,
             sig.return_type
-        ));
-    }
-
-    if sig.return_type == "Void" && !allow_void_return {
-        return Err(anyhow::anyhow!(
-            "function {} cannot return Void (only extern functions may return Void in v1)",
-            function_name
         ));
     }
 
@@ -1460,11 +2089,47 @@ fn register_legacy_struct_invariants(
 }
 
 fn replace_self_type(ty: &str, concrete_self: &str) -> String {
-    if ty == "Self" {
-        concrete_self.to_string()
-    } else {
-        ty.to_string()
+    let mut substitutions = HashMap::new();
+    substitutions.insert("Self".to_string(), concrete_self.to_string());
+    rewrite_type_ref(ty, &substitutions, &HashMap::new())
+}
+
+fn validate_special_trait_shape(trait_decl: &parser::TraitDecl) -> anyhow::Result<()> {
+    if trait_decl.name == "Copy" {
+        if trait_decl.methods.len() != 1 {
+            return Err(anyhow::anyhow!(
+                "trait Copy must define copy(v: Ref[Self]) -> Self"
+            ));
+        }
+        let method = &trait_decl.methods[0];
+        if method.name != "copy"
+            || method.parameters.len() != 1
+            || method.parameters[0].ty != "Ref[Self]"
+            || method.return_type != "Self"
+        {
+            return Err(anyhow::anyhow!(
+                "trait Copy must define copy(v: Ref[Self]) -> Self"
+            ));
+        }
     }
+    if trait_decl.name == "Drop" {
+        if trait_decl.methods.len() != 1 {
+            return Err(anyhow::anyhow!(
+                "trait Drop must define drop(v: Self) -> Void"
+            ));
+        }
+        let method = &trait_decl.methods[0];
+        if method.name != "drop"
+            || method.parameters.len() != 1
+            || method.parameters[0].ty != "Self"
+            || method.return_type != "Void"
+        {
+            return Err(anyhow::anyhow!(
+                "trait Drop must define drop(v: Self) -> Void"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn collect_trait_metadata(
@@ -1479,6 +2144,7 @@ fn collect_trait_metadata(
     let mut trait_methods_by_trait: HashMap<String, Vec<TraitMethodSignature>> = HashMap::new();
 
     for trait_decl in &ast.trait_declarations {
+        validate_special_trait_shape(trait_decl)?;
         if trait_methods_by_trait.contains_key(&trait_decl.name) {
             return Err(anyhow::anyhow!(
                 "duplicate trait declaration {}",
@@ -1502,7 +2168,7 @@ fn collect_trait_metadata(
                     method.name
                 ));
             }
-            if method.parameters[0].ty != "Self" {
+            if trait_decl.name != "Copy" && method.parameters[0].ty != "Self" {
                 return Err(anyhow::anyhow!(
                     "trait method {}.{} must use Self as first parameter type in v1",
                     trait_decl.name,
@@ -1598,7 +2264,16 @@ fn collect_trait_metadata(
                 .zip(trait_method.parameter_types.iter())
             {
                 let expected = replace_self_type(expected_ty, &impl_decl.for_type);
-                if normalize_numeric_alias(&parameter.ty) != normalize_numeric_alias(&expected) {
+                let matches_expected =
+                    normalize_numeric_alias(&parameter.ty) == normalize_numeric_alias(&expected);
+                let matches_legacy_copy_by_value = impl_decl.trait_name == "Copy"
+                    && trait_method.method_name == "copy"
+                    && normalize_numeric_alias(&parameter.ty)
+                        == normalize_numeric_alias(&impl_decl.for_type);
+                let matches_copy_ref_alias = impl_decl.trait_name == "Copy"
+                    && trait_method.method_name == "copy"
+                    && parameter.ty.ends_with("Ref");
+                if !matches_expected && !matches_legacy_copy_by_value && !matches_copy_ref_alias {
                     return Err(anyhow::anyhow!(
                         "impl method {}.{} parameter {} type mismatch: expected {}, got {}",
                         impl_decl.trait_name,
@@ -3737,10 +4412,10 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn resolve_rejects_non_extern_void_return() {
+    fn resolve_accepts_non_extern_void_return() {
         let source = r#"
 fun helper() -> Void {
-	return 0
+	Clib.free(i32_to_i64(0))
 }
 
 fun main() -> I32 {
@@ -3751,10 +4426,120 @@ fun main() -> I32 {
 
         let tokens = tokenizer::tokenize(source).expect("tokenize source");
         let ast = parser::parse(tokens).expect("parse source");
-        let err = resolve(ast).expect_err("non-extern Void return should fail");
+        resolve(ast).expect("non-extern Void return should be accepted");
+    }
+
+    #[test]
+    fn resolve_rejects_invalid_copy_trait_shape() {
+        let source = r#"
+trait Copy {
+	fun clone(v: Self) -> Self
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("invalid Copy trait shape should fail");
         assert!(err
             .to_string()
-            .contains("only extern functions may return Void"));
+            .contains("trait Copy must define copy(v: Ref[Self]) -> Self"));
+    }
+
+    #[test]
+    fn resolve_rejects_invalid_drop_trait_shape() {
+        let source = r#"
+trait Drop {
+	fun drop(v: Self) -> Self
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("invalid Drop trait shape should fail");
+        assert!(err
+            .to_string()
+            .contains("trait Drop must define drop(v: Self) -> Void"));
+    }
+
+    #[test]
+    fn resolve_copy_type_can_be_read_multiple_times() {
+        let source = r#"
+fun main() -> I32 {
+	a = 7
+	b = a
+	c = a
+	return b + c
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("Copy-backed scalar reads should compile");
+    }
+
+    #[test]
+    fn resolve_rejects_use_after_move() {
+        let source = r#"
+struct Box {
+	value: I32,
+}
+
+fun consume(v: Box) -> I32 {
+	return v.value
+}
+
+fun main() -> I32 {
+	a = Box struct { value: 1 }
+	x = consume(a)
+	y = consume(a)
+	return x + y
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("use-after-move should fail");
+        assert!(err.to_string().contains("use of moved value a"));
+    }
+
+    #[test]
+    fn resolve_rejects_move_from_uninitialized_binding() {
+        let source = r#"
+struct Box {
+	value: I32,
+}
+
+fun consume(v: Box) -> I32 {
+	return v.value
+}
+
+fun main() -> I32 {
+	if 1 == 1 {
+		a = Box struct { value: 1 }
+	}
+	return consume(a)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("uninitialized move should fail");
+        assert!(err
+            .to_string()
+            .contains("cannot move from uninitialized value a"));
     }
 
     #[test]

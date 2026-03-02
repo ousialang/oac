@@ -17,6 +17,30 @@ impl Eq for UserKey {
 
 specialize UserTable = HashTable[UserKey, I32]
 
+impl Copy for UserKey {
+	fun copy(v: UserKey) -> UserKey {
+		return v
+	}
+}
+
+impl Copy for UserTable {
+	fun copy(v: UserTable) -> UserTable {
+		return v
+	}
+}
+
+impl Copy for UserTable__SetResult {
+	fun copy(v: UserTable__SetResult) -> UserTable__SetResult {
+		return v
+	}
+}
+
+impl Copy for UserTable__RemoveResult {
+	fun copy(v: UserTable__RemoveResult) -> UserTable__RemoveResult {
+		return v
+	}
+}
+
 fun print_lookup(v: UserTable__Lookup) -> I32 {
 	match v {
 		UserTable__Lookup.Missing => {

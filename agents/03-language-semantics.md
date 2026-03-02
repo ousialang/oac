@@ -61,7 +61,9 @@ Observed in parser/IR implementation:
 - `main` must use one of these signatures: `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`.
 - Assignments bind variable type to expression type.
 - Struct literals are zero-initialized before field stores (`calloc`) so bytewise struct equality has deterministic padding bytes.
-- Struct values use by-value byte-copy semantics at assignment/call/return boundaries (implemented with clone barriers in codegen, not pointer-identity semantics).
+- Ownership is move-only by default: reading a non-`Copy` binding moves it and invalidates that binding until reassigned.
+- For types with a concrete `Copy` impl, read sites implicitly clone by lowering to static `Copy.copy(...)` calls; codegen passes either the value directly (legacy by-value impl signatures) or a synthesized temporary `Ref` wrapper (ref-style impl signatures).
+- Deterministic destruction uses `Drop`: resolver inserts `Drop.drop(...)` calls before overwriting initialized bindings and at scope exits (reverse declaration order); moved/uninitialized bindings are not dropped.
 - Struct `==` / `!=` are universal bytewise comparisons (`memcmp` over struct size), including pointer-containing structs.
 - Numeric binary ops are strict and same-type only: `U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
 - `U8` relational operators (`<`, `>`, `<=`, `>=`) use unsigned comparisons in codegen.
@@ -71,13 +73,16 @@ Observed in parser/IR implementation:
 - `extern fun` declarations cannot be marked `comptime` and must not define a body.
 - In v2 ABI, `extern fun` declarations cannot use struct parameter types or struct return types; use `PtrInt` wrappers for manual ABI bridging.
 - `Void` cannot be used as a function parameter type.
-- In v1, only `extern fun` may return `Void`.
+- Non-extern functions may return `Void`.
 - Assignment statements cannot bind variables to `Void`-typed expressions.
 - `Void`-return calls are statement-only (cannot be used as expression values).
 - Namespace calls are syntactic sugar for internal function names using `Namespace__function` lowering, while preserving existing enum constructor call syntax `Enum.Variant(...)`.
 - Namespace call lowering also applies to generic-specialized helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
 - Traits are static-only in v1: method calls use `Trait.method(value, ...)` and are resolved to concrete impl symbols (`Trait__Type__method`) before backend lowering.
 - Trait method signatures must take `Self` as the first parameter type in v1.
+- Special lifecycle-trait shapes are enforced exactly:
+  - `trait Copy { fun copy(v: Ref[Self]) -> Self }`
+  - `trait Drop { fun drop(v: Self) -> Void }`
 - Impl coherence is global: exactly one `impl Trait for Type` is allowed in a program.
 - Impl method sets/signatures must match trait declarations exactly (arity, parameter types after `Self` substitution, return type); missing/extra methods are compile errors.
 - `impl` methods cannot be `extern` or `comptime` in v1.
@@ -86,6 +91,7 @@ Observed in parser/IR implementation:
 - Generic expansion is ahead-of-type-checking and ahead-of-codegen: backend/proving/invariant passes still operate on concrete non-generic IR/function symbols.
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `crates/oac/src/std/std.oa` into split sibling files under `crates/oac/src/std/` (including `std_clib.oa` extern bindings and `std_traits.oa` trait/impl declarations), then merged into one global scope before user type-checking (including stdlib invariant declarations).
+- `std_traits.oa` defines `Copy` and `Drop` alongside `Hash`/`Eq`; scalar types (`Bool`, `U8`, `I32`, `I64`, `FP32`, `FP64`, `Char`, `AsciiChar`) ship concrete `Copy` impls in std.
 - The split stdlib includes generic `Option[T]` / `Result[T,E]` in `crates/oac/src/std/std_option_result.oa` with namespaced constructors/predicates/unwrapping helpers.
 - The split stdlib includes generic `Ref[T]` and `Mut[T]` (in `crates/oac/src/std/std_ref.oa`) for pointer-wrapper value semantics (`from_ptr`, `ptr`, `is_null`, `add_bytes`), with typed read-only dereference helpers (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`) and typed mutable helpers (`U8Mut.*`, `I32Mut.*`, `I64Mut.*`, `PtrIntMut.*`, `BoolMut.*`) that use builtin stores.
 - Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Eq, V]`) with separate-chaining semantics while routing key hashing/equality through `Hash.hash(k)` and `Eq.equals(a, b)`.

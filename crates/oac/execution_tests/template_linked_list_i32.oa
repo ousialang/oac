@@ -1,5 +1,11 @@
 specialize IntList = LinkedList[I32]
 
+impl Copy for IntList {
+	fun copy(v: IntList) -> IntList {
+		return v
+	}
+}
+
 fun main() -> I32 {
 	xs = IntList.empty()
 	xs = IntList.push_front(3, xs)

@@ -255,6 +255,12 @@ struct Counter {
 	max: I32,
 }
 
+impl Copy for Counter {
+	fun copy(v: Counter) -> Counter {
+		return v
+	}
+}
+
 invariant value_non_negative "counter value must be non-negative" for (v: Counter) {
 	return v.value >= 0
 }

@@ -1,3 +1,9 @@
+impl Copy for Bytes {
+	fun copy(v: Bytes) -> Bytes {
+		return v
+	}
+}
+
 fun print_read_result(v: IoReadResult) -> I32 {
 	match v {
 		IoReadResult.Ok(bytes) => {

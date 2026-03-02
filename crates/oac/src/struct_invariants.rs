@@ -1557,6 +1557,12 @@ struct Foo {
 	x: I32,
 }
 
+impl Copy for Foo {
+	fun copy(v: Foo) -> Foo {
+		return v
+	}
+}
+
 invariant "foo invariant" for (v: Foo) {
 	return v.x == v.x
 }

@@ -1,3 +1,33 @@
+impl Copy for U8Mut {
+	fun copy(v: U8Mut) -> U8Mut {
+		return v
+	}
+}
+
+impl Copy for I32Mut {
+	fun copy(v: I32Mut) -> I32Mut {
+		return v
+	}
+}
+
+impl Copy for I64Mut {
+	fun copy(v: I64Mut) -> I64Mut {
+		return v
+	}
+}
+
+impl Copy for BoolMut {
+	fun copy(v: BoolMut) -> BoolMut {
+		return v
+	}
+}
+
+impl Copy for PtrIntMut {
+	fun copy(v: PtrIntMut) -> PtrIntMut {
+		return v
+	}
+}
+
 fun print_bool(v: Bool) -> I32 {
 	if v {
 		print(1)

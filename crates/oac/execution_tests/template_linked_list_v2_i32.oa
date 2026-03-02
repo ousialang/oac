@@ -1,6 +1,19 @@
 specialize IntList = LinkedList[I32]
 
 fun print_front(v: IntList__FrontOption) -> I32 {
+impl Copy for IntList {
+	fun copy(v: IntListRef) -> IntList {
+		return v
+	}
+}
+
+impl Copy for IntList__PopFrontValue {
+	fun copy(v: IntList__PopFrontValueRef) -> IntList__PopFrontValue {
+		return v
+	}
+}
+
+fun print_front(v: IntList__FrontOption) -> I32 {
 	match v {
 		IntList__FrontOption.None => {
 			print(99)

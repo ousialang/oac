@@ -1,5 +1,23 @@
 specialize IntTable = HashTable[I32, I32]
 
+impl Copy for IntTable {
+	fun copy(v: IntTable) -> IntTable {
+		return v
+	}
+}
+
+impl Copy for IntTable__SetResult {
+	fun copy(v: IntTable__SetResult) -> IntTable__SetResult {
+		return v
+	}
+}
+
+impl Copy for IntTable__RemoveResult {
+	fun copy(v: IntTable__RemoveResult) -> IntTable__RemoveResult {
+		return v
+	}
+}
+
 fun print_lookup(v: IntTable__Lookup) -> I32 {
 	match v {
 		IntTable__Lookup.Missing => {

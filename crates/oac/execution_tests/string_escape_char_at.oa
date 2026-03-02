@@ -1,3 +1,9 @@
+impl Copy for String {
+	fun copy(v: String) -> String {
+		return v
+	}
+}
+
 fun main() -> I32 {
 	// "{\n\t\\\"x\\\":1}" decoded should start with '{', newline, tab, '\\', '"', 'x'
 	s = "{\n\t\\\"x\\\":1}"

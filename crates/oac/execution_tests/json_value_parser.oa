@@ -1,3 +1,21 @@
+impl Copy for JsonValue {
+	fun copy(v: JsonValue) -> JsonValue {
+		return v
+	}
+}
+
+impl Copy for JsonValueLookup {
+	fun copy(v: JsonValueLookup) -> JsonValueLookup {
+		return v
+	}
+}
+
+impl Copy for JsonStringLookup {
+	fun copy(v: JsonStringLookup) -> JsonStringLookup {
+		return v
+	}
+}
+
 fun kind_code(kind: JsonKind) -> I32 {
 	match kind {
 		JsonKind.Bool => {
