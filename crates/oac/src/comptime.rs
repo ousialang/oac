@@ -997,9 +997,8 @@ fn ct_value_matches_type(value: &CtValue, ty: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser, tokenizer};
-
     use super::execute_comptime_applies;
+    use crate::{parser, tokenizer};
 
     fn parse_source(source: &str) -> parser::Ast {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
