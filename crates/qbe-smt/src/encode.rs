@@ -1529,14 +1529,24 @@ fn validate_statement_supported(
                     }
                 }
                 QbeInstr::Exts(..) => {
-                    return Err(QbeSmtError::Unsupported {
-                        message: format!("pc {pc}: unsupported unary operation exts"),
-                    })
+                    if !matches!(assign_ty, AssignType::Double) {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!(
+                                "pc {pc}: unary operation exts requires assignment type Double, got {:?}",
+                                assign_ty
+                            ),
+                        });
+                    }
                 }
                 QbeInstr::Truncd(..) => {
-                    return Err(QbeSmtError::Unsupported {
-                        message: format!("pc {pc}: unsupported unary operation truncd"),
-                    })
+                    if !matches!(assign_ty, AssignType::Single) {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!(
+                                "pc {pc}: unary operation truncd requires assignment type Single, got {:?}",
+                                assign_ty
+                            ),
+                        });
+                    }
                 }
                 QbeInstr::Load(load_ty, ..) => {
                     let load_ty = load_store_type_from_qbe(load_ty);
@@ -1570,21 +1580,39 @@ fn validate_statement_supported(
                 | QbeInstr::DbgFile(..)
                 | QbeInstr::DbgLoc(..)
                 | QbeInstr::Vastart(..)
-                | QbeInstr::Vaarg(..)
-                | QbeInstr::Stosi(..)
-                | QbeInstr::Stoui(..)
-                | QbeInstr::Dtosi(..)
-                | QbeInstr::Dtoui(..)
-                | QbeInstr::Swtof(..)
-                | QbeInstr::Uwtof(..)
-                | QbeInstr::Sltof(..)
-                | QbeInstr::Ultof(..) => {
+                | QbeInstr::Vaarg(..) => {
                     return Err(QbeSmtError::Unsupported {
                         message: format!(
                             "pc {pc}: unsupported assignment operation for assignment type {:?}",
                             assign_ty
                         ),
                     })
+                }
+                QbeInstr::Stosi(..)
+                | QbeInstr::Stoui(..)
+                | QbeInstr::Dtosi(..)
+                | QbeInstr::Dtoui(..) => {
+                    if !matches!(assign_ty, AssignType::Word | AssignType::Long) {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!(
+                                "pc {pc}: floating-point to integer conversion requires assignment type Word or Long, got {:?}",
+                                assign_ty
+                            ),
+                        });
+                    }
+                }
+                QbeInstr::Swtof(..)
+                | QbeInstr::Uwtof(..)
+                | QbeInstr::Sltof(..)
+                | QbeInstr::Ultof(..) => {
+                    if !matches!(assign_ty, AssignType::Single | AssignType::Double) {
+                        return Err(QbeSmtError::Unsupported {
+                            message: format!(
+                                "pc {pc}: integer to floating-point conversion requires assignment type Single or Double, got {:?}",
+                                assign_ty
+                            ),
+                        });
+                    }
                 }
                 QbeInstr::Alloc4(..) | QbeInstr::Alloc8(..) => {}
                 QbeInstr::Alloc16(size) => {
@@ -1839,6 +1867,46 @@ fn regs_update_expr(
         QbeInstr::Extub(value) => {
             let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
             zero_extend_from_expr(&value_expr, 8)
+        }
+        QbeInstr::Exts(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            exts_expr(&value_expr)
+        }
+        QbeInstr::Truncd(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            truncd_expr(&value_expr)
+        }
+        QbeInstr::Stosi(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            fp_to_int_expr(&value_expr, assign_ty, true, true)
+        }
+        QbeInstr::Stoui(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            fp_to_int_expr(&value_expr, assign_ty, true, false)
+        }
+        QbeInstr::Dtosi(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            fp_to_int_expr(&value_expr, assign_ty, false, true)
+        }
+        QbeInstr::Dtoui(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            fp_to_int_expr(&value_expr, assign_ty, false, false)
+        }
+        QbeInstr::Swtof(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            int_to_fp_expr(extract_low_bits(&value_expr, 32), assign_ty, true)
+        }
+        QbeInstr::Uwtof(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            int_to_fp_expr(extract_low_bits(&value_expr, 32), assign_ty, false)
+        }
+        QbeInstr::Sltof(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            int_to_fp_expr(value_expr, assign_ty, true)
+        }
+        QbeInstr::Ultof(value) => {
+            let value_expr = value_to_smt(value, regs_curr, reg_slots, global_map);
+            int_to_fp_expr(value_expr, assign_ty, false)
         }
         QbeInstr::Load(load_ty, address) => {
             let address_expr = value_to_smt(address, regs_curr, reg_slots, global_map);
@@ -2907,6 +2975,55 @@ fn fp64_to_bv64(expr: &str) -> String {
     format!("((_ fp.to_ieee_bv 11 53) {expr})")
 }
 
+fn exts_expr(value_expr: &str) -> String {
+    let value_fp32 = fp32_from_bv64(value_expr);
+    let value_fp64 = format!("((_ to_fp 11 53) RNE {value_fp32})");
+    fp64_to_bv64(&value_fp64)
+}
+
+fn truncd_expr(value_expr: &str) -> String {
+    let value_fp64 = fp64_from_bv64(value_expr);
+    let value_fp32 = format!("((_ to_fp 8 24) RTZ {value_fp64})");
+    fp32_to_bv64(&value_fp32)
+}
+
+fn fp_to_int_expr(
+    value_expr: &str,
+    assign_ty: AssignType,
+    source_is_single: bool,
+    signed: bool,
+) -> String {
+    let value_fp = if source_is_single {
+        fp32_from_bv64(value_expr)
+    } else {
+        fp64_from_bv64(value_expr)
+    };
+    let width = assign_ty.bits();
+    let bv_expr = match (signed, width) {
+        (true, 32) => format!("((_ fp.to_sbv 32) RTZ {value_fp})"),
+        (true, 64) => format!("((_ fp.to_sbv 64) RTZ {value_fp})"),
+        (false, 32) => format!("((_ fp.to_ubv 32) RTZ {value_fp})"),
+        (false, 64) => format!("((_ fp.to_ubv 64) RTZ {value_fp})"),
+        _ => unreachable!("unsupported floating-point to integer conversion width"),
+    };
+    normalize_to_assign_type(&bv_expr, assign_ty)
+}
+
+fn int_to_fp_expr(value_expr: String, assign_ty: AssignType, signed: bool) -> String {
+    let fp_expr = match (assign_ty, signed) {
+        (AssignType::Single, true) => format!("((_ to_fp 8 24) RNE {value_expr})"),
+        (AssignType::Single, false) => format!("((_ to_fp_unsigned 8 24) RNE {value_expr})"),
+        (AssignType::Double, true) => format!("((_ to_fp 11 53) RNE {value_expr})"),
+        (AssignType::Double, false) => format!("((_ to_fp_unsigned 11 53) RNE {value_expr})"),
+        _ => unreachable!("unsupported integer to floating-point conversion target"),
+    };
+    match assign_ty {
+        AssignType::Single => fp32_to_bv64(&fp_expr),
+        AssignType::Double => fp64_to_bv64(&fp_expr),
+        _ => unreachable!("unsupported integer to floating-point conversion target"),
+    }
+}
+
 fn statement_uses_fp(statement: &QbeStatement) -> bool {
     let mut has_float_constant = false;
     collect_values_in_statement(statement, &mut |value| {
@@ -2936,6 +3053,16 @@ fn statement_uses_fp(statement: &QbeStatement) -> bool {
         QbeInstr::Load(load_ty, _) => matches!(load_ty, QbeType::Single | QbeType::Double),
         QbeInstr::Store(store_ty, _, _) => matches!(store_ty, QbeType::Single | QbeType::Double),
         QbeInstr::Vaarg(va_ty, _) => matches!(va_ty, QbeType::Single | QbeType::Double),
+        QbeInstr::Exts(..)
+        | QbeInstr::Truncd(..)
+        | QbeInstr::Stosi(..)
+        | QbeInstr::Stoui(..)
+        | QbeInstr::Dtosi(..)
+        | QbeInstr::Dtoui(..)
+        | QbeInstr::Swtof(..)
+        | QbeInstr::Uwtof(..)
+        | QbeInstr::Sltof(..)
+        | QbeInstr::Ultof(..) => true,
         QbeInstr::Call(_, args, _) => args.iter().any(|(arg_ty, arg_value)| {
             matches!(arg_ty, QbeType::Single | QbeType::Double)
                 || matches!(

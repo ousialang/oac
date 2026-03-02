@@ -1350,7 +1350,11 @@ mod tests {
             vec![block(
                 "entry",
                 vec![
-                    assign("x", Type::Word, Instr::Exts(Value::Const(2))),
+                    assign(
+                        "x",
+                        Type::Word,
+                        Instr::Store(Type::Word, Value::Const(0), Value::Const(2)),
+                    ),
                     volatile(Instr::Ret(Some(temp("x")))),
                 ],
             )],
@@ -1365,7 +1369,9 @@ mod tests {
         )
         .expect_err("unsupported op should fail");
 
-        assert!(err.to_string().contains("unsupported unary operation exts"));
+        assert!(err
+            .to_string()
+            .contains("unsupported assignment operation for assignment type Word"));
     }
 
     #[test]
@@ -1473,23 +1479,71 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fp64_conversion_ops_fail_closed() {
+    fn encodes_fp_conversion_ops_with_ieee_smt_rounding() {
         let function = make_main(
-            vec![(Type::Double, temp("x"))],
+            vec![
+                (Type::Single, temp("sf")),
+                (Type::Double, temp("df")),
+                (Type::Word, temp("w")),
+                (Type::Long, temp("l")),
+            ],
             vec![block(
                 "entry",
                 vec![
-                    assign("y", Type::Single, Instr::Truncd(temp("x"))),
+                    assign("ext_d", Type::Double, Instr::Exts(temp("sf"))),
+                    assign("trunc_s", Type::Single, Instr::Truncd(temp("df"))),
+                    assign("stosi_w", Type::Word, Instr::Stosi(temp("sf"))),
+                    assign("stosi_l", Type::Long, Instr::Stosi(temp("sf"))),
+                    assign("stoui_w", Type::Word, Instr::Stoui(temp("sf"))),
+                    assign("stoui_l", Type::Long, Instr::Stoui(temp("sf"))),
+                    assign("dtosi_w", Type::Word, Instr::Dtosi(temp("df"))),
+                    assign("dtosi_l", Type::Long, Instr::Dtosi(temp("df"))),
+                    assign("dtoui_w", Type::Word, Instr::Dtoui(temp("df"))),
+                    assign("dtoui_l", Type::Long, Instr::Dtoui(temp("df"))),
+                    assign("swtof_s", Type::Single, Instr::Swtof(temp("w"))),
+                    assign("swtof_d", Type::Double, Instr::Swtof(temp("w"))),
+                    assign("uwtof_s", Type::Single, Instr::Uwtof(temp("w"))),
+                    assign("uwtof_d", Type::Double, Instr::Uwtof(temp("w"))),
+                    assign("sltof_s", Type::Single, Instr::Sltof(temp("l"))),
+                    assign("sltof_d", Type::Double, Instr::Sltof(temp("l"))),
+                    assign("ultof_s", Type::Single, Instr::Ultof(temp("l"))),
+                    assign("ultof_d", Type::Double, Instr::Ultof(temp("l"))),
+                    volatile(Instr::Ret(Some(temp("stosi_w")))),
+                ],
+            )],
+        );
+
+        let smt = encode_single_function(&function, &EncodeOptions::default())
+            .expect("FP conversion ops should encode");
+        assert!(smt.contains("(set-logic ALL)"));
+        assert!(smt.contains("((_ to_fp 11 53) RNE ((_ to_fp 8 24)"));
+        assert!(smt.contains("((_ to_fp 8 24) RTZ ((_ to_fp 11 53)"));
+        assert!(smt.contains("((_ fp.to_sbv 32) RTZ"));
+        assert!(smt.contains("((_ fp.to_sbv 64) RTZ"));
+        assert!(smt.contains("((_ fp.to_ubv 32) RTZ"));
+        assert!(smt.contains("((_ fp.to_ubv 64) RTZ"));
+        assert!(smt.contains("((_ to_fp_unsigned 8 24) RNE"));
+        assert!(smt.contains("((_ to_fp_unsigned 11 53) RNE"));
+    }
+
+    #[test]
+    fn rejects_invalid_fp_conversion_assignment_type() {
+        let function = make_main(
+            vec![(Type::Single, temp("x"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign("y", Type::Word, Instr::Exts(temp("x"))),
                     volatile(Instr::Ret(Some(temp("y")))),
                 ],
             )],
         );
 
         let err = encode_single_function(&function, &EncodeOptions::default())
-            .expect_err("FP64 conversion ops should remain unsupported");
+            .expect_err("invalid conversion assignment shape should fail closed");
         assert!(err
             .to_string()
-            .contains("unsupported unary operation truncd"));
+            .contains("unary operation exts requires assignment type Double"));
     }
 
     #[test]
