@@ -27,6 +27,7 @@ Act like a compiler engineer, not a text editor:
 - Route user-visible compiler errors through `crates/oac/src/diagnostics.rs` so CLI/LSP/snapshot behavior stays consistent (Ariadne plain output for deterministic tests).
 - Treat diagnostic quality as a product contract: avoid internal debug dumps in user-facing messages, avoid duplicated Ariadne prefixes (`Error: error[...]`), and keep linker-stage diagnostics on `OAC-LINK-*`.
 - For proving/invariant performance-sensitive changes, run `oac bench-prove` and inspect delta/regression output against `crates/oac/bench/prove_baseline.json`.
+- For unknown-mitigation/verification-solver changes, run `oac bench-prove --strict-outcome-gate` and require zero forbidden transitions (baseline `sat`/`unsat` must not drift).
 
 ## Pre-Release Compatibility Posture
 
@@ -65,6 +66,7 @@ Act like a compiler engineer, not a text editor:
 - `cargo nextest run --all-targets --all-features` (preferred when `cargo-nextest` is available)
 - `cargo test --all-targets --all-features` (fallback when `cargo-nextest` is unavailable)
 - `cargo run -p oac -- bench-prove --suite quick --iterations 1` for quick proving-regression signal when touching verification/codegen paths.
+- `cargo run -p oac -- bench-prove --suite full --iterations 1 --strict-outcome-gate` when touching solver retry/unknown handling or SMT helper generation.
 - Review snapshot diffs for unintended behavior changes.
 - Ensure snapshot hygiene gates pass (`*.snap.new` absent and execution snapshots aligned with fixtures).
 - Update docs in `agents/` and root `AGENTS.md` if any context changed.

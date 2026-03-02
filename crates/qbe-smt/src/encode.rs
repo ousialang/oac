@@ -2391,6 +2391,14 @@ fn bounded_copy_with_fallback_expr(
     )
 }
 
+fn wrap_let_bindings(bindings: Vec<(String, String)>, body: String) -> String {
+    let mut wrapped = body;
+    for (name, expr) in bindings.into_iter().rev() {
+        wrapped = format!("(let (({name} {expr})) {wrapped})");
+    }
+    wrapped
+}
+
 fn bounded_copy_expr(
     mem_curr: &str,
     src_expr: &str,
@@ -2398,17 +2406,24 @@ fn bounded_copy_expr(
     len_expr: &str,
     limit: u64,
 ) -> String {
-    let mut acc = mem_curr.to_string();
+    let mut bindings = Vec::with_capacity(limit as usize + 1);
+    let mut mem_var = "__oac_bcopy_mem0".to_string();
+    bindings.push((mem_var.clone(), mem_curr.to_string()));
+
     for i in 0..limit {
         let index_expr = bv_const_u64(i, 64);
         let cond = format!("(bvugt {len_expr} {index_expr})");
         let src_i = format!("(bvadd {src_expr} {index_expr})");
         let dst_i = format!("(bvadd {dst_expr} {index_expr})");
         let byte_i = format!("(select {mem_curr} {src_i})");
-        let write_i = format!("(store {acc} {dst_i} {byte_i})");
-        acc = format!("(ite {cond} {write_i} {acc})");
+        let write_i = format!("(store {mem_var} {dst_i} {byte_i})");
+        let next_mem_var = format!("__oac_bcopy_mem{}", i + 1);
+        let next_expr = format!("(ite {cond} {write_i} {mem_var})");
+        bindings.push((next_mem_var.clone(), next_expr));
+        mem_var = next_mem_var;
     }
-    acc
+
+    wrap_let_bindings(bindings, mem_var)
 }
 
 fn bounded_strcpy_with_fallback_expr(
@@ -2418,33 +2433,25 @@ fn bounded_strcpy_with_fallback_expr(
     limit: u64,
     mem_fallback: &str,
 ) -> String {
-    let (precise, found_nul) = bounded_strcpy_expr(mem_curr, src_expr, dst_expr, limit);
-    format!("(ite {found_nul} {precise} {mem_fallback})")
+    let (bindings, mem_var, found_nul) = bounded_strcpy_state(mem_curr, src_expr, dst_expr, limit);
+    wrap_let_bindings(
+        bindings,
+        format!("(ite {found_nul} {mem_var} {mem_fallback})"),
+    )
 }
 
+#[allow(dead_code)]
 fn bounded_strcpy_expr(
     mem_curr: &str,
     src_expr: &str,
     dst_expr: &str,
     limit: u64,
 ) -> (String, String) {
-    let mut acc = mem_curr.to_string();
-    let mut found_nul = "false".to_string();
-    let zero = bv_const_u64(0, 8);
-
-    for i in 0..limit {
-        let index_expr = bv_const_u64(i, 64);
-        let src_i = format!("(bvadd {src_expr} {index_expr})");
-        let dst_i = format!("(bvadd {dst_expr} {index_expr})");
-        let byte_i = format!("(select {mem_curr} {src_i})");
-        let should_copy = format!("(not {found_nul})");
-        let write_i = format!("(store {acc} {dst_i} {byte_i})");
-        acc = format!("(ite {should_copy} {write_i} {acc})");
-        let is_nul = format!("(= {byte_i} {zero})");
-        found_nul = format!("(or {found_nul} {is_nul})");
-    }
-
-    (acc, found_nul)
+    let (bindings, mem_var, found_nul_var) =
+        bounded_strcpy_state(mem_curr, src_expr, dst_expr, limit);
+    let precise = wrap_let_bindings(bindings.clone(), mem_var);
+    let found_nul = wrap_let_bindings(bindings, found_nul_var);
+    (precise, found_nul)
 }
 
 fn bounded_set_with_fallback_expr(
@@ -2469,15 +2476,22 @@ fn bounded_set_expr(
     byte_expr: &str,
     limit: u64,
 ) -> String {
-    let mut acc = mem_curr.to_string();
+    let mut bindings = Vec::with_capacity(limit as usize + 1);
+    let mut mem_var = "__oac_bset_mem0".to_string();
+    bindings.push((mem_var.clone(), mem_curr.to_string()));
+
     for i in 0..limit {
         let index_expr = bv_const_u64(i, 64);
         let cond = format!("(bvugt {len_expr} {index_expr})");
         let dst_i = format!("(bvadd {dst_expr} {index_expr})");
-        let write_i = format!("(store {acc} {dst_i} {byte_expr})");
-        acc = format!("(ite {cond} {write_i} {acc})");
+        let write_i = format!("(store {mem_var} {dst_i} {byte_expr})");
+        let next_mem_var = format!("__oac_bset_mem{}", i + 1);
+        let next_expr = format!("(ite {cond} {write_i} {mem_var})");
+        bindings.push((next_mem_var.clone(), next_expr));
+        mem_var = next_mem_var;
     }
-    acc
+
+    wrap_let_bindings(bindings, mem_var)
 }
 
 fn bounded_havoc_with_fallback_expr(
@@ -2501,16 +2515,23 @@ fn bounded_havoc_expr(
     limit: u64,
     mem_havoc_source: &str,
 ) -> String {
-    let mut acc = mem_curr.to_string();
+    let mut bindings = Vec::with_capacity(limit as usize + 1);
+    let mut mem_var = "__oac_bhavoc_mem0".to_string();
+    bindings.push((mem_var.clone(), mem_curr.to_string()));
+
     for i in 0..limit {
         let index_expr = bv_const_u64(i, 64);
         let cond = format!("(bvugt {len_expr} {index_expr})");
         let dst_i = format!("(bvadd {dst_expr} {index_expr})");
         let havoc_byte = format!("(select {mem_havoc_source} {dst_i})");
-        let write_i = format!("(store {acc} {dst_i} {havoc_byte})");
-        acc = format!("(ite {cond} {write_i} {acc})");
+        let write_i = format!("(store {mem_var} {dst_i} {havoc_byte})");
+        let next_mem_var = format!("__oac_bhavoc_mem{}", i + 1);
+        let next_expr = format!("(ite {cond} {write_i} {mem_var})");
+        bindings.push((next_mem_var.clone(), next_expr));
+        mem_var = next_mem_var;
     }
-    acc
+
+    wrap_let_bindings(bindings, mem_var)
 }
 
 fn bounded_memcmp_result_with_fallback_expr(
@@ -2535,19 +2556,30 @@ fn bounded_memcmp_result_expr(
     len_expr: &str,
     limit: u64,
 ) -> String {
-    let mut all_equal = "true".to_string();
+    let mut bindings = Vec::with_capacity(limit as usize + 1);
+    let mut all_equal_var = "__oac_memcmp_eq0".to_string();
+    bindings.push((all_equal_var.clone(), "true".to_string()));
+
     for i in 0..limit {
         let index_expr = bv_const_u64(i, 64);
         let cond = format!("(bvugt {len_expr} {index_expr})");
         let left_i = format!("(bvadd {left_expr} {index_expr})");
         let right_i = format!("(bvadd {right_expr} {index_expr})");
         let bytes_equal = format!("(= (select {mem_curr} {left_i}) (select {mem_curr} {right_i}))");
-        all_equal = format!("(and {all_equal} (ite {cond} {bytes_equal} true))");
+        let next_var = format!("__oac_memcmp_eq{}", i + 1);
+        let next_expr = format!("(and {all_equal_var} (ite {cond} {bytes_equal} true))");
+        bindings.push((next_var.clone(), next_expr));
+        all_equal_var = next_var;
     }
-    format!(
-        "(ite {all_equal} {} {})",
-        bv_const_u64(0, 64),
-        bv_const_u64(1, 64)
+
+    wrap_let_bindings(
+        bindings,
+        format!(
+            "(ite {} {} {})",
+            all_equal_var,
+            bv_const_u64(0, 64),
+            bv_const_u64(1, 64)
+        ),
     )
 }
 
@@ -2557,26 +2589,16 @@ fn bounded_strlen_result_with_fallback_expr(
     limit: u64,
     fallback: &str,
 ) -> String {
-    let (precise, found_nul) = bounded_strlen_result_expr(mem_curr, src_expr, limit);
-    format!("(ite {found_nul} {precise} {fallback})")
+    let (bindings, len_var, found_nul) = bounded_strlen_result_state(mem_curr, src_expr, limit);
+    wrap_let_bindings(bindings, format!("(ite {found_nul} {len_var} {fallback})"))
 }
 
+#[allow(dead_code)]
 fn bounded_strlen_result_expr(mem_curr: &str, src_expr: &str, limit: u64) -> (String, String) {
-    let mut out = bv_const_u64(0, 64);
-    let mut found_nul = "false".to_string();
-    let zero_byte = bv_const_u64(0, 8);
-
-    for i in 0..limit {
-        let index_expr = bv_const_u64(i, 64);
-        let src_i = format!("(bvadd {src_expr} {index_expr})");
-        let byte_i = format!("(select {mem_curr} {src_i})");
-        let is_nul = format!("(= {byte_i} {zero_byte})");
-        let first_match = format!("(and (not {found_nul}) {is_nul})");
-        out = format!("(ite {first_match} {index_expr} {out})");
-        found_nul = format!("(or {found_nul} {is_nul})");
-    }
-
-    (out, found_nul)
+    let (bindings, len_var, found_nul_var) = bounded_strlen_result_state(mem_curr, src_expr, limit);
+    let len_expr = wrap_let_bindings(bindings.clone(), len_var);
+    let found_nul = wrap_let_bindings(bindings, found_nul_var);
+    (len_expr, found_nul)
 }
 
 fn bounded_strcmp_result_with_fallback_expr(
@@ -2586,20 +2608,106 @@ fn bounded_strcmp_result_with_fallback_expr(
     limit: u64,
     fallback: &str,
 ) -> String {
-    let (precise, finished) = bounded_strcmp_result_expr(mem_curr, left_expr, right_expr, limit);
-    format!("(ite {finished} {precise} {fallback})")
+    let (bindings, result_var, finished) =
+        bounded_strcmp_result_state(mem_curr, left_expr, right_expr, limit);
+    wrap_let_bindings(
+        bindings,
+        format!("(ite {finished} {result_var} {fallback})"),
+    )
 }
 
+#[allow(dead_code)]
 fn bounded_strcmp_result_expr(
     mem_curr: &str,
     left_expr: &str,
     right_expr: &str,
     limit: u64,
 ) -> (String, String) {
-    let mut out = bv_const_u64(0, 64);
-    let mut finished = "false".to_string();
-    let zero_byte = bv_const_u64(0, 8);
+    let (bindings, out_var, finished_var) =
+        bounded_strcmp_result_state(mem_curr, left_expr, right_expr, limit);
+    let out = wrap_let_bindings(bindings.clone(), out_var);
+    let finished = wrap_let_bindings(bindings, finished_var);
+    (out, finished)
+}
 
+fn bounded_strcpy_state(
+    mem_curr: &str,
+    src_expr: &str,
+    dst_expr: &str,
+    limit: u64,
+) -> (Vec<(String, String)>, String, String) {
+    let mut bindings = Vec::with_capacity((limit as usize * 2) + 2);
+    let mut mem_var = "__oac_strcpy_mem0".to_string();
+    let mut found_var = "__oac_strcpy_found0".to_string();
+    bindings.push((mem_var.clone(), mem_curr.to_string()));
+    bindings.push((found_var.clone(), "false".to_string()));
+
+    let zero = bv_const_u64(0, 8);
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let src_i = format!("(bvadd {src_expr} {index_expr})");
+        let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+        let byte_i = format!("(select {mem_curr} {src_i})");
+        let should_copy = format!("(not {found_var})");
+        let write_i = format!("(store {mem_var} {dst_i} {byte_i})");
+        let next_mem_var = format!("__oac_strcpy_mem{}", i + 1);
+        let next_found_var = format!("__oac_strcpy_found{}", i + 1);
+        let next_mem_expr = format!("(ite {should_copy} {write_i} {mem_var})");
+        let is_nul = format!("(= {byte_i} {zero})");
+        let next_found_expr = format!("(or {found_var} {is_nul})");
+        bindings.push((next_mem_var.clone(), next_mem_expr));
+        bindings.push((next_found_var.clone(), next_found_expr));
+        mem_var = next_mem_var;
+        found_var = next_found_var;
+    }
+
+    (bindings, mem_var, found_var)
+}
+
+fn bounded_strlen_result_state(
+    mem_curr: &str,
+    src_expr: &str,
+    limit: u64,
+) -> (Vec<(String, String)>, String, String) {
+    let mut bindings = Vec::with_capacity((limit as usize * 2) + 2);
+    let mut len_var = "__oac_strlen_out0".to_string();
+    let mut found_var = "__oac_strlen_found0".to_string();
+    bindings.push((len_var.clone(), bv_const_u64(0, 64)));
+    bindings.push((found_var.clone(), "false".to_string()));
+
+    let zero_byte = bv_const_u64(0, 8);
+    for i in 0..limit {
+        let index_expr = bv_const_u64(i, 64);
+        let src_i = format!("(bvadd {src_expr} {index_expr})");
+        let byte_i = format!("(select {mem_curr} {src_i})");
+        let is_nul = format!("(= {byte_i} {zero_byte})");
+        let first_match = format!("(and (not {found_var}) {is_nul})");
+        let next_len_var = format!("__oac_strlen_out{}", i + 1);
+        let next_found_var = format!("__oac_strlen_found{}", i + 1);
+        let next_len_expr = format!("(ite {first_match} {index_expr} {len_var})");
+        let next_found_expr = format!("(or {found_var} {is_nul})");
+        bindings.push((next_len_var.clone(), next_len_expr));
+        bindings.push((next_found_var.clone(), next_found_expr));
+        len_var = next_len_var;
+        found_var = next_found_var;
+    }
+
+    (bindings, len_var, found_var)
+}
+
+fn bounded_strcmp_result_state(
+    mem_curr: &str,
+    left_expr: &str,
+    right_expr: &str,
+    limit: u64,
+) -> (Vec<(String, String)>, String, String) {
+    let mut bindings = Vec::with_capacity((limit as usize * 2) + 2);
+    let mut out_var = "__oac_strcmp_out0".to_string();
+    let mut finished_var = "__oac_strcmp_finished0".to_string();
+    bindings.push((out_var.clone(), bv_const_u64(0, 64)));
+    bindings.push((finished_var.clone(), "false".to_string()));
+
+    let zero_byte = bv_const_u64(0, 8);
     for i in 0..limit {
         let index_expr = bv_const_u64(i, 64);
         let left_i = format!("(bvadd {left_expr} {index_expr})");
@@ -2609,18 +2717,191 @@ fn bounded_strcmp_result_expr(
         let both_zero = format!("(and (= {left_byte} {zero_byte}) (= {right_byte} {zero_byte}))");
         let differs = format!("(distinct {left_byte} {right_byte})");
         let event = format!("(or {both_zero} {differs})");
-        let first_event = format!("(and (not {finished}) {event})");
+        let first_event = format!("(and (not {finished_var}) {event})");
         let event_result = format!(
             "(ite {differs} (ite (bvult {left_byte} {right_byte}) {} {}) {})",
             bv_const_u64(u64::MAX, 64),
             bv_const_u64(1, 64),
             bv_const_u64(0, 64)
         );
-        out = format!("(ite {first_event} {event_result} {out})");
-        finished = format!("(or {finished} {event})");
+        let next_out_var = format!("__oac_strcmp_out{}", i + 1);
+        let next_finished_var = format!("__oac_strcmp_finished{}", i + 1);
+        let next_out_expr = format!("(ite {first_event} {event_result} {out_var})");
+        let next_finished_expr = format!("(or {finished_var} {event})");
+        bindings.push((next_out_var.clone(), next_out_expr));
+        bindings.push((next_finished_var.clone(), next_finished_expr));
+        out_var = next_out_var;
+        finished_var = next_finished_var;
     }
 
-    (out, finished)
+    (bindings, out_var, finished_var)
+}
+
+#[cfg(test)]
+mod legacy_bounded_helpers {
+    use super::*;
+
+    pub(super) fn bounded_copy_expr_legacy(
+        mem_curr: &str,
+        src_expr: &str,
+        dst_expr: &str,
+        len_expr: &str,
+        limit: u64,
+    ) -> String {
+        let mut acc = mem_curr.to_string();
+        for i in 0..limit {
+            let index_expr = bv_const_u64(i, 64);
+            let cond = format!("(bvugt {len_expr} {index_expr})");
+            let src_i = format!("(bvadd {src_expr} {index_expr})");
+            let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+            let byte_i = format!("(select {mem_curr} {src_i})");
+            let write_i = format!("(store {acc} {dst_i} {byte_i})");
+            acc = format!("(ite {cond} {write_i} {acc})");
+        }
+        acc
+    }
+
+    pub(super) fn bounded_strcpy_expr_legacy(
+        mem_curr: &str,
+        src_expr: &str,
+        dst_expr: &str,
+        limit: u64,
+    ) -> (String, String) {
+        let mut acc = mem_curr.to_string();
+        let mut found_nul = "false".to_string();
+        let zero = bv_const_u64(0, 8);
+
+        for i in 0..limit {
+            let index_expr = bv_const_u64(i, 64);
+            let src_i = format!("(bvadd {src_expr} {index_expr})");
+            let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+            let byte_i = format!("(select {mem_curr} {src_i})");
+            let should_copy = format!("(not {found_nul})");
+            let write_i = format!("(store {acc} {dst_i} {byte_i})");
+            acc = format!("(ite {should_copy} {write_i} {acc})");
+            let is_nul = format!("(= {byte_i} {zero})");
+            found_nul = format!("(or {found_nul} {is_nul})");
+        }
+
+        (acc, found_nul)
+    }
+
+    pub(super) fn bounded_set_expr_legacy(
+        mem_curr: &str,
+        dst_expr: &str,
+        len_expr: &str,
+        byte_expr: &str,
+        limit: u64,
+    ) -> String {
+        let mut acc = mem_curr.to_string();
+        for i in 0..limit {
+            let index_expr = bv_const_u64(i, 64);
+            let cond = format!("(bvugt {len_expr} {index_expr})");
+            let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+            let write_i = format!("(store {acc} {dst_i} {byte_expr})");
+            acc = format!("(ite {cond} {write_i} {acc})");
+        }
+        acc
+    }
+
+    pub(super) fn bounded_havoc_expr_legacy(
+        mem_curr: &str,
+        dst_expr: &str,
+        len_expr: &str,
+        limit: u64,
+        mem_havoc_source: &str,
+    ) -> String {
+        let mut acc = mem_curr.to_string();
+        for i in 0..limit {
+            let index_expr = bv_const_u64(i, 64);
+            let cond = format!("(bvugt {len_expr} {index_expr})");
+            let dst_i = format!("(bvadd {dst_expr} {index_expr})");
+            let havoc_byte = format!("(select {mem_havoc_source} {dst_i})");
+            let write_i = format!("(store {acc} {dst_i} {havoc_byte})");
+            acc = format!("(ite {cond} {write_i} {acc})");
+        }
+        acc
+    }
+
+    pub(super) fn bounded_memcmp_result_expr_legacy(
+        mem_curr: &str,
+        left_expr: &str,
+        right_expr: &str,
+        len_expr: &str,
+        limit: u64,
+    ) -> String {
+        let mut all_equal = "true".to_string();
+        for i in 0..limit {
+            let index_expr = bv_const_u64(i, 64);
+            let cond = format!("(bvugt {len_expr} {index_expr})");
+            let left_i = format!("(bvadd {left_expr} {index_expr})");
+            let right_i = format!("(bvadd {right_expr} {index_expr})");
+            let bytes_equal =
+                format!("(= (select {mem_curr} {left_i}) (select {mem_curr} {right_i}))");
+            all_equal = format!("(and {all_equal} (ite {cond} {bytes_equal} true))");
+        }
+        format!(
+            "(ite {all_equal} {} {})",
+            bv_const_u64(0, 64),
+            bv_const_u64(1, 64)
+        )
+    }
+
+    pub(super) fn bounded_strlen_result_expr_legacy(
+        mem_curr: &str,
+        src_expr: &str,
+        limit: u64,
+    ) -> (String, String) {
+        let mut out = bv_const_u64(0, 64);
+        let mut found_nul = "false".to_string();
+        let zero_byte = bv_const_u64(0, 8);
+
+        for i in 0..limit {
+            let index_expr = bv_const_u64(i, 64);
+            let src_i = format!("(bvadd {src_expr} {index_expr})");
+            let byte_i = format!("(select {mem_curr} {src_i})");
+            let is_nul = format!("(= {byte_i} {zero_byte})");
+            let first_match = format!("(and (not {found_nul}) {is_nul})");
+            out = format!("(ite {first_match} {index_expr} {out})");
+            found_nul = format!("(or {found_nul} {is_nul})");
+        }
+
+        (out, found_nul)
+    }
+
+    pub(super) fn bounded_strcmp_result_expr_legacy(
+        mem_curr: &str,
+        left_expr: &str,
+        right_expr: &str,
+        limit: u64,
+    ) -> (String, String) {
+        let mut out = bv_const_u64(0, 64);
+        let mut finished = "false".to_string();
+        let zero_byte = bv_const_u64(0, 8);
+
+        for i in 0..limit {
+            let index_expr = bv_const_u64(i, 64);
+            let left_i = format!("(bvadd {left_expr} {index_expr})");
+            let right_i = format!("(bvadd {right_expr} {index_expr})");
+            let left_byte = format!("(select {mem_curr} {left_i})");
+            let right_byte = format!("(select {mem_curr} {right_i})");
+            let both_zero =
+                format!("(and (= {left_byte} {zero_byte}) (= {right_byte} {zero_byte}))");
+            let differs = format!("(distinct {left_byte} {right_byte})");
+            let event = format!("(or {both_zero} {differs})");
+            let first_event = format!("(and (not {finished}) {event})");
+            let event_result = format!(
+                "(ite {differs} (ite (bvult {left_byte} {right_byte}) {} {}) {})",
+                bv_const_u64(u64::MAX, 64),
+                bv_const_u64(1, 64),
+                bv_const_u64(0, 64)
+            );
+            out = format!("(ite {first_event} {event_result} {out})");
+            finished = format!("(or {finished} {event})");
+        }
+
+        (out, finished)
+    }
 }
 
 fn binary_expr(instr: &QbeInstr, ty: AssignType, lhs: &str, rhs: &str) -> String {
@@ -3243,5 +3524,118 @@ fn assign_type_from_qbe(ty: &QbeType) -> AssignType {
         QbeType::Long | QbeType::Aggregate(_) => AssignType::Long,
         QbeType::Single => AssignType::Single,
         QbeType::Double => AssignType::Double,
+    }
+}
+
+#[cfg(test)]
+mod bounded_helper_equivalence_tests {
+    use super::{legacy_bounded_helpers, *};
+
+    const DECLS: &str = r#"
+(declare-fun mem () (Array (_ BitVec 64) (_ BitVec 8)))
+(declare-fun havoc () (Array (_ BitVec 64) (_ BitVec 8)))
+(declare-fun src () (_ BitVec 64))
+(declare-fun dst () (_ BitVec 64))
+(declare-fun lhs () (_ BitVec 64))
+(declare-fun rhs () (_ BitVec 64))
+(declare-fun len () (_ BitVec 64))
+(declare-fun byte () (_ BitVec 8))
+"#;
+
+    fn assert_expr_equivalent(lhs: &str, rhs: &str) {
+        let smt =
+            format!("(set-logic QF_AUFBV)\n{DECLS}\n(assert (not (= {lhs} {rhs})))\n(check-sat)\n");
+        let result = crate::solve_chc_script(&smt, 5).expect("solve");
+        assert_eq!(
+            result,
+            crate::SolverResult::Unsat,
+            "expected equivalent expressions"
+        );
+    }
+
+    fn assert_pair_equivalent(left_exprs: (&str, &str), right_exprs: (&str, &str), label: &str) {
+        let smt = format!(
+            "(set-logic QF_AUFBV)\n{DECLS}\n(assert (not (and (= {} {}) (= {} {}))))\n(check-sat)\n",
+            left_exprs.0, right_exprs.0, left_exprs.1, right_exprs.1
+        );
+        let result = crate::solve_chc_script(&smt, 5).expect("solve");
+        assert_eq!(
+            result,
+            crate::SolverResult::Unsat,
+            "expected equivalent tuple expressions for {label}"
+        );
+    }
+
+    #[test]
+    fn bounded_copy_expr_matches_legacy() {
+        for limit in [0_u64, 1, 2, 4] {
+            let next = bounded_copy_expr("mem", "src", "dst", "len", limit);
+            let legacy =
+                legacy_bounded_helpers::bounded_copy_expr_legacy("mem", "src", "dst", "len", limit);
+            assert_expr_equivalent(&next, &legacy);
+        }
+    }
+
+    #[test]
+    fn bounded_set_expr_matches_legacy() {
+        for limit in [0_u64, 1, 3] {
+            let next = bounded_set_expr("mem", "dst", "len", "byte", limit);
+            let legacy =
+                legacy_bounded_helpers::bounded_set_expr_legacy("mem", "dst", "len", "byte", limit);
+            assert_expr_equivalent(&next, &legacy);
+        }
+    }
+
+    #[test]
+    fn bounded_havoc_expr_matches_legacy() {
+        for limit in [0_u64, 1, 3] {
+            let next = bounded_havoc_expr("mem", "dst", "len", limit, "havoc");
+            let legacy = legacy_bounded_helpers::bounded_havoc_expr_legacy(
+                "mem", "dst", "len", limit, "havoc",
+            );
+            assert_expr_equivalent(&next, &legacy);
+        }
+    }
+
+    #[test]
+    fn bounded_strcpy_expr_matches_legacy() {
+        for limit in [0_u64, 1, 3] {
+            let next = bounded_strcpy_expr("mem", "src", "dst", limit);
+            let legacy =
+                legacy_bounded_helpers::bounded_strcpy_expr_legacy("mem", "src", "dst", limit);
+            assert_pair_equivalent((&next.0, &next.1), (&legacy.0, &legacy.1), "strcpy");
+        }
+    }
+
+    #[test]
+    fn bounded_memcmp_result_expr_matches_legacy() {
+        for limit in [0_u64, 1, 2, 4] {
+            let next = bounded_memcmp_result_expr("mem", "lhs", "rhs", "len", limit);
+            let legacy = legacy_bounded_helpers::bounded_memcmp_result_expr_legacy(
+                "mem", "lhs", "rhs", "len", limit,
+            );
+            assert_expr_equivalent(&next, &legacy);
+        }
+    }
+
+    #[test]
+    fn bounded_strlen_result_expr_matches_legacy() {
+        for limit in [0_u64, 1, 2, 4] {
+            let next = bounded_strlen_result_expr("mem", "src", limit);
+            let legacy =
+                legacy_bounded_helpers::bounded_strlen_result_expr_legacy("mem", "src", limit);
+            assert_pair_equivalent((&next.0, &next.1), (&legacy.0, &legacy.1), "strlen");
+        }
+    }
+
+    #[test]
+    fn bounded_strcmp_result_expr_matches_legacy() {
+        for limit in [0_u64, 1, 2, 4] {
+            let next = bounded_strcmp_result_expr("mem", "lhs", "rhs", limit);
+            let legacy = legacy_bounded_helpers::bounded_strcmp_result_expr_legacy(
+                "mem", "lhs", "rhs", limit,
+            );
+            assert_pair_equivalent((&next.0, &next.1), (&legacy.0, &legacy.1), "strcmp");
+        }
     }
 }

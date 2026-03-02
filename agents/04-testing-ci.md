@@ -69,12 +69,16 @@ cargo run -p oac -- bench-prove --suite quick --iterations 1
 
 # Recompute committed baseline (deterministic rewrite)
 cargo run -p oac -- bench-prove --update-baseline
+
+# Enforce sat/unsat outcome stability (baseline vs candidate)
+cargo run -p oac -- bench-prove --suite full --iterations 1 --strict-outcome-gate
 ```
 
 Benchmark artifacts:
 - committed baseline: `crates/oac/bench/prove_baseline.json`
 - default report output: `target/oac/bench/prove/latest.json`
 - per-run isolated fixture artifacts: `target/oac/bench/runs/<fixture>/iter_<n>/`
+- strict outcome-gate artifacts: `target/oac/verification_outcomes/{baseline,candidate}.json` plus per-profile runs under `target/oac/verification_outcomes/runs/`
 
 ## Local Git Hooks
 
@@ -138,20 +142,22 @@ Key tests:
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
 - `crates/qbe-smt/src/lib.rs` also verifies reachable-only encoding behavior (unsupported instructions inside unreachable blocks are ignored).
 - `crates/qbe-smt/src/lib.rs` is also the shared CHC solver entrypoint (`solve_chc_script` and `solve_chc_script_with_diagnostics`) used by struct invariant verification.
+- `crates/qbe-smt/src/lib.rs` also includes canned solver-output classification tests for `unknown`/`timeout` handling and fail-closed rejection of unrecognized solver status lines.
 - `crates/qbe-smt/src/lib.rs` also covers Ariadne rendering helpers on `QbeSmtError` (`render_report_plain` / `render_report_terminal_auto`).
 - `crates/qbe-smt/src/lib.rs` also tests loop classification (`classify_simple_loops`) for proven non-termination patterns (identity updates, including `call $sub(..., 0)`) vs unknown/progress loops.
+- `crates/qbe-smt/src/encode.rs` includes solver-backed equivalence tests that compare legacy vs refactored bounded helper builders (`bounded_copy/set/havoc/strcpy/memcmp/strlen/strcmp`) under symbolic inputs for representative limits.
 - `crates/oac/src/diagnostics.rs` tests cover tokenizer span conversion, plain (no ANSI) report rendering, and no-span fallback rendering.
 - `crates/oac/src/diagnostics.rs` tests also enforce diagnostic headline quality for Ariadne plain reports (no duplicated `Error: error[...]` prefixing) and message/cause dedup behavior in `diagnostic_from_anyhow`.
 - `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, and file-URI handling.
 - `crates/oac/src/invariant_metadata.rs` tests cover multi-binding discovery per struct and argument-assumption cross-product expansion when parameter types carry multiple invariants.
-- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, grouped invariant declarations, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, per-`(call-site, invariant)` obligation expansion, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding, modeled string/io CLib calls in checker encoding, and fail-closed unknown external calls).
-- `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving, including multi-invariant argument preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), no-op behavior when no prove sites exist, and checker-encoding coverage for modeled string/io CLib calls.
-- Prove and struct-invariant solving retry once on `unknown` with a longer timeout (`10s` then `30s`) before returning fail-closed errors, to reduce CI flakiness from timeout-only unknown results.
+- `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, grouped invariant declarations, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, per-`(call-site, invariant)` obligation expansion, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), unknown fail-closed diagnostics with attempt ladders, and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding, modeled string/io CLib calls in checker encoding, and fail-closed unknown external calls).
+- `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving, including multi-invariant argument preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), no-op behavior when no prove sites exist, unknown fail-closed diagnostics with attempt ladders, and checker-encoding coverage for modeled string/io CLib calls.
+- Prove and struct-invariant solving keep baseline retries at `10s` then `30s`; candidate profile may add a third large-obligation attempt (controlled by `OAC_Z3_LARGE_OBLIGATION_BYTES` and `OAC_Z3_TIMEOUT_LARGE_OBLIGATION_SECS`) while keeping `sat`/`unsat` interpretation unchanged.
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
 - Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
-- `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags.
-- `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, and deterministic `--update-baseline` rewrites (using a mocked fixture runner).
+- `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags (including `--strict-outcome-gate`).
+- `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, deterministic `--update-baseline` rewrites (using a mocked fixture runner), and strict outcome-gate execution on the quick corpus.
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Fixture compile/execute work runs through one worker-thread harness and snapshot assertions are sorted and applied deterministically afterward. Default worker count is serial (`1`) for stability and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>` for explicit parallel execution. Compiler-error snapshots capture Ariadne plain-report output from the shared diagnostics layer.
 - `crates/oac/src/qbe_backend.rs` also enforces snapshot hygiene contracts for execution snapshots: no committed `*.snap.new` files, no orphan execution snapshots without matching fixtures, and no duplicated Ariadne prefix artifacts (`Error: error[...]`) in snapshot content.
@@ -207,7 +213,7 @@ Key tests:
   - `json_value_parser.oa` specifically covers structured value parsing (`Json.parse_json_document_value_result`) with object/array lookup helpers (`Json.object_get`, `Json.array_get`) and scalar payload extraction helpers (`Json.value_string`, `Json.value_number`), including `\uXXXX`-escape acceptance and malformed-escape rejection.
   - Generic-specialized stdlib helpers are exercised through namespaced call syntax (`IntList.*`, `IntTable.*`) in `template_linked_list_i32.oa`, `template_linked_list_v2_i32.oa`, and `template_hash_table_i32.oa` (fixture filenames are legacy-prefixed, syntax is `generic/specialize`).
   - The v2 linked-list fixture (`template_linked_list_v2_i32.oa`) covers cached length (`len`), `Option`-style accessors (`front` / `tail` / `at` via local `FrontOption` / `TailOption` aliases), `pop_front` via local `PopFrontOption` payloads, and transform helpers (`append`, `reverse`, `take`, `drop`, `at_or`) in addition to compatibility wrappers.
-  - `template_hash_table_i32.oa` now snapshots runtime output that exercises insert/update/remove/contains/clear plus resize-rehash behavior across `IntTable.*` helpers.
+  - `template_hash_table_i32.oa` now snapshots runtime output that exercises insert/update/remove/contains/clear plus resize-rehash behavior across `IntTable.*` helpers, and the `bench-prove` expected outcome for this fixture is success (`expected_code = null`).
 
 Snapshots live in:
 - `crates/oac/src/snapshots/*.snap`

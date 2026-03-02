@@ -17,6 +17,9 @@ mod test_framework;
 mod tokenizer;
 mod verification_checker;
 mod verification_cycles;
+mod verification_outcomes;
+mod verification_profile;
+mod verification_solver;
 
 use std::collections::HashSet;
 use std::env;
@@ -28,8 +31,7 @@ use diagnostics::{
     diagnostic_from_anyhow, diagnostic_from_panic, diagnostic_from_tokenizer_error,
     CompilerDiagnostic, CompilerDiagnosticBundle, DiagnosticStage,
 };
-use tracing::info;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer};
@@ -257,6 +259,24 @@ pub(crate) fn compile_source_with_artifacts(
     executable_name: &str,
     codes: CompileSourceCodes<'_>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    compile_source_with_artifacts_with_profile(
+        source_path,
+        target_dir,
+        arch,
+        executable_name,
+        codes,
+        verification_profile::VerificationProfile::default(),
+    )
+}
+
+pub(crate) fn compile_source_with_artifacts_with_profile(
+    source_path: &Path,
+    target_dir: &Path,
+    arch: Option<&str>,
+    executable_name: &str,
+    codes: CompileSourceCodes<'_>,
+    verification_profile: verification_profile::VerificationProfile,
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
     let (source, ast) =
         parse_source_to_ast_with_artifacts(source_path, target_dir, &codes.frontend)?;
     let ast_path = target_dir.join("ast.json");
@@ -272,13 +292,14 @@ pub(crate) fn compile_source_with_artifacts(
     })?;
     debug!(ast_path = %ast_path.display(), "Parsed source file");
 
-    compile_ast_to_executable(
+    compile_ast_to_executable_with_profile(
         target_dir,
         ast,
         arch,
         executable_name,
         Some(source_path),
         Some(&source),
+        verification_profile,
     )
 }
 
@@ -426,6 +447,26 @@ pub(crate) fn compile_ast_to_executable(
     source_path: Option<&Path>,
     source_text: Option<&str>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    compile_ast_to_executable_with_profile(
+        target_dir,
+        ast,
+        arch,
+        executable_name,
+        source_path,
+        source_text,
+        verification_profile::VerificationProfile::default(),
+    )
+}
+
+pub(crate) fn compile_ast_to_executable_with_profile(
+    target_dir: &Path,
+    ast: parser::Ast,
+    arch: Option<&str>,
+    executable_name: &str,
+    source_path: Option<&Path>,
+    source_text: Option<&str>,
+    verification_profile: verification_profile::VerificationProfile,
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
     let ir = ir::resolve(ast).map_err(|err| {
         stage_error_from_anyhow(
             DiagnosticStage::Resolve,
@@ -448,7 +489,13 @@ pub(crate) fn compile_ast_to_executable(
     })?;
     info!(ir_path = %ir_path.display(), "IR generated and type-checked");
     let qbe_ir = qbe_backend::compile(ir.clone());
-    prove::verify_prove_obligations_with_qbe(&ir, &qbe_ir, target_dir).map_err(|err| {
+    prove::verify_prove_obligations_with_qbe_with_profile(
+        &ir,
+        &qbe_ir,
+        target_dir,
+        verification_profile,
+    )
+    .map_err(|err| {
         stage_error_from_anyhow(
             DiagnosticStage::Prove,
             "OAC-PROVE-001",
@@ -458,18 +505,22 @@ pub(crate) fn compile_ast_to_executable(
             source_text,
         )
     })?;
-    struct_invariants::verify_struct_invariants_with_qbe(&ir, &qbe_ir, target_dir).map_err(
-        |err| {
-            stage_error_from_anyhow(
-                DiagnosticStage::StructInvariant,
-                "OAC-INV-001",
-                "struct invariant verification failed",
-                err,
-                source_path,
-                source_text,
-            )
-        },
-    )?;
+    struct_invariants::verify_struct_invariants_with_qbe_with_profile(
+        &ir,
+        &qbe_ir,
+        target_dir,
+        verification_profile,
+    )
+    .map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::StructInvariant,
+            "OAC-INV-001",
+            "struct invariant verification failed",
+            err,
+            source_path,
+            source_text,
+        )
+    })?;
     reject_proven_non_terminating_main(&qbe_ir).map_err(|err| {
         stage_error_from_anyhow(
             DiagnosticStage::LoopClassifier,
@@ -886,12 +937,13 @@ struct RiscvSmtOpts {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+    use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
+
     use super::{
         reject_proven_non_terminating_main, resolve_linker_attempts_for_config, LinkerAttempt, Oac,
         OacSubcommand,
     };
-    use clap::Parser;
-    use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
 
     fn temp(name: &str) -> Value {
         Value::Temporary(name.to_string())
@@ -1027,6 +1079,7 @@ mod tests {
                 assert!(opts.baseline.is_none());
                 assert!(opts.output.is_none());
                 assert!(!opts.update_baseline);
+                assert!(!opts.strict_outcome_gate);
             }
             _ => panic!("expected bench-prove subcommand"),
         }
@@ -1046,6 +1099,7 @@ mod tests {
             "--output",
             "custom-report.json",
             "--update-baseline",
+            "--strict-outcome-gate",
         ]);
         match parsed.subcmd {
             OacSubcommand::BenchProve(opts) => {
@@ -1060,6 +1114,7 @@ mod tests {
                     Some(std::path::Path::new("custom-report.json"))
                 );
                 assert!(opts.update_baseline);
+                assert!(opts.strict_outcome_gate);
             }
             _ => panic!("expected bench-prove subcommand"),
         }

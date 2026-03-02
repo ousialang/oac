@@ -181,6 +181,7 @@ Important enforced invariants include:
 - `verification.rs` is the shared in-crate verification entrypoint; it runs prove obligations first and short-circuits before struct-invariant obligations when prove fails.
 - `qbe-smt` is used by prove verification and struct invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so struct invariant verification now shares the same encode+solve backend path.
+- `oac` routes prove/struct-invariant solver calls through `crates/oac/src/verification_solver.rs`, which preserves baseline two-step retries (`10s`, `30s`) and can add a candidate-only third attempt for large obligations that remain `unknown`.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
 - `qbe-smt` is parser-free: it consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`). Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), `crates/qbe-smt/src/encode_extern_models.rs` (extern-call model/arity catalog), and `crates/qbe-smt/src/classify.rs` (loop classification).
 - `qbe-smt` models a broad integer + memory QBE subset plus an FP32/FP64 proving subset:
@@ -197,6 +198,7 @@ Important enforced invariants include:
 - Property surface is fixed: query whether halt with `exit == 1` is reachable (`(query bad)`).
 - Unsupported constructs are fail-closed hard errors (no havoc fallback path).
 - For modeled CLib memory operations, encoding uses bounded precise expansion (`limit = 16`) plus sound fallback branches (for example, unconstrained `mem_next` when bounds are exceeded).
+- Bounded helper expressions in `encode.rs` are assembled with linearized SMT `let` chains (instead of repeated nested expression duplication) to reduce obligation size growth while preserving precise/fallback semantics.
 - Bounded string-call details: `strlen` scans for NUL up to the inline limit and otherwise falls back to constrained unknown non-negative length; `strcmp` performs bounded first-event scan (`difference` or shared NUL) with tri-state results (`-1/0/1`) and otherwise falls back to unconstrained return.
 - `strcpy` memory effects are modeled as bounded byte copy until first NUL (including terminator); if no NUL is found within the inline limit, memory falls back to unconstrained `mem_next`.
 - Syscall-like modeled return constraints are explicit: `open` -> `-1 | >=0`, `close` -> `0 | -1`, `read`/`write` -> `-1 | (0 <= ret <= count)`.
@@ -213,7 +215,8 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
-- `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline]`).
+- `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline] [--strict-outcome-gate]`).
+- `--strict-outcome-gate` runs baseline/candidate verification-outcome captures over the selected fixture corpus and fails on forbidden transitions (`sat/unsat` drift or obligation-key set drift), writing artifacts to `target/oac/verification_outcomes/`.
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
 - LSP import crawling for project-symbol indexing now reuses `flat_imports::validate_same_dir_oa_import(...)` so editor-side import acceptance matches compiler import semantics.
 - Symbol indexing includes `extern fun` declarations in document symbols.
