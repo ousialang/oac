@@ -13,22 +13,25 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 6. Lower to QBE with `qbe_backend::compile`.
 7. Verify `prove(...)` obligations with `prove::verify_prove_obligations_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
 8. Verify struct invariants with `struct_invariants::verify_struct_invariants_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
-9. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before backend toolchain calls.
-10. Emit QBE IR to `target/oac/ir.qbe`.
-11. Invoke `qbe` to produce assembly (`target/oac/assembly.s`).
-12. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`): default `cc` (plus `--target=<triple>` when arch mapping is known), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc`, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
-13. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+9. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
+10. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
+    - QBE runtime backend: emit `target/oac/ir.qbe`, run `qbe`, emit `target/oac/assembly.s`.
+    - LLVM runtime backend: emit `target/oac/ir.ll`, run `clang -x ir -c`, emit `target/oac/object.o`.
+11. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+12. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
 - `target/oac/ast.json`
 - `target/oac/ir.json`
 - `target/oac/ir.qbe`
+- `target/oac/ir.ll` (LLVM runtime backend)
 - `target/oac/prove/site_*.qbe` (generated checker programs, when prove obligations exist)
 - `target/oac/prove/site_*.smt2` (when prove obligations exist)
 - `target/oac/struct_invariants/site_*.qbe` (generated checker programs, when obligations exist)
 - `target/oac/struct_invariants/site_*.smt2` (when invariant obligations exist)
 - `target/oac/assembly.s`
+- `target/oac/object.o` (LLVM runtime backend)
 - `target/oac/app`
 
 ## End-to-End Test Flow
@@ -41,7 +44,7 @@ Defined in `crates/oac/src/main.rs` (`run_tests` function):
 4. Resolve flat imports via `flat_imports` and execute comptime applies.
 5. Lower top-level `test "..." { ... }` declarations via `test_framework::lower_tests_to_program` into generated test functions plus a generated `main`.
 6. Resolve/type-check with `ir::resolve`.
-7. Lower to QBE, run prove/invariant checks, run non-termination classification, emit QBE/assembly, and link executable (same backend path as `oac build`).
+7. Lower to QBE, run prove/invariant checks, run non-termination classification, emit runtime backend artifacts (`qbe` or `llvm`), and link executable (same backend path as `oac build`).
 8. Execute `target/oac/test/app` and treat non-zero exit status as test failure.
 9. Map failures into shared compiler diagnostics and render Ariadne reports for CLI users.
 
@@ -50,7 +53,9 @@ Artifacts emitted during test runs:
 - `target/oac/test/ast.json`
 - `target/oac/test/ir.json`
 - `target/oac/test/ir.qbe`
+- `target/oac/test/ir.ll` (LLVM runtime backend)
 - `target/oac/test/assembly.s`
+- `target/oac/test/object.o` (LLVM runtime backend)
 - `target/oac/test/app`
 - prove/invariant debug artifacts under `target/oac/test/prove/` and `target/oac/test/struct_invariants/` when obligations exist
 
@@ -181,6 +186,17 @@ Important enforced invariants include:
 - Maps `U8` to QBE word temporaries with unsigned compare/div lowering for `U8` arithmetic relations.
 - Produces snapshots in tests for codegen and runtime behavior.
 
+## Runtime Backend Dispatch (`codegen_runtime.rs` + `llvm_backend.rs`)
+
+- Verification remains QBE-only regardless of runtime backend.
+- Runtime backend selection is explicit on `oac build` / `oac test`:
+  - `--backend qbe` (default), optional `--qbe-arch <arch>`
+  - `--backend llvm` (rejects `--qbe-arch`)
+  - `--target <triple>` applies to LLVM IR compilation/linking and linker attempt target resolution.
+- LLVM runtime lowering emits textual LLVM IR directly from `ir::ResolvedProgram` (`llvm_backend::compile`) and does not use a production `compile_with_qbe` runtime path.
+- Shared runtime value/tagged-union layout invariants used by both backends live in `runtime_layout.rs`.
+- In LLVM runtime lowering, `prove(...)` is verification-only and emits no runtime behavior.
+
 ## SMT Adjacent Paths
 
 - `main.rs` also exposes `riscv-smt` subcommand.
@@ -221,6 +237,7 @@ Important enforced invariants include:
 ## LSP Path
 
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
+- `build`/`test` backend flags now follow: `oac build <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>]` and `oac test <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>]`.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
 - `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline] [--strict-outcome-gate]`).
 - `--strict-outcome-gate` runs baseline/candidate verification-outcome captures over the selected fixture corpus and fails on forbidden transitions (`sat/unsat` drift or obligation-key set drift), writing artifacts to `target/oac/verification_outcomes/`.

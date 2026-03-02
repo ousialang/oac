@@ -145,8 +145,7 @@ mod tests {
     use std::fs;
 
     use super::{parse_and_resolve_file, resolve_ast};
-    use crate::parser;
-    use crate::tokenizer;
+    use crate::{parser, tokenizer};
 
     #[test]
     fn resolve_flat_imports_merges_same_directory_files() {

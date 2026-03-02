@@ -19,7 +19,7 @@ Do this autonomously. Do not defer it to “later docs cleanup”.
 ## Index
 
 - `agents/01-repo-map.md`: repository map, ownership zones, and source-of-truth files.
-- `agents/02-compiler-pipeline.md`: front-end to backend flow (`tokenizer` -> `parser` -> `ir` -> `qbe` -> asm -> binary).
+- `agents/02-compiler-pipeline.md`: front-end to backend flow (`tokenizer` -> `parser` -> `ir` -> QBE verification -> runtime backend -> binary).
 - `agents/03-language-semantics.md`: language model and invariants implemented today.
 - `agents/04-testing-ci.md`: how to run tests, snapshot behavior, CI expectations, and debugging flow.
 - `agents/05-engineering-playbook.md`: practical implementation rules for safe compiler evolution.
@@ -95,6 +95,12 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Built-in `FP32` and `FP64` are supported end-to-end. Unsuffixed decimal literals default to `FP32` (for example `1.25`), while `f64` suffix selects `FP64` (for example `1.25f64`). Numeric arithmetic/comparisons do not perform implicit widening/coercion between integer and floating types (`U8`, `I32`, `I64`, `FP32`, `FP64` stay same-type only).
 - Generic-specialized helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
+- Runtime codegen now supports two backends selected by flags on `oac build` / `oac test`: `--backend qbe|llvm` (default `qbe`), optional `--qbe-arch` (QBE-only), and optional `--target` (shared linker/clang target triple override).
+- Positional `arch` on `oac build` / `oac test` was removed; backend/target configuration is now flag-based.
+- QBE remains mandatory as the verification source of truth: prove obligations, struct-invariant obligations, and loop non-termination classification always run on in-memory QBE output, regardless of runtime backend.
+- Runtime artifact outputs are backend-specific: QBE emits `target/oac/ir.qbe` + `target/oac/assembly.s`; LLVM emits `target/oac/ir.ll` + `target/oac/object.o`.
+- LLVM runtime lowering now compiles directly from `ir::ResolvedProgram` in `crates/oac/src/llvm_backend.rs` (no production IR->QBE->LLVM path and no `compile_with_qbe` runtime coupling).
+- In the LLVM runtime backend, `prove(...)` remains verification-only and lowers as runtime no-op codegen.
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
 - Compiler diagnostics are centralized in `crates/oac/src/diagnostics.rs` and rendered with Ariadne for both CLI output and `oac lsp` diagnostic conversion.
 - `oac build` / `oac test` stage failures are now mapped to stable diagnostic codes (for example `OAC-PARSE-001`, `OAC-RESOLVE-001`, `OAC-LINK-001`, `OAC-LINK-002`) and emitted as Ariadne reports; execution fixture compilation-error snapshots therefore reflect Ariadne plain-report text.
@@ -108,6 +114,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Strict outcome-gate artifacts are emitted under `target/oac/verification_outcomes/` as `baseline.json` and `candidate.json` (schema version `1`), with per-profile compile runs under `target/oac/verification_outcomes/runs/`.
 - `oac bench-prove` uses report-only timing regression policy in v1 (regression when both `delta_ms >= 200` and `delta_pct >= 20.0`), but still fails fail-closed on unexpected fixture outcomes (unexpected success/failure or diagnostic code mismatch).
 - `oac bench-prove --strict-outcome-gate` enforces outcome-transition safety: baseline `sat`/`unsat` obligations must remain identical in candidate runs; only baseline `unknown` obligations may change (`unknown -> sat|unsat|unknown`), and obligation-key set drift is fail-closed.
+- Verification-outcome capture for strict outcome-gate is fixture-scoped via thread-local context (`verification_outcomes::with_fixture_context`); untagged records are ignored so parallel test execution cannot pollute baseline/candidate obligation sets.
 - `prove(cond)` and `assert(cond)` are statement-only builtins with call syntax. `prove` is compile-time (fail-closed); `assert` is runtime and exits with code `242` on failure.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
 - Struct type invariants are optional and support both single and grouped forms with one keyword: `invariant [identifier]? "Human label" for (v: TypeName) { ... }` and `invariant for (v: TypeName) { [identifier]? "Human label" { ... } ... }` (display string required, identifier optional in both forms).
@@ -157,6 +164,8 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Build/test environments that hit prove obligations also require `z3`; debug SMT artifacts are emitted under `target/oac/prove/`.
 - `oac build` now runs a best-effort non-termination classifier on the generated QBE `main` function; when it proves a canonical while-loop is non-terminating, compilation fails early with the loop header label and proof reason.
 - Build/test linking now uses C compiler drivers (`cc`/`clang`/target-prefixed `*-gcc`) instead of Zig. Link step is fail-closed and supports `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS`.
+- LLVM runtime lowering lives in `crates/oac/src/llvm_backend.rs`, is consumed through `crates/oac/src/codegen_runtime.rs`, and runtime backend dispatch never changes verification backend selection.
+- Shared runtime data-layout constants/helpers for both QBE and LLVM backends live in `crates/oac/src/runtime_layout.rs`.
 - Linker-stage diagnostics now use `DiagnosticStage::Linker` and stable codes `OAC-LINK-001` / `OAC-LINK-002` (legacy `OAC-ZIG-*` names are removed).
 - Execution fixture snapshots in `qbe_backend` are based on program stdout even when the process exits with a non-zero code; runtime errors are reserved for spawn failures, timeouts, invalid UTF-8, or signal termination.
 - `crates/oac/src/qbe_backend.rs` execution fixtures compile/execute inside one worker-thread harness and snapshot assertions stay deterministic by sorting fixture paths/results before asserting; worker count defaults to serial (`1`) for stability and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>` for explicit parallel runs.

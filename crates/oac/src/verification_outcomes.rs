@@ -57,24 +57,11 @@ struct ActiveCollector {
 
 static COLLECTOR: OnceLock<Mutex<ActiveCollector>> = OnceLock::new();
 thread_local! {
-    static FIXTURE_CONTEXT: RefCell<Option<String>> = const { RefCell::new(None) };
+    static ACTIVE_FIXTURE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn collector() -> &'static Mutex<ActiveCollector> {
     COLLECTOR.get_or_init(|| Mutex::new(ActiveCollector::default()))
-}
-
-pub(crate) fn with_fixture_context<T>(fixture: &str, run: impl FnOnce() -> T) -> T {
-    FIXTURE_CONTEXT.with(|slot| {
-        let previous = slot.replace(Some(fixture.to_string()));
-        let output = run();
-        slot.replace(previous);
-        output
-    })
-}
-
-fn current_fixture_context() -> Option<String> {
-    FIXTURE_CONTEXT.with(|slot| slot.borrow().clone())
 }
 
 pub(crate) fn begin_outcome_collection(profile: VerificationProfile) -> anyhow::Result<()> {
@@ -89,6 +76,24 @@ pub(crate) fn begin_outcome_collection(profile: VerificationProfile) -> anyhow::
     Ok(())
 }
 
+pub(crate) fn with_fixture_context<T>(fixture: Option<&str>, run: impl FnOnce() -> T) -> T {
+    struct FixtureReset {
+        previous: Option<String>,
+    }
+
+    impl Drop for FixtureReset {
+        fn drop(&mut self) {
+            ACTIVE_FIXTURE.with(|slot| {
+                slot.replace(self.previous.take());
+            });
+        }
+    }
+
+    let previous = ACTIVE_FIXTURE.with(|slot| slot.replace(fixture.map(str::to_owned)));
+    let _reset = FixtureReset { previous };
+    run()
+}
+
 pub(crate) fn record_outcome(mut record: VerificationOutcomeRecord) {
     let Ok(mut guard) = collector().lock() else {
         return;
@@ -97,8 +102,12 @@ pub(crate) fn record_outcome(mut record: VerificationOutcomeRecord) {
         return;
     };
     if record.fixture.is_none() {
-        record.fixture = current_fixture_context()
-            .or_else(|| std::env::var("OAC_VERIFICATION_OUTCOME_FIXTURE").ok());
+        record.fixture = ACTIVE_FIXTURE.with(|slot| slot.borrow().clone());
+    }
+    // Bench outcome-gate capture is fixture-scoped; ignore untagged records so
+    // unrelated parallel test compilation does not pollute active collections.
+    if record.fixture.is_none() {
+        return;
     }
     guard.records.push(record);
 }

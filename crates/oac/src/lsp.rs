@@ -6,11 +6,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use url::Url;
 
-use crate::diagnostics::{diagnostic_from_anyhow, diagnostic_from_tokenizer_error};
-use crate::{
-    diagnostics::CompilerDiagnostic, diagnostics::DiagnosticStage, flat_imports, ir, parser,
-    tokenizer,
+use crate::diagnostics::{
+    diagnostic_from_anyhow, diagnostic_from_tokenizer_error, CompilerDiagnostic, DiagnosticStage,
 };
+use crate::{flat_imports, ir, parser, tokenizer};
 
 #[derive(Debug)]
 struct DocumentState {

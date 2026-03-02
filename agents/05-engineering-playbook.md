@@ -22,6 +22,8 @@ Act like a compiler engineer, not a text editor:
 - Prefer coherent, cleaner APIs over compatibility shims when the two conflict.
 - Do not change parser shape without corresponding IR/type-check updates.
 - Do not change IR assumptions without auditing backend lowering paths.
+- Runtime backend behavior and verification backend behavior are separate contracts: runtime codegen may use `qbe` or `llvm`, but prove/invariant/loop checks must remain QBE-based unless explicitly redesigned.
+- Keep LLVM runtime lowering as direct `ResolvedProgram` lowering; do not reintroduce production IR->QBE->LLVM translation coupling.
 - Preserve or explicitly migrate snapshot expectations.
 - Keep error messages actionable and stable where possible.
 - Route user-visible compiler errors through `crates/oac/src/diagnostics.rs` so CLI/LSP/snapshot behavior stays consistent (Ariadne plain output for deterministic tests).
@@ -53,6 +55,8 @@ Act like a compiler engineer, not a text editor:
 
 ### Backend/runtime behavior change
 - Inspect generated QBE text and runtime output snapshots.
+- For runtime backend changes, inspect generated backend artifacts (`ir.qbe`/`assembly.s` or `ir.ll`/`object.o`) and keep linker path fail-closed.
+- Preserve runtime parity semantics across backends (for example struct copy barriers, struct bytewise equality, and LLVM runtime-noop lowering for `prove(...)`).
 - Check interop assumptions with std `Clib.*` bindings in `crates/oac/src/std/std_clib.oa` (`namespace`-scoped `extern fun` declarations that resolve to `Clib__*` internal keys while preserving declared link symbols) and helper functions.
 
 ### Interop/bindings behavior change

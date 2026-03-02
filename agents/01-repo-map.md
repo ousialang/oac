@@ -16,6 +16,9 @@ Editor tooling in this repository:
 ## High-Value Paths
 
 - `crates/oac/src/main.rs`: CLI entrypoint and build pipeline orchestration.
+- `crates/oac/src/codegen_runtime.rs`: runtime backend dispatcher (`qbe`/`llvm`) and backend-tool invocation.
+- `crates/oac/src/llvm_backend.rs`: direct `ResolvedProgram` -> textual LLVM IR runtime backend (`--backend llvm`).
+- `crates/oac/src/runtime_layout.rs`: shared runtime byte-layout helpers/constants used by both QBE and LLVM backends.
 - `crates/oac/src/bench_prove.rs`: proving benchmark suite (`oac bench-prove`) with baseline/report handling.
 - `crates/oac/src/diagnostics.rs`: shared compiler diagnostic model and Ariadne rendering used by CLI and LSP.
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
@@ -74,6 +77,12 @@ Editor tooling in this repository:
 2. Tests and snapshots in `crates/oac/execution_tests` and `crates/oac/src/snapshots`
 3. CI in `.github/workflows/ci.yml`
 4. Markdown docs under `docs/`
+
+## Backend Scope Notes
+
+- Verification backend is always QBE (`prove`, struct invariants, loop classification).
+- Runtime backend is selectable on `oac build` / `oac test` via `--backend qbe|llvm` (default `qbe`).
+- LLVM runtime codegen lowers directly from resolved IR (not from compiled QBE module shape), while verification remains QBE-only.
 
 ## Autonomous Sync Rule
 

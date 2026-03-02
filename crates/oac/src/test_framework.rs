@@ -103,9 +103,8 @@ fn print_str_stmt(message: String) -> Statement {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parser, tokenizer};
-
     use super::{lower_tests_to_program, GENERATED_TEST_FUNCTION_PREFIX};
+    use crate::{parser, tokenizer};
 
     fn parse_source(source: &str) -> parser::Ast {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");

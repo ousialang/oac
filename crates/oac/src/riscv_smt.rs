@@ -3,10 +3,11 @@
 //! This module provides functionality to convert a RISC-V ELF file into an SMT expression
 //! that can be used to verify if the program returns 0 within 1000 cycles.
 
-use anyhow::{Context, Result};
-use goblin::elf::Elf;
 use std::fs;
 use std::path::Path;
+
+use anyhow::{Context, Result};
+use goblin::elf::Elf;
 
 /// Maximum number of cycles to simulate
 pub const MAX_CYCLES: u32 = 1000;
@@ -430,8 +431,9 @@ fn simulate_program_execution(elf_path: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     #[test]
     fn test_instruction_decoding() {
