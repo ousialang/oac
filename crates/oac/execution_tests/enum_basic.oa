@@ -3,6 +3,12 @@ enum Color {
 	Green,
 }
 
+impl Copy for Color {
+	fun copy(v: Color) -> Color {
+		return v
+	}
+}
+
 fun main() -> I32 {
 	c = Color.Red
 	d = Color.Green

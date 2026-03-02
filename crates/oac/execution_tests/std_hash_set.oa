@@ -1,5 +1,23 @@
 specialize IntSet = HashSet[I32]
 
+impl Copy for IntSet {
+	fun copy(v: IntSet) -> IntSet {
+		return v
+	}
+}
+
+impl Copy for IntSet__InsertResult {
+	fun copy(v: IntSet__InsertResult) -> IntSet__InsertResult {
+		return v
+	}
+}
+
+impl Copy for IntSet__RemoveResult {
+	fun copy(v: IntSet__RemoveResult) -> IntSet__RemoveResult {
+		return v
+	}
+}
+
 fun print_bool(v: Bool) -> I32 {
 	if v {
 		print(1)

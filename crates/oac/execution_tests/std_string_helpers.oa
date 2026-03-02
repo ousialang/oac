@@ -1,3 +1,9 @@
+impl Copy for String {
+	fun copy(v: String) -> String {
+		return v
+	}
+}
+
 fun print_bool(v: Bool) -> I32 {
 	if v {
 		print(1)

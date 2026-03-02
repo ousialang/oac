@@ -1,5 +1,11 @@
 specialize OptionI32 = Option[I32]
 
+impl Copy for OptionI32 {
+	fun copy(v: OptionI32) -> OptionI32 {
+		return v
+	}
+}
+
 fun main() -> I32 {
 	a = OptionI32.Some(7)
 	b = OptionI32.None

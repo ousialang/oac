@@ -1,6 +1,18 @@
 specialize OptionI32 = Option[I32]
 specialize ResultI32Bool = Result[I32, Bool]
 
+impl Copy for OptionI32 {
+	fun copy(v: OptionI32) -> OptionI32 {
+		return v
+	}
+}
+
+impl Copy for ResultI32Bool {
+	fun copy(v: ResultI32Bool) -> ResultI32Bool {
+		return v
+	}
+}
+
 fun print_bool(v: Bool) -> I32 {
 	if v {
 		print(1)

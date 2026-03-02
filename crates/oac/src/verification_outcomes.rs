@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -55,9 +56,25 @@ struct ActiveCollector {
 }
 
 static COLLECTOR: OnceLock<Mutex<ActiveCollector>> = OnceLock::new();
+thread_local! {
+    static FIXTURE_CONTEXT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
 
 fn collector() -> &'static Mutex<ActiveCollector> {
     COLLECTOR.get_or_init(|| Mutex::new(ActiveCollector::default()))
+}
+
+pub(crate) fn with_fixture_context<T>(fixture: &str, run: impl FnOnce() -> T) -> T {
+    FIXTURE_CONTEXT.with(|slot| {
+        let previous = slot.replace(Some(fixture.to_string()));
+        let output = run();
+        slot.replace(previous);
+        output
+    })
+}
+
+fn current_fixture_context() -> Option<String> {
+    FIXTURE_CONTEXT.with(|slot| slot.borrow().clone())
 }
 
 pub(crate) fn begin_outcome_collection(profile: VerificationProfile) -> anyhow::Result<()> {
@@ -80,7 +97,8 @@ pub(crate) fn record_outcome(mut record: VerificationOutcomeRecord) {
         return;
     };
     if record.fixture.is_none() {
-        record.fixture = std::env::var("OAC_VERIFICATION_OUTCOME_FIXTURE").ok();
+        record.fixture = current_fixture_context()
+            .or_else(|| std::env::var("OAC_VERIFICATION_OUTCOME_FIXTURE").ok());
     }
     guard.records.push(record);
 }

@@ -6,6 +6,62 @@ trait Eq {
 	fun equals(a: Self, b: Self) -> Bool
 }
 
+trait Copy {
+	fun copy(v: Ref[Self]) -> Self
+}
+
+trait Drop {
+	fun drop(v: Self) -> Void
+}
+
+impl Copy for Bool {
+	fun copy(v: Bool) -> Bool {
+		return v
+	}
+}
+
+impl Copy for U8 {
+	fun copy(v: U8) -> U8 {
+		return v
+	}
+}
+
+impl Copy for I32 {
+	fun copy(v: I32) -> I32 {
+		return v
+	}
+}
+
+impl Copy for I64 {
+	fun copy(v: I64) -> I64 {
+		return v
+	}
+}
+
+impl Copy for FP32 {
+	fun copy(v: FP32) -> FP32 {
+		return v
+	}
+}
+
+impl Copy for FP64 {
+	fun copy(v: FP64) -> FP64 {
+		return v
+	}
+}
+
+impl Copy for Char {
+	fun copy(v: Char) -> Char {
+		return v
+	}
+}
+
+impl Copy for AsciiChar {
+	fun copy(v: AsciiChar) -> AsciiChar {
+		return v
+	}
+}
+
 impl Hash for I32 {
 	fun hash(v: I32) -> I32 {
 		return v

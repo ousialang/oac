@@ -1,5 +1,23 @@
 specialize IntVec = Vec[I32]
 
+impl Copy for IntVec {
+	fun copy(v: IntVec) -> IntVec {
+		return v
+	}
+}
+
+impl Copy for IntVec__SetResult {
+	fun copy(v: IntVec__SetResult) -> IntVec__SetResult {
+		return v
+	}
+}
+
+impl Copy for IntVec__PopValue {
+	fun copy(v: IntVec__PopValue) -> IntVec__PopValue {
+		return v
+	}
+}
+
 fun print_bool(v: Bool) -> I32 {
 	if v {
 		print(1)

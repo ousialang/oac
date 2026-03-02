@@ -121,6 +121,11 @@ Important enforced invariants include:
 - namespace call lowering is also used for generic-specialized helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
 - trait calls are v1 namespaced calls (`Trait.method(value, ...)`) that type-check against trait signatures and resolve to concrete impl function names (`Trait__Type__method`)
 - trait coherence is enforced globally: duplicate `impl Trait for Type` is rejected, and missing impls for generic bounds are rejected at specialization time
+- special lifecycle-trait signatures are enforced: `Copy.copy(Ref[Self]) -> Self` and `Drop.drop(Self) -> Void`
+- ownership analysis/rewriting runs during resolve for user runtime functions:
+  - move-only default for non-`Copy` locals (use-after-move diagnostics)
+  - implicit-copy eligibility for types with concrete `Copy` impls
+  - inserted `Drop.drop(...)` statements at reassignment overwrite points and lexical scope exits
 - built-in `U8`/`FP32`/`FP64` exist alongside integer primitives; unsuffixed decimal literals type-check as `FP32`, and `f64`-suffixed decimal literals type-check as `FP64`
 - arithmetic/comparison on numerics requires matching widths/types (`U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - `U8` comparisons/codegen are unsigned (`ult/ule/ugt/uge`), and `U8` division lowers to unsigned division (`udiv`)
@@ -142,7 +147,7 @@ Important enforced invariants include:
 - resolver builtins also include pointer-memory helpers `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, `store_u8(addr: PtrInt, value: U8) -> Void`, `store_i32(addr: PtrInt, value: I32) -> Void`, `store_i64(addr: PtrInt, value: I64) -> Void`, and `store_bool(addr: PtrInt, value: Bool) -> Void`
 - `extern fun` declarations are signature-only (`extern` cannot be `comptime` and extern functions must not have bodies)
 - v2 ABI restriction: `extern fun` signatures cannot use struct parameter or return types; use manual `PtrInt` wrappers at C ABI boundaries when struct-like payloads are needed
-- `Void` is restricted in v1: function parameters cannot be `Void`, and only `extern fun` may return `Void`
+- `Void` is restricted in v1: function parameters cannot be `Void`, but both extern and non-extern functions may return `Void`
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`
@@ -162,7 +167,9 @@ Important enforced invariants include:
 - Includes builtins and interop helpers (for example integer ops, print, string utilities) plus user/std-declared extern call targets.
 - Extern calls emit symbol names from signature metadata; namespace externs (for example `Clib.malloc`) therefore call raw declared extern symbols (for example `malloc`) while keeping namespaced lookup keys internal.
 - Struct literals allocate zero-initialized storage via `calloc` before field stores, so padding bytes are deterministic for bytewise equality.
-- Struct assignment, struct call arguments, and struct returns insert copy barriers (`calloc` + `memcpy`) to enforce by-value byte-copy semantics at language boundaries.
+- Struct assignment/call/return no longer inject unconditional clone barriers.
+- Value reads lower through static `Copy.copy(...)` calls only when the resolved concrete type implements `Copy`; codegen passes either the value directly (legacy by-value impl signatures) or a synthesized temporary `Ref` wrapper (ref-style impl signatures).
+- Resolver-inserted `Drop.drop(...)` statements lower as ordinary `Void` call statements in codegen.
 - Struct `==` / `!=` lower through `memcmp(lhs, rhs, size)` and compare the result with zero.
 - Handles expression lowering and control-flow generation.
 - Trait calls are lowered with static dispatch only (resolved concrete impl symbols), with no runtime dictionaries or vtables.

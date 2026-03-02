@@ -8,6 +8,18 @@ struct PtrBox {
 	tag: I32,
 }
 
+impl Copy for Pair {
+	fun copy(v: Pair) -> Pair {
+		return v
+	}
+}
+
+impl Copy for PtrBox {
+	fun copy(v: PtrBox) -> PtrBox {
+		return v
+	}
+}
+
 fun main() -> I32 {
 	x = Pair struct { a: 7, b: 9 }
 	y = Pair struct { a: 7, b: 9 }

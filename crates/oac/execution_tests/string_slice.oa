@@ -1,3 +1,9 @@
+impl Copy for String {
+	fun copy(v: String) -> String {
+		return v
+	}
+}
+
 fun main() -> I32 {
 	s = "abcdef"
 	t = slice(s, 1, 3)
