@@ -1,0 +1,15 @@
+struct Counter {
+	value: I32,
+}
+
+invariant non_negative "counter value is non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+invariant "pair counters stay non-negative" for (lhs: Counter, rhs: Counter) {
+	return lhs.value >= 0 && rhs.value >= 0
+}
+
+fun main() -> I32 {
+	return 0
+}

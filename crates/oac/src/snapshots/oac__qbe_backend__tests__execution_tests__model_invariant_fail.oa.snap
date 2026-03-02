@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: snapshot_content
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+[OAC-MINV-001] Error: model invariant verification failed: model invariant verification failed (SAT counterexamples found):
+__model__invariant__anon_0 (function=__model__invariant__anon_0, invariant="strictly increasing pair", qbe_artifact=site___model__invariant__anon_0.qbe, smt_artifact=site___model__invariant__anon_0.smt2)

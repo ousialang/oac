@@ -1,0 +1,7 @@
+invariant "strictly increasing pair" for (lhs: I32, rhs: I32) {
+	return lhs < rhs
+}
+
+fun main() -> I32 {
+	return 0
+}

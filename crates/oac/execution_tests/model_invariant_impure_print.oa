@@ -1,0 +1,8 @@
+invariant "pair equality with side effect" for (lhs: I32, rhs: I32) {
+	print(lhs)
+	return lhs == rhs
+}
+
+fun main() -> I32 {
+	return 0
+}

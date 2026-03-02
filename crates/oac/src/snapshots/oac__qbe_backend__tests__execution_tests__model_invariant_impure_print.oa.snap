@@ -1,0 +1,8 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: snapshot_content
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+[OAC-RESOLVE-001] Error: failed to resolve/type-check program: model invariant "pair equality with side effect" must be pure: function __model__invariant__anon_0 calls side-effect builtin print

@@ -9,6 +9,7 @@ mod invariant_metadata;
 mod ir;
 mod llvm_backend;
 mod lsp;
+mod model_invariants;
 mod parser;
 mod prove;
 mod qbe_backend;
@@ -567,6 +568,22 @@ pub(crate) fn compile_ast_to_executable_with_profile(
             DiagnosticStage::StructInvariant,
             "OAC-INV-001",
             "struct invariant verification failed",
+            err,
+            source_path,
+            source_text,
+        )
+    })?;
+    model_invariants::verify_model_invariants_with_qbe_with_profile(
+        &ir,
+        &qbe_ir,
+        target_dir,
+        verification_profile,
+    )
+    .map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::ModelInvariant,
+            "OAC-MINV-001",
+            "model invariant verification failed",
             err,
             source_path,
             source_text,

@@ -2,6 +2,16 @@ struct Char {
 	code: I32,
 }
 
+invariant from_code_roundtrip "Char.from_code followed by Char.code must preserve input" for (x: I32, y: I32) {
+	return Char.code(Char.from_code(x)) == x && Char.code(Char.from_code(y)) == y
+}
+
+invariant equals_matches_code_equality "Char.equals must agree with underlying code equality" for (x: I32, y: I32) {
+	a = Char.from_code(x)
+	b = Char.from_code(y)
+	return Char.equals(a, b) == (x == y)
+}
+
 namespace Char {
 	fun from_code(code: I32) -> Char {
 		return Char struct {

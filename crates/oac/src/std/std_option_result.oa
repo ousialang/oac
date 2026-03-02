@@ -4,6 +4,11 @@ generic Option[T] {
 		Some(T),
 	}
 
+	invariant "Option.none must agree with presence predicates" for (a: T, b: T) {
+		none_value = none()
+		return is_none(none_value) && !is_some(none_value)
+	}
+
 	fun none() -> Option {
 		return Option.None
 	}

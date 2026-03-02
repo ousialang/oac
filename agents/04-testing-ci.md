@@ -7,7 +7,7 @@ Defined in `.github/workflows/ci.yml`:
   - `check`: `cargo check --all-targets --all-features`
   - `nextest`: `cargo nextest run --all-targets --all-features`
 - backend dependency provisioning in the `nextest` job:
-  - `z3` (required for struct invariant/prove obligations)
+  - `z3` (required for prove/struct-invariant/model-invariant obligations)
   - `qbe` (required for backend assembly generation in execution-style tests; CI builds/installs upstream `qbe-1.2` from `https://c9x.me/compile/release/`)
   - Zig via `goto-bus-stop/setup-zig@v2` (pinned to `0.13.0`, used as `zig cc`)
 - `cargo-nextest` installation in CI via `taiki-e/install-action@nextest`
@@ -112,7 +112,7 @@ Key tests:
 - `crates/oac/src/tokenizer.rs` also has a unit regression for FP32 decimal tokenization (`TokenData::Float`).
 - `crates/oac/src/tokenizer.rs` also covers `f64` suffix tokenization (`Float` token followed by `Word(\"f64\")`).
 - `crates/oac/src/tokenizer.rs` includes EOF word-lexing regressions to prevent LSP crash loops on partial files (`tokenizes_identifier_at_eof_without_panicking`, `tokenizes_underscore_identifier_at_eof_without_panicking`).
-- `crates/oac/src/parser.rs` tests assert generic bracket syntax parsing (including multi-parameter inline bounds), nested generic type arguments, local generic-body specialization parsing (`specialize LocalAlias = Name[...]`), trait/impl parsing, hard-cut legacy `template`/`instantiate` rejection with migration hints, struct-invariant declaration syntax for both single and grouped forms (`invariant [id]? "label" for (...)` and `invariant for (...) { ... }`, including inside generics), mandatory display labels, and optional identifiers.
+- `crates/oac/src/parser.rs` tests assert generic bracket syntax parsing (including multi-parameter inline bounds), nested generic type arguments, local generic-body specialization parsing (`specialize LocalAlias = Name[...]`), trait/impl parsing, hard-cut legacy `template`/`instantiate` rejection with migration hints, invariant declaration syntax for both single and grouped forms (`invariant [id]? "label" for (...)` and `invariant for (...) { ... }`, including inside generics), multi-parameter invariant parsing, mandatory display labels, and optional identifiers.
 - `crates/oac/src/parser.rs` also includes top-level test declaration parsing coverage (`test "..." { ... }`).
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
 - `crates/oac/src/parser.rs` also covers top-level `extern fun` parsing plus namespace-scoped extern parsing (`namespace Name { extern fun ... }`) including internal-name mangling and preserved extern symbol names.
@@ -137,6 +137,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also includes `U8` coverage for accepted same-type arithmetic/comparison and rejection of mixed `U8`/`I32` arithmetic.
 - `crates/oac/src/ir.rs` also includes resolve coverage for builtin pointer-memory helpers (`load_u8`, `load_i32`, `load_i64`, `load_bool`, `store_u8`, `store_i32`, `store_i64`, `store_bool`) with `PtrInt` addresses.
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
+- `crates/oac/src/ir.rs` also includes model-invariant resolve coverage: synthesis to `__model__invariant__*`, generic parameter rewriting across all invariant parameters, unary non-struct rejection for arity-1 invariants, identifier collision checks, and strict purity checks (direct/transitive extern calls, pointer-memory builtins, side-effect builtins, and `prove`/`assert` statements).
 - `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` and `qbe::Module` fixtures) cover CHC/fixedpoint encoding shape (`HORN` for non-FP modules and `ALL` for FP32/FP64 modules, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, FP32/FP64 proving subset modeling (`copy`/`add`/`sub`/`mul`/`div`, ordered/unordered compares, `phi`, FP conversion ops `exts`/`truncd`/`stosi`/`stoui`/`dtosi`/`dtoui`/`swtof`/`uwtof`/`sltof`/`ultof`, FP32/FP64 `loads`/`stores`), interprocedural user-call summaries (including self-recursive user calls), argument-invariant precondition assumptions, fail-closed rejection for invalid conversion assignment-type combinations, and strict rejection of unsupported operations.
 - `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`, bounded `strlen`/`strcmp`, bounded `strcpy`, and constrained `open`/`read`/`write`/`close` return modeling) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
@@ -152,13 +153,15 @@ Key tests:
 - `crates/oac/src/invariant_metadata.rs` tests cover multi-binding discovery per struct and argument-assumption cross-product expansion when parameter types carry multiple invariants.
 - `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, grouped invariant declarations, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, per-`(call-site, invariant)` obligation expansion, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), unknown fail-closed diagnostics with attempt ladders, and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding, modeled string/io CLib calls in checker encoding, and fail-closed unknown external calls).
 - `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving, including multi-invariant argument preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), no-op behavior when no prove sites exist, unknown fail-closed diagnostics with attempt ladders, and checker-encoding coverage for modeled string/io CLib calls.
-- Prove and struct-invariant solving keep baseline retries at `10s` then `30s`; candidate profile may add a third large-obligation attempt (controlled by `OAC_Z3_LARGE_OBLIGATION_BYTES` and `OAC_Z3_TIMEOUT_LARGE_OBLIGATION_SECS`) while keeping `sat`/`unsat` interpretation unchanged.
+- `crates/oac/src/model_invariants.rs` verifies global model-invariant checking behavior, including non-reachability-from-`main` coverage, unknown fail-closed attempt ladders, struct-argument invariant-entry assumptions, and recursion-cycle rejection when argument-invariant edges participate in SCCs.
+- Prove, struct-invariant, and model-invariant solving keep baseline retries at `10s` then `30s`; candidate profile may add a third large-obligation attempt (controlled by `OAC_Z3_LARGE_OBLIGATION_BYTES` and `OAC_Z3_TIMEOUT_LARGE_OBLIGATION_SECS`) while keeping `sat`/`unsat` interpretation unchanged.
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
 - Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags (including `--strict-outcome-gate`).
 - `crates/oac/src/main.rs` tests now also cover runtime backend CLI/linker plumbing (`--backend`, `--qbe-arch`, `--target`, positional-arch removal, and backend option validation).
 - `crates/oac/src/llvm_backend.rs` tests cover direct resolved-IR compile smoke, struct copy-barrier/equality lowering (`calloc`/`memcpy`/`memcmp`), `assert` exit-code lowering (`242`), runtime-noop `prove` lowering, extern symbol mapping, and namespace-call mangling behavior.
+- Build-stage diagnostics now include model-invariant failures at `DiagnosticStage::ModelInvariant` with code `OAC-MINV-001` (in addition to existing `OAC-PROVE-001` / `OAC-INV-001` verification diagnostics).
 - `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, deterministic `--update-baseline` rewrites (using a mocked fixture runner), and strict outcome-gate execution on the quick corpus.
 - Strict outcome-gate capture tags records with fixture-scoped thread-local context (`verification_outcomes::with_fixture_context`); untagged verification records are intentionally ignored to keep baseline/candidate obligation sets deterministic under parallel test execution.
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
@@ -188,6 +191,11 @@ Key tests:
   - `struct_invariant_fp32_pass.oa`
 - Execution fixtures also include FP64 struct-invariant proving coverage:
   - `struct_invariant_fp64_pass.oa`
+- Execution fixtures also include model-invariant coverage:
+  - `model_invariant_pass.oa`
+  - `model_invariant_fail.oa`
+  - `model_invariant_impure_print.oa`
+  - `model_invariant_struct_args_pass.oa`
 - Execution fixtures also include namespace call coverage:
   - `namespace_basic.oa`
 - Execution fixtures also include large-string length regression coverage:
@@ -232,7 +240,7 @@ Do not commit `.snap.new` files; accept or delete them before finishing.
 - `qbe`
 - `clang` (required when runtime backend is `llvm`)
 - C compiler/linker driver (`cc`, `clang`, or target-prefixed `*-gcc`)
-- `z3` (required when struct invariant or prove obligations are present)
+- `z3` (required when prove, struct-invariant, or model-invariant obligations are present)
 
 `oac` links assembly through a fail-closed linker attempt sequence and supports env overrides:
 - `OAC_CC` to force a single explicit linker command (no default fallbacks)
@@ -251,7 +259,7 @@ Missing tools can cause test/build failures unrelated to Rust logic.
 ## Debugging Flow for Compiler Regressions
 
 1. Reproduce with a minimal `.oa` fixture in `crates/oac/execution_tests`.
-2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and checker artifacts (`target/oac/prove/site_*.qbe`, `site_*.smt2`, `target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory checker modules (entry checker + reachable user callees).
+2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and checker artifacts (`target/oac/prove/site_*.qbe`, `site_*.smt2`, `target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`, `target/oac/model_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory checker modules (entry checker + reachable user callees).
 3. Isolate stage failure: tokenize, parse, resolve, codegen, or external tool invocation.
 4. Add/adjust snapshot to encode fixed behavior.
 5. Run full test suite (prefer `cargo nextest run`; use `cargo test` fallback only if nextest is unavailable).

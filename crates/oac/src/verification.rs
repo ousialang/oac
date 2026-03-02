@@ -6,6 +6,7 @@ use crate::ir::ResolvedProgram;
 pub enum VerificationError {
     Prove(anyhow::Error),
     StructInvariant(anyhow::Error),
+    ModelInvariant(anyhow::Error),
 }
 
 pub fn verify_all_obligations_with_qbe(
@@ -17,5 +18,7 @@ pub fn verify_all_obligations_with_qbe(
         .map_err(VerificationError::Prove)?;
     crate::struct_invariants::verify_struct_invariants_with_qbe(program, qbe_module, target_dir)
         .map_err(VerificationError::StructInvariant)?;
+    crate::model_invariants::verify_model_invariants_with_qbe(program, qbe_module, target_dir)
+        .map_err(VerificationError::ModelInvariant)?;
     Ok(())
 }

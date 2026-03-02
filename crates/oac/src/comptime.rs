@@ -810,10 +810,10 @@ fn evaluate_call(
             declset.invariants.push(parser::StructInvariantDecl {
                 identifier: None,
                 display_name,
-                parameter: parser::Parameter {
+                parameters: vec![parser::Parameter {
                     name: "v".to_string(),
                     ty: target_type.to_string(),
-                },
+                }],
                 body: vec![Statement::Return {
                     expr: Expression::BinOp(
                         Op::Gt,
@@ -1069,10 +1069,9 @@ comptime apply make_positive_second(Counter)
                 parser::TypeDefDecl::Struct(def) if def.name == "CounterPositiveSecond"
             )
         }));
-        assert!(ast
-            .invariants
-            .iter()
-            .any(|inv| inv.parameter.ty == "CounterPositiveSecond"));
+        assert!(ast.invariants.iter().any(
+            |inv| inv.parameters.len() == 1 && inv.parameters[0].ty == "CounterPositiveSecond"
+        ));
     }
 
     #[test]

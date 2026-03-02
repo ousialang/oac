@@ -16,6 +16,19 @@ use crate::symbol_keys::{
 const LEGACY_INVARIANT_PREFIX: &str = "__struct__";
 const LEGACY_INVARIANT_SUFFIX: &str = "__invariant";
 const LEGACY_INVARIANT_KEY: &str = "legacy";
+const MODEL_INVARIANT_PREFIX: &str = "__model__invariant__";
+const MODEL_INVARIANT_SIDE_EFFECT_BUILTINS: [&str; 10] = [
+    "load_u8",
+    "load_i32",
+    "load_i64",
+    "load_bool",
+    "store_u8",
+    "store_i32",
+    "store_i64",
+    "store_bool",
+    "print",
+    "print_str",
+];
 const RESERVED_BUILTIN_FUNCTION_NAMES: [&str; 2] = ["prove", "assert"];
 const SEMANTIC_BUILTIN_TYPES: [&str; 6] = [
     "Type",
@@ -84,6 +97,7 @@ pub struct ResolvedProgram {
     pub trait_method_signatures: HashMap<String, TraitMethodSignature>,
     pub trait_impl_methods: HashMap<String, String>,
     pub struct_invariants: HashMap<String, Vec<StructInvariantDefinition>>,
+    pub model_invariants: Vec<ModelInvariantDefinition>,
     pub comptime_function_definitions: HashMap<String, FunctionDefinition>,
     pub comptime_apply_order: Vec<parser::ComptimeApply>,
     pub semantic_expr_metadata: HashMap<String, SemanticExprMetadata>,
@@ -108,6 +122,14 @@ pub struct SemanticExprMetadata {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct StructInvariantDefinition {
     pub struct_name: String,
+    pub function_name: String,
+    pub key: String,
+    pub identifier: Option<String>,
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ModelInvariantDefinition {
     pub function_name: String,
     pub key: String,
     pub identifier: Option<String>,
@@ -1052,6 +1074,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         trait_impl_methods,
         type_definitions: HashMap::new(),
         struct_invariants: HashMap::new(),
+        model_invariants: Vec::new(),
         comptime_function_definitions: HashMap::new(),
         comptime_apply_order: ast.comptime_applies.clone(),
         semantic_expr_metadata: HashMap::new(),
@@ -1559,6 +1582,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         &program.type_definitions,
         &ast.top_level_functions,
         &mut program.struct_invariants,
+        &mut program.model_invariants,
     )?;
     all_functions.extend(synthesized_invariants);
 
@@ -1694,6 +1718,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     reject_runtime_semantic_builtin_usage(&program)?;
+    reject_model_invariant_impurity(&program)?;
     program.semantic_expr_metadata = index_semantic_expression_metadata(&program);
 
     if !program.function_definitions.contains_key("main") {
@@ -1822,6 +1847,174 @@ fn reject_runtime_semantic_builtin_usage(program: &ResolvedProgram) -> anyhow::R
     Ok(())
 }
 
+fn reject_model_invariant_impurity(program: &ResolvedProgram) -> anyhow::Result<()> {
+    for model_invariant in &program.model_invariants {
+        let mut visited = HashSet::new();
+        let mut queue = vec![model_invariant.function_name.clone()];
+        while let Some(function_name) = queue.pop() {
+            if !visited.insert(function_name.clone()) {
+                continue;
+            }
+
+            let function = program
+                .function_definitions
+                .get(&function_name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("missing function definition for {}", function_name)
+                })?;
+            for statement in &function.body {
+                reject_model_invariant_impure_statement(
+                    statement,
+                    &function_name,
+                    model_invariant,
+                )?;
+                reject_model_invariant_trait_static_calls(
+                    statement,
+                    &function_name,
+                    model_invariant,
+                    &program.trait_method_signatures,
+                )?;
+
+                let mut calls = Vec::new();
+                collect_called_functions_in_statement(statement, program, &mut calls);
+                for call in calls {
+                    if MODEL_INVARIANT_SIDE_EFFECT_BUILTINS.contains(&call.as_str()) {
+                        return Err(anyhow::anyhow!(
+                            "model invariant \"{}\" must be pure: function {} calls side-effect builtin {}",
+                            render_model_invariant_label(model_invariant),
+                            function_name,
+                            call
+                        ));
+                    }
+
+                    let signature = program.function_sigs.get(&call).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "model invariant \"{}\" must be pure: function {} calls unknown function {}",
+                            render_model_invariant_label(model_invariant),
+                            function_name,
+                            call
+                        )
+                    })?;
+                    if signature.extern_symbol_name.is_some() {
+                        return Err(anyhow::anyhow!(
+                            "model invariant \"{}\" must be pure: function {} calls extern function {}",
+                            render_model_invariant_label(model_invariant),
+                            function_name,
+                            call
+                        ));
+                    }
+
+                    if program.function_definitions.contains_key(&call) {
+                        queue.push(call);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn render_model_invariant_label(model_invariant: &ModelInvariantDefinition) -> String {
+    if let Some(identifier) = &model_invariant.identifier {
+        format!("{} (id={})", model_invariant.display_name, identifier)
+    } else {
+        model_invariant.display_name.clone()
+    }
+}
+
+fn reject_model_invariant_impure_statement(
+    statement: &parser::Statement,
+    function_name: &str,
+    model_invariant: &ModelInvariantDefinition,
+) -> anyhow::Result<()> {
+    match statement {
+        parser::Statement::Prove { .. } => Err(anyhow::anyhow!(
+            "model invariant \"{}\" must be pure: function {} contains prove(...) statement",
+            render_model_invariant_label(model_invariant),
+            function_name
+        )),
+        parser::Statement::Assert { .. } => Err(anyhow::anyhow!(
+            "model invariant \"{}\" must be pure: function {} contains assert(...) statement",
+            render_model_invariant_label(model_invariant),
+            function_name
+        )),
+        parser::Statement::Conditional {
+            body, else_body, ..
+        } => {
+            for nested in body {
+                reject_model_invariant_impure_statement(nested, function_name, model_invariant)?;
+            }
+            if let Some(else_body) = else_body {
+                for nested in else_body {
+                    reject_model_invariant_impure_statement(
+                        nested,
+                        function_name,
+                        model_invariant,
+                    )?;
+                }
+            }
+            Ok(())
+        }
+        parser::Statement::While { body, .. } => {
+            for nested in body {
+                reject_model_invariant_impure_statement(nested, function_name, model_invariant)?;
+            }
+            Ok(())
+        }
+        parser::Statement::Match { arms, .. } => {
+            for arm in arms {
+                for nested in &arm.body {
+                    reject_model_invariant_impure_statement(
+                        nested,
+                        function_name,
+                        model_invariant,
+                    )?;
+                }
+            }
+            Ok(())
+        }
+        parser::Statement::StructDef { .. }
+        | parser::Statement::Assign { .. }
+        | parser::Statement::Return { .. }
+        | parser::Statement::Expression { .. } => Ok(()),
+    }
+}
+
+fn reject_model_invariant_trait_static_calls(
+    statement: &parser::Statement,
+    function_name: &str,
+    model_invariant: &ModelInvariantDefinition,
+    trait_method_signatures: &HashMap<String, TraitMethodSignature>,
+) -> anyhow::Result<()> {
+    let mut trait_call = None::<String>;
+    ast_walk::walk_statement_expressions(statement, "", AstPathStyle::Ir, &mut |_path, expr| {
+        let parser::Expression::PostfixCall { callee, .. } = expr else {
+            return;
+        };
+        let parser::Expression::FieldAccess {
+            struct_variable,
+            field,
+        } = callee.as_ref()
+        else {
+            return;
+        };
+        if trait_method_signatures.contains_key(&trait_method_key(struct_variable, field)) {
+            trait_call = Some(format!("{struct_variable}.{field}"));
+        }
+    });
+
+    if let Some(trait_call) = trait_call {
+        return Err(anyhow::anyhow!(
+            "model invariant \"{}\" must be pure: function {} uses trait static call {} which is unsupported by purity policy",
+            render_model_invariant_label(model_invariant),
+            function_name,
+            trait_call
+        ));
+    }
+    Ok(())
+}
+
 fn collect_called_functions_in_statement(
     statement: &parser::Statement,
     program: &ResolvedProgram,
@@ -1921,87 +2114,144 @@ fn generated_invariant_function_name(struct_name: &str, key: &str) -> String {
     )
 }
 
+fn generated_model_invariant_function_name(key: &str) -> String {
+    format!("{MODEL_INVARIANT_PREFIX}{key}")
+}
+
 fn synthesize_invariant_functions(
     invariants: &[parser::StructInvariantDecl],
     type_definitions: &HashMap<String, TypeDef>,
     existing_functions: &[parser::Function],
     out_struct_invariants: &mut HashMap<String, Vec<StructInvariantDefinition>>,
+    out_model_invariants: &mut Vec<ModelInvariantDefinition>,
 ) -> anyhow::Result<Vec<parser::Function>> {
     let mut out = Vec::new();
-    let mut seen_explicit_identifiers = HashMap::<String, HashSet<String>>::new();
-    let mut next_anonymous_ordinal = HashMap::<String, usize>::new();
+    let mut seen_struct_explicit_identifiers = HashMap::<String, HashSet<String>>::new();
+    let mut seen_model_explicit_identifiers = HashSet::<String>::new();
+    let mut next_struct_anonymous_ordinal = HashMap::<String, usize>::new();
+    let mut next_model_anonymous_ordinal = 0usize;
+    let mut seen_model_keys = HashSet::<String>::new();
     let mut generated_function_names = HashSet::<String>::new();
 
     for invariant in invariants {
-        let struct_name = invariant.parameter.ty.clone();
-        let type_def = type_definitions
-            .get(&struct_name)
-            .ok_or_else(|| anyhow::anyhow!("invariant targets unknown type {}", struct_name))?;
-        if !matches!(type_def, TypeDef::Struct(_)) {
+        if invariant.parameters.is_empty() {
             return Err(anyhow::anyhow!(
-                "invariant \"{}\" must target a struct type, but {} is not a struct",
-                invariant.display_name,
-                struct_name
-            ));
-        }
-
-        let key = if let Some(identifier) = &invariant.identifier {
-            let seen = seen_explicit_identifiers
-                .entry(struct_name.clone())
-                .or_default();
-            if !seen.insert(identifier.clone()) {
-                return Err(anyhow::anyhow!(
-                    "struct {} has duplicate invariant identifier `{}`",
-                    struct_name,
-                    identifier
-                ));
-            }
-            sanitize_invariant_key(identifier)
-        } else {
-            let next = next_anonymous_ordinal
-                .entry(struct_name.clone())
-                .or_insert(0);
-            let key = format!("anon_{}", *next);
-            *next += 1;
-            key
-        };
-
-        let function_name = generated_invariant_function_name(&struct_name, &key);
-        if existing_functions.iter().any(|f| f.name == function_name)
-            || !generated_function_names.insert(function_name.clone())
-        {
-            return Err(anyhow::anyhow!(
-                "invariant \"{}\" for {} conflicts with existing function {}",
-                invariant.display_name,
-                struct_name,
-                function_name
-            ));
-        }
-
-        let entry = out_struct_invariants
-            .entry(struct_name.clone())
-            .or_default();
-        if let Some(existing) = entry.iter().find(|existing| existing.key == key) {
-            return Err(anyhow::anyhow!(
-                "struct {} has duplicate invariant key `{}`: \"{}\" and \"{}\"",
-                struct_name,
-                key,
-                existing.display_name,
+                "invariant \"{}\" requires at least one parameter",
                 invariant.display_name
             ));
         }
-        entry.push(StructInvariantDefinition {
-            struct_name: struct_name.clone(),
-            function_name: function_name.clone(),
-            key,
-            identifier: invariant.identifier.clone(),
-            display_name: invariant.display_name.clone(),
-        });
+
+        let key;
+        let function_name;
+        if invariant.parameters.len() == 1 {
+            let struct_name = invariant.parameters[0].ty.clone();
+            let type_def = type_definitions
+                .get(&struct_name)
+                .ok_or_else(|| anyhow::anyhow!("invariant targets unknown type {}", struct_name))?;
+            if !matches!(type_def, TypeDef::Struct(_)) {
+                return Err(anyhow::anyhow!(
+                    "invariant \"{}\" must target a struct type, but {} is not a struct",
+                    invariant.display_name,
+                    struct_name
+                ));
+            }
+
+            key = if let Some(identifier) = &invariant.identifier {
+                let seen = seen_struct_explicit_identifiers
+                    .entry(struct_name.clone())
+                    .or_default();
+                if !seen.insert(identifier.clone()) {
+                    return Err(anyhow::anyhow!(
+                        "struct {} has duplicate invariant identifier `{}`",
+                        struct_name,
+                        identifier
+                    ));
+                }
+                sanitize_invariant_key(identifier)
+            } else {
+                let next = next_struct_anonymous_ordinal
+                    .entry(struct_name.clone())
+                    .or_insert(0);
+                let key = format!("anon_{}", *next);
+                *next += 1;
+                key
+            };
+
+            function_name = generated_invariant_function_name(&struct_name, &key);
+            if existing_functions.iter().any(|f| f.name == function_name)
+                || !generated_function_names.insert(function_name.clone())
+            {
+                return Err(anyhow::anyhow!(
+                    "invariant \"{}\" for {} conflicts with existing function {}",
+                    invariant.display_name,
+                    struct_name,
+                    function_name
+                ));
+            }
+
+            let entry = out_struct_invariants
+                .entry(struct_name.clone())
+                .or_default();
+            if let Some(existing) = entry.iter().find(|existing| existing.key == key) {
+                return Err(anyhow::anyhow!(
+                    "struct {} has duplicate invariant key `{}`: \"{}\" and \"{}\"",
+                    struct_name,
+                    key,
+                    existing.display_name,
+                    invariant.display_name
+                ));
+            }
+            entry.push(StructInvariantDefinition {
+                struct_name,
+                function_name: function_name.clone(),
+                key: key.clone(),
+                identifier: invariant.identifier.clone(),
+                display_name: invariant.display_name.clone(),
+            });
+        } else {
+            key = if let Some(identifier) = &invariant.identifier {
+                if !seen_model_explicit_identifiers.insert(identifier.clone()) {
+                    return Err(anyhow::anyhow!(
+                        "model invariants have duplicate identifier `{}`",
+                        identifier
+                    ));
+                }
+                sanitize_invariant_key(identifier)
+            } else {
+                let key = format!("anon_{}", next_model_anonymous_ordinal);
+                next_model_anonymous_ordinal += 1;
+                key
+            };
+            if !seen_model_keys.insert(key.clone()) {
+                return Err(anyhow::anyhow!(
+                    "model invariants have duplicate key `{}`",
+                    key
+                ));
+            }
+
+            function_name = generated_model_invariant_function_name(&key);
+            if existing_functions.iter().any(|f| f.name == function_name)
+                || !generated_function_names.insert(function_name.clone())
+            {
+                return Err(anyhow::anyhow!(
+                    "model invariant \"{}\" conflicts with existing function {}",
+                    invariant.display_name,
+                    function_name
+                ));
+            }
+
+            out_model_invariants.push(ModelInvariantDefinition {
+                function_name: function_name.clone(),
+                key: key.clone(),
+                identifier: invariant.identifier.clone(),
+                display_name: invariant.display_name.clone(),
+            });
+        }
 
         out.push(parser::Function {
             name: function_name,
             extern_symbol_name: None,
-            parameters: vec![invariant.parameter.clone()],
+            parameters: invariant.parameters.clone(),
             body: invariant.body.clone(),
             return_type: "Bool".to_string(),
             is_comptime: false,
@@ -2967,14 +3217,18 @@ fn expand_one_generic_specialization(
         generated_invariants.push(parser::StructInvariantDecl {
             identifier: invariant.identifier.clone(),
             display_name: invariant.display_name.clone(),
-            parameter: parser::Parameter {
-                name: invariant.parameter.name.clone(),
-                ty: rewrite_type_ref(
-                    &invariant.parameter.ty,
-                    &type_substitution_map,
-                    &local_type_name_map,
-                ),
-            },
+            parameters: invariant
+                .parameters
+                .iter()
+                .map(|parameter| parser::Parameter {
+                    name: parameter.name.clone(),
+                    ty: rewrite_type_ref(
+                        &parameter.ty,
+                        &type_substitution_map,
+                        &local_type_name_map,
+                    ),
+                })
+                .collect(),
             body: invariant
                 .body
                 .iter()
@@ -4819,6 +5073,282 @@ fun main() -> I32 {
         assert!(err
             .to_string()
             .contains("duplicate invariant identifier `first`"));
+    }
+
+    #[test]
+    fn resolve_synthesizes_model_invariant_function_from_multi_parameter_declaration() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter ordering is reflexive" for (lhs: Counter, rhs: Counter) {
+	return lhs.value <= rhs.value
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        assert!(
+            !resolved.struct_invariants.contains_key("Counter"),
+            "multi-parameter invariants should not register as struct invariants"
+        );
+        let model = resolved
+            .model_invariants
+            .iter()
+            .find(|model| model.display_name == "counter ordering is reflexive")
+            .expect("missing synthesized model invariant metadata");
+        assert!(model.function_name.starts_with("__model__invariant__"));
+        let function = resolved
+            .function_definitions
+            .get(&model.function_name)
+            .expect("missing synthesized model invariant function");
+        assert_eq!(function.sig.parameters.len(), 2);
+        assert_eq!(function.sig.parameters[0].ty, "Counter");
+        assert_eq!(function.sig.parameters[1].ty, "Counter");
+        assert_eq!(function.sig.return_type, "Bool");
+    }
+
+    #[test]
+    fn resolve_rejects_duplicate_model_invariant_identifier() {
+        let source = r#"
+invariant stable_pair "stable pair" for (lhs: I32, rhs: I32) {
+	return lhs <= rhs
+}
+
+invariant stable_pair "stable pair duplicate" for (lhs: I32, rhs: I32) {
+	return lhs <= rhs
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("duplicate model invariant identifier should fail");
+        assert!(err
+            .to_string()
+            .contains("model invariants have duplicate identifier `stable_pair`"));
+    }
+
+    #[test]
+    fn resolve_rewrites_all_generic_model_invariant_parameter_types() {
+        let source = r#"
+generic Box[T] {
+	struct Box {
+		value: T,
+	}
+
+	invariant "specialized boxes compare by value" for (lhs: Box, rhs: Box) {
+		return lhs.value == rhs.value
+	}
+}
+
+specialize BoxI32 = Box[I32]
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let model = resolved
+            .model_invariants
+            .iter()
+            .find(|model| model.display_name == "specialized boxes compare by value")
+            .expect("missing synthesized model invariant metadata");
+        let function = resolved
+            .function_definitions
+            .get(&model.function_name)
+            .expect("missing synthesized model invariant function");
+        assert_eq!(function.sig.parameters.len(), 2);
+        assert_eq!(function.sig.parameters[0].ty, "BoxI32");
+        assert_eq!(function.sig.parameters[1].ty, "BoxI32");
+    }
+
+    #[test]
+    fn resolve_rejects_unary_invariant_targeting_non_struct_type() {
+        let source = r#"
+invariant "i32 invariant is invalid" for (v: I32) {
+	return v >= 0
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("unary invariant over non-struct should fail");
+        assert!(err.to_string().contains("must target a struct type"));
+    }
+
+    #[test]
+    fn resolve_rejects_model_invariant_with_side_effect_builtin_call() {
+        let source = r#"
+invariant "printing is disallowed" for (v: I32, w: I32) {
+	printed = print(v)
+	return printed == printed
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("side-effect calls in model invariants should fail");
+        assert!(err.to_string().contains("calls side-effect builtin print"));
+    }
+
+    #[test]
+    fn resolve_rejects_model_invariant_with_print_str_call() {
+        let source = r#"
+invariant "print_str is disallowed" for (v: I32, w: I32) {
+	print_str("hello")
+	return v == w
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("print_str in model invariants should fail");
+        assert!(err
+            .to_string()
+            .contains("calls side-effect builtin print_str"));
+    }
+
+    #[test]
+    fn resolve_rejects_model_invariant_with_prove_statement() {
+        let source = r#"
+invariant "prove is disallowed" for (v: I32, w: I32) {
+	prove(v <= w)
+	return true
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("prove statements in model invariants should fail");
+        assert!(err.to_string().contains("contains prove(...) statement"));
+    }
+
+    #[test]
+    fn resolve_rejects_model_invariant_with_assert_statement() {
+        let source = r#"
+invariant "assert is disallowed" for (v: I32, w: I32) {
+	assert(v <= w)
+	return true
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("assert statements in model invariants should fail");
+        assert!(err.to_string().contains("contains assert(...) statement"));
+    }
+
+    #[test]
+    fn resolve_rejects_model_invariant_with_direct_extern_call() {
+        let source = r#"
+invariant "extern calls are disallowed" for (fd: I32, value: I32) {
+	code = Clib.close(fd)
+	return code == 0 || code == sub(0, 1)
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("extern calls in model invariants should fail");
+        assert!(err
+            .to_string()
+            .contains("calls extern function Clib__close"));
+    }
+
+    #[test]
+    fn resolve_rejects_model_invariant_with_pointer_memory_builtin_call() {
+        let source = r#"
+invariant "pointer loads are disallowed" for (addr: PtrInt, value: I32) {
+	loaded = load_i32(addr)
+	return loaded == value
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("pointer memory builtins should fail");
+        assert!(err
+            .to_string()
+            .contains("calls side-effect builtin load_i32"));
+    }
+
+    #[test]
+    fn resolve_rejects_model_invariant_with_transitive_extern_call() {
+        let source = r#"
+fun helper(fd: I32) -> Bool {
+	code = Clib.close(fd)
+	return code == 0 || code == sub(0, 1)
+}
+
+invariant "transitive extern calls are disallowed" for (fd: I32, value: I32) {
+	return helper(fd)
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err =
+            resolve(ast).expect_err("transitive extern calls in model invariants should fail");
+        assert!(err
+            .to_string()
+            .contains("calls extern function Clib__close"));
     }
 
     #[test]
