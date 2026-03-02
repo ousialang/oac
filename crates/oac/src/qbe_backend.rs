@@ -8,14 +8,13 @@ use tracing::trace;
 use crate::builtins::BuiltInType;
 use crate::ir::{self, ResolvedProgram};
 use crate::parser::{self, Op, StructDef, UnaryOp};
+use crate::runtime_layout;
 use crate::symbol_keys::{trait_impl_method_key, trait_method_key};
 
 type QbeAssignName = String;
 type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
 pub(crate) const PROVE_MARKER_PREFIX: &str = ".oac_prove_site_";
 const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
-const TAGGED_UNION_PAYLOAD_OFFSET_BYTES: u64 = 8;
-const TAGGED_UNION_SIZE_BYTES: u64 = 16;
 
 struct CodegenCtx {
     module: qbe::Module,
@@ -358,7 +357,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
             qbe::Type::Long,
             Instr::Add(
                 Value::Temporary("s".to_string()),
-                Value::Const(TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
+                Value::Const(runtime_layout::TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
             ),
         );
         let payload = new_id(&["string", "payload"]);
@@ -662,7 +661,10 @@ fn add_builtins(ctx: &mut CodegenCtx) {
             qbe::Type::Long,
             Instr::Call(
                 "malloc".to_string(),
-                vec![(qbe::Type::Long, Value::Const(TAGGED_UNION_SIZE_BYTES))],
+                vec![(
+                    qbe::Type::Long,
+                    Value::Const(runtime_layout::TAGGED_UNION_SIZE_BYTES),
+                )],
                 None,
             ),
         );
@@ -677,7 +679,7 @@ fn add_builtins(ctx: &mut CodegenCtx) {
             qbe::Type::Long,
             Instr::Add(
                 Value::Temporary(string_ptr.clone()),
-                Value::Const(TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
+                Value::Const(runtime_layout::TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
             ),
         );
         slice.add_instr(Instr::Store(
@@ -1325,71 +1327,20 @@ fn new_id(labels: &[&str]) -> String {
     )
 }
 
-fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
-    match ctx.resolved.type_definitions.get(ty) {
-        Some(ty) => match ty {
-            ir::TypeDef::BuiltIn(BuiltInType::Bool) => 4,
-            ir::TypeDef::BuiltIn(BuiltInType::U8) => 4,
-            ir::TypeDef::BuiltIn(BuiltInType::I32) => 4,
-            ir::TypeDef::BuiltIn(BuiltInType::FP32) => 4,
-            ir::TypeDef::BuiltIn(BuiltInType::Void) => {
-                panic!("Void cannot be used in value-layout positions")
-            }
-            ir::TypeDef::BuiltIn(BuiltInType::Semantic) => {
-                panic!("semantic-only builtin types cannot be used in value-layout positions")
-            }
-            ir::TypeDef::Enum(enum_def) => {
-                if enum_def.is_tagged_union {
-                    8
-                } else {
-                    4
-                }
-            }
-            ir::TypeDef::BuiltIn(BuiltInType::I64)
-            | ir::TypeDef::BuiltIn(BuiltInType::FP64)
-            | ir::TypeDef::Struct(_) => 8,
-        },
-        None => panic!("Unknown type {}", ty),
-    }
-}
-
 fn calculate_struct_field_offset(
-    ctx: &mut CodegenCtx,
+    ctx: &CodegenCtx,
     struct_def: &StructDef,
     field_name: &str,
 ) -> u64 {
-    let mut offset = 0;
-    for field in struct_def.struct_fields.iter() {
-        if field.name == *field_name {
-            return offset;
-        }
-        offset += type_offset(ctx, &field.ty);
-    }
-
-    panic!(
-        "Field {} not found in struct {}",
-        field_name, struct_def.name
-    );
+    runtime_layout::struct_field_offset(&ctx.resolved, struct_def, field_name)
 }
 
 fn struct_size_bytes(ctx: &CodegenCtx, struct_def: &StructDef) -> u64 {
-    struct_def
-        .struct_fields
-        .iter()
-        .map(|field| type_offset(ctx, &field.ty))
-        .sum()
+    runtime_layout::struct_size_bytes(&ctx.resolved, struct_def)
 }
 
 fn struct_size_bytes_by_name(ctx: &CodegenCtx, struct_name: &str) -> u64 {
-    let type_def = ctx
-        .resolved
-        .type_definitions
-        .get(struct_name)
-        .unwrap_or_else(|| panic!("Unknown struct type {}", struct_name));
-    let ir::TypeDef::Struct(struct_def) = type_def else {
-        panic!("Type {} is not a struct", struct_name);
-    };
-    struct_size_bytes(ctx, struct_def)
+    runtime_layout::struct_size_bytes_by_name(&ctx.resolved, struct_name)
 }
 
 fn non_zero_allocation_size(size: u64) -> u64 {
@@ -1611,27 +1562,15 @@ fn emit_struct_memcmp(
 }
 
 fn std_bytes_struct(ctx: &CodegenCtx) -> StructDef {
-    match ctx.resolved.type_definitions.get("Bytes") {
-        Some(ir::TypeDef::Struct(def)) => def.clone(),
-        _ => panic!("std Bytes struct is required for String lowering"),
-    }
+    runtime_layout::std_bytes_struct(&ctx.resolved)
 }
 
 fn std_string_enum(ctx: &CodegenCtx) -> ir::EnumTypeDef {
-    match ctx.resolved.type_definitions.get("String") {
-        Some(ir::TypeDef::Enum(def)) if def.is_tagged_union => def.clone(),
-        Some(ir::TypeDef::Enum(_)) => panic!("std String must be a tagged-union enum"),
-        _ => panic!("std String enum is required for String lowering"),
-    }
+    runtime_layout::std_string_enum(&ctx.resolved)
 }
 
 fn enum_variant_tag(enum_def: &ir::EnumTypeDef, variant_name: &str) -> u32 {
-    enum_def
-        .variants
-        .iter()
-        .find(|variant| variant.name == variant_name)
-        .unwrap_or_else(|| panic!("missing variant {variant_name} on enum {}", enum_def.name))
-        .tag
+    runtime_layout::enum_variant_tag(enum_def, variant_name)
 }
 
 fn resolve_void_call_target<'a>(
@@ -2193,7 +2132,10 @@ fn compile_expr(
                 qbe::Type::Long,
                 qbe::Instr::Call(
                     "malloc".to_string(),
-                    vec![(qbe::Type::Long, qbe::Value::Const(TAGGED_UNION_SIZE_BYTES))],
+                    vec![(
+                        qbe::Type::Long,
+                        qbe::Value::Const(runtime_layout::TAGGED_UNION_SIZE_BYTES),
+                    )],
                     None,
                 ),
             );
@@ -2209,7 +2151,7 @@ fn compile_expr(
                 qbe::Type::Long,
                 qbe::Instr::Add(
                     qbe::Value::Temporary(string_ptr.clone()),
-                    qbe::Value::Const(TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
+                    qbe::Value::Const(runtime_layout::TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
                 ),
             );
             func.add_instr(qbe::Instr::Store(
@@ -2435,7 +2377,7 @@ mod tests {
     use super::compile as compile_qbe;
     use crate::parser::parse;
     use crate::tokenizer::tokenize;
-    use crate::{compile, ir, Build};
+    use crate::{compile, ir, Build, RuntimeBackend};
     const EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
     const EXECUTION_SNAPSHOT_PREFIX: &str = "oac__qbe_backend__tests__execution_tests__";
     const SNAPSHOT_EXTENSION: &str = ".snap";
@@ -2470,6 +2412,21 @@ mod tests {
             .strip_prefix(EXECUTION_SNAPSHOT_PREFIX)?
             .strip_suffix(SNAPSHOT_EXTENSION)?;
         Some(stem.to_string())
+    }
+
+    fn snapshot_body(raw: &str) -> &str {
+        if let Some(idx) = raw.find("\n---\n") {
+            &raw[(idx + 5)..]
+        } else {
+            raw
+        }
+    }
+
+    fn first_diagnostic_code(content: &str) -> Option<String> {
+        let start = content.find('[')?;
+        let rest = &content[start + 1..];
+        let end = rest.find(']')?;
+        Some(rest[..end].to_string())
     }
 
     fn run_executable_with_timeout(workdir: &Path) -> Result<String, String> {
@@ -2892,7 +2849,9 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
                         &tmp.path(),
                         Build {
                             source: path.to_string_lossy().to_string(),
-                            arch: None,
+                            backend: RuntimeBackend::Qbe,
+                            qbe_arch: None,
+                            target: None,
                         },
                     ) {
                         Ok(()) => match run_executable_with_timeout(tmp.path()) {
@@ -2918,6 +2877,78 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
 
         for (path, snapshot_content) in results {
             insta::assert_snapshot!(path.display().to_string(), snapshot_content);
+        }
+    }
+
+    #[test]
+    #[ignore = "manual llvm parity harness; run explicitly with -- --ignored"]
+    fn llvm_runtime_parity_against_qbe_snapshots() {
+        let mut paths = fs::read_dir("execution_tests")
+            .expect("read execution_tests directory")
+            .map(|entry| entry.expect("read execution fixture entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "oa"))
+            .collect::<Vec<_>>();
+        paths.sort();
+
+        for path in paths {
+            let fixture_name = path
+                .file_name()
+                .expect("fixture file name")
+                .to_string_lossy()
+                .to_string();
+            let snapshot_path = Path::new("src/snapshots").join(format!(
+                "{}{}{}",
+                EXECUTION_SNAPSHOT_PREFIX, fixture_name, SNAPSHOT_EXTENSION
+            ));
+            let snapshot_raw = fs::read_to_string(&snapshot_path)
+                .unwrap_or_else(|_| panic!("read snapshot {}", snapshot_path.display()));
+            let expected = snapshot_body(&snapshot_raw).to_string();
+
+            let tmp = tempfile::tempdir().expect("create execution tempdir");
+            let actual = match compile(
+                tmp.path(),
+                Build {
+                    source: path.to_string_lossy().to_string(),
+                    backend: RuntimeBackend::Llvm,
+                    qbe_arch: None,
+                    target: None,
+                },
+            ) {
+                Ok(()) => run_executable_with_timeout(tmp.path())
+                    .unwrap_or_else(|err| format!("RUNTIME ERROR\n\n{err}")),
+                Err(err) => format!("COMPILATION ERROR\n\n{err}"),
+            };
+
+            let expected_is_compile_error = expected.starts_with("COMPILATION ERROR");
+            let actual_is_compile_error = actual.starts_with("COMPILATION ERROR");
+            assert_eq!(
+                actual_is_compile_error,
+                expected_is_compile_error,
+                "outcome kind mismatch for {}",
+                path.display()
+            );
+
+            if expected_is_compile_error {
+                let expected_code = first_diagnostic_code(&expected)
+                    .unwrap_or_else(|| panic!("missing diagnostic code in {}", path.display()));
+                let actual_code = first_diagnostic_code(&actual)
+                    .unwrap_or_else(|| panic!("missing diagnostic code in {}", path.display()));
+                assert_eq!(
+                    actual_code,
+                    expected_code,
+                    "diagnostic code mismatch for {}",
+                    path.display()
+                );
+            } else {
+                let actual_normalized = actual.trim_end_matches('\n');
+                let expected_normalized = expected.trim_end_matches('\n');
+                assert_eq!(
+                    actual_normalized,
+                    expected_normalized,
+                    "runtime stdout mismatch for {}",
+                    path.display()
+                );
+            }
         }
     }
 

@@ -1,16 +1,19 @@
 mod ast_walk;
 mod bench_prove;
 mod builtins;
+mod codegen_runtime;
 mod comptime;
 mod diagnostics;
 mod flat_imports;
 mod invariant_metadata;
 mod ir;
+mod llvm_backend;
 mod lsp;
 mod parser;
 mod prove;
 mod qbe_backend;
-mod riscv_smt; // Add the new module
+mod riscv_smt;
+mod runtime_layout;
 mod struct_invariants;
 mod symbol_keys;
 mod test_framework;
@@ -35,6 +38,50 @@ use tracing::{debug, info, trace, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum RuntimeBackend {
+    Qbe,
+    Llvm,
+}
+
+impl RuntimeBackend {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            RuntimeBackend::Qbe => "qbe",
+            RuntimeBackend::Llvm => "llvm",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CodegenOptions {
+    pub backend: RuntimeBackend,
+    pub qbe_arch: Option<String>,
+    pub target: Option<String>,
+}
+
+impl CodegenOptions {
+    pub(crate) fn qbe_default() -> Self {
+        Self {
+            backend: RuntimeBackend::Qbe,
+            qbe_arch: None,
+            target: None,
+        }
+    }
+
+    fn validate(&self) -> Result<(), CompilerDiagnosticBundle> {
+        if self.backend == RuntimeBackend::Llvm && self.qbe_arch.is_some() {
+            let diagnostic = CompilerDiagnostic::new(
+                "OAC-CLI-001",
+                DiagnosticStage::Internal,
+                "--qbe-arch is only valid when --backend qbe",
+            );
+            return Err(CompilerDiagnosticBundle::single(diagnostic));
+        }
+        Ok(())
+    }
+}
 
 fn main() {
     let outcome = std::panic::catch_unwind(|| {
@@ -255,14 +302,14 @@ pub(crate) fn parse_source_to_ast_with_artifacts(
 pub(crate) fn compile_source_with_artifacts(
     source_path: &Path,
     target_dir: &Path,
-    arch: Option<&str>,
+    codegen_options: CodegenOptions,
     executable_name: &str,
     codes: CompileSourceCodes<'_>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
     compile_source_with_artifacts_with_profile(
         source_path,
         target_dir,
-        arch,
+        codegen_options,
         executable_name,
         codes,
         verification_profile::VerificationProfile::default(),
@@ -272,11 +319,12 @@ pub(crate) fn compile_source_with_artifacts(
 pub(crate) fn compile_source_with_artifacts_with_profile(
     source_path: &Path,
     target_dir: &Path,
-    arch: Option<&str>,
+    codegen_options: CodegenOptions,
     executable_name: &str,
     codes: CompileSourceCodes<'_>,
     verification_profile: verification_profile::VerificationProfile,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    codegen_options.validate()?;
     let (source, ast) =
         parse_source_to_ast_with_artifacts(source_path, target_dir, &codes.frontend)?;
     let ast_path = target_dir.join("ast.json");
@@ -295,7 +343,7 @@ pub(crate) fn compile_source_with_artifacts_with_profile(
     compile_ast_to_executable_with_profile(
         target_dir,
         ast,
-        arch,
+        codegen_options,
         executable_name,
         Some(source_path),
         Some(&source),
@@ -314,10 +362,11 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
     })?;
 
     let source_path = Path::new(&build.source);
+    let codegen_options = build.codegen_options();
     compile_source_with_artifacts(
         source_path,
         &target_dir,
-        build.arch.as_deref(),
+        codegen_options,
         "app",
         CompileSourceCodes {
             frontend: FrontendPipelineCodes {
@@ -354,6 +403,7 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
     })?;
 
     let source_path = Path::new(&test.source);
+    let codegen_options = test.codegen_options();
     let (source, ast) = parse_source_to_ast_with_artifacts(
         source_path,
         &target_dir,
@@ -398,7 +448,7 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
     let executable_path = compile_ast_to_executable(
         &target_dir,
         lowered_ast,
-        None,
+        codegen_options,
         "app",
         Some(source_path),
         Some(&source),
@@ -442,7 +492,7 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
 pub(crate) fn compile_ast_to_executable(
     target_dir: &Path,
     ast: parser::Ast,
-    arch: Option<&str>,
+    codegen_options: CodegenOptions,
     executable_name: &str,
     source_path: Option<&Path>,
     source_text: Option<&str>,
@@ -450,7 +500,7 @@ pub(crate) fn compile_ast_to_executable(
     compile_ast_to_executable_with_profile(
         target_dir,
         ast,
-        arch,
+        codegen_options,
         executable_name,
         source_path,
         source_text,
@@ -461,12 +511,13 @@ pub(crate) fn compile_ast_to_executable(
 pub(crate) fn compile_ast_to_executable_with_profile(
     target_dir: &Path,
     ast: parser::Ast,
-    arch: Option<&str>,
+    codegen_options: CodegenOptions,
     executable_name: &str,
     source_path: Option<&Path>,
     source_text: Option<&str>,
     verification_profile: verification_profile::VerificationProfile,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    codegen_options.validate()?;
     let ir = ir::resolve(ast).map_err(|err| {
         stage_error_from_anyhow(
             DiagnosticStage::Resolve,
@@ -531,50 +582,23 @@ pub(crate) fn compile_ast_to_executable_with_profile(
             source_text,
         )
     })?;
-    let qbe_ir_text = qbe_ir.to_string();
-
-    let qbe_ir_path = target_dir.join("ir.qbe");
-    std::fs::write(&qbe_ir_path, &qbe_ir_text).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-020",
-            format!("failed to write {}", qbe_ir_path.display()),
-            err,
-        )
-    })?;
-    info!(qbe_ir_path = %qbe_ir_path.display(), "QBE IR generated");
-
-    let assembly_path = target_dir.join("assembly.s");
-    let mut qbe_cmd = std::process::Command::new("qbe");
-
-    if let Some(arch) = arch {
-        qbe_cmd.arg("-t").arg(arch);
-    }
-
-    let qbe_output = qbe_cmd
-        .arg("-o")
-        .arg(&assembly_path)
-        .arg(&qbe_ir_path)
-        .output()
-        .map_err(|err| io_stage_error("OAC-IO-021", "failed to run qbe", err))?;
-
-    if !qbe_output.status.success() {
-        let stderr = String::from_utf8_lossy(&qbe_output.stderr)
-            .trim()
-            .to_string();
-        let diagnostic = CompilerDiagnostic::new(
-            "OAC-QBE-001",
-            DiagnosticStage::Qbe,
-            "compilation of QBE IR to assembly failed",
-        )
-        .with_note("valid archs: amd64_sysv, amd64_apple, arm64, arm64_apple, rv64")
-        .with_note(stderr);
-        return Err(CompilerDiagnosticBundle::single(diagnostic));
-    }
-
-    debug!(assembly_path = %assembly_path.display(), "QBE IR compiled to assembly");
+    // Verification is always QBE-sourced; runtime backend selection only affects
+    // post-verification artifact emission/link inputs.
+    let runtime_artifacts =
+        codegen_runtime::emit_runtime_artifacts(&ir, &qbe_ir, target_dir, &codegen_options)?;
+    debug!(
+        backend = codegen_options.backend.as_str(),
+        ir_artifact = %runtime_artifacts.ir_artifact_path.display(),
+        linker_input = %runtime_artifacts.linker_input_path.display(),
+        "Runtime backend artifacts generated"
+    );
 
     let executable_path = target_dir.join(executable_name);
-    let linker_attempts = resolve_linker_attempts(arch).map_err(|err| {
+    let linker_attempts = resolve_linker_attempts(
+        codegen_options.qbe_arch.as_deref(),
+        codegen_options.target.as_deref(),
+    )
+    .map_err(|err| {
         stage_error_from_anyhow(
             DiagnosticStage::Linker,
             "OAC-LINK-001",
@@ -591,7 +615,7 @@ pub(crate) fn compile_ast_to_executable_with_profile(
             &attempt.program,
             &attempt.args,
             &executable_path,
-            &assembly_path,
+            &runtime_artifacts.linker_input_path,
         );
 
         let mut cc_cmd = std::process::Command::new(&attempt.program);
@@ -600,7 +624,7 @@ pub(crate) fn compile_ast_to_executable_with_profile(
             .arg("-g")
             .arg("-o")
             .arg(&executable_path)
-            .arg(&assembly_path);
+            .arg(&runtime_artifacts.linker_input_path);
 
         let cc_output = match cc_cmd.output() {
             Ok(output) => output,
@@ -618,7 +642,8 @@ pub(crate) fn compile_ast_to_executable_with_profile(
             info!(
                 executable_path = %executable_path.display(),
                 linker = %command_display,
-                "Assembly compiled to executable"
+                backend = codegen_options.backend.as_str(),
+                "Backend output compiled to executable"
             );
             return Ok(executable_path);
         }
@@ -633,7 +658,7 @@ pub(crate) fn compile_ast_to_executable_with_profile(
         "OAC-LINK-002",
         DiagnosticStage::Linker,
         format!(
-            "compilation of assembly to executable failed after trying {} linker command(s)",
+            "compilation of backend output to executable failed after trying {} linker command(s)",
             failures.len()
         ),
     );
@@ -649,35 +674,48 @@ struct LinkerAttempt {
     args: Vec<String>,
 }
 
-fn resolve_linker_attempts(arch: Option<&str>) -> anyhow::Result<Vec<LinkerAttempt>> {
+fn resolve_linker_attempts(
+    qbe_arch: Option<&str>,
+    requested_target: Option<&str>,
+) -> anyhow::Result<Vec<LinkerAttempt>> {
     let configured_command = env::var("OAC_CC")
         .ok()
         .map(|raw| ("OAC_CC", raw))
         .or_else(|| env::var("CC").ok().map(|raw| ("CC", raw)));
-    let target_override = env::var("OAC_CC_TARGET").ok();
+    let env_target_override = env::var("OAC_CC_TARGET").ok();
     let extra_flags = env::var("OAC_CC_FLAGS")
         .ok()
         .map(|raw| split_words(&raw))
         .unwrap_or_default();
 
     resolve_linker_attempts_for_config(
-        arch,
+        qbe_arch,
+        requested_target,
         configured_command
             .as_ref()
             .map(|(name, raw)| (*name, raw.as_str())),
-        target_override.as_deref(),
+        env_target_override.as_deref(),
         &extra_flags,
     )
 }
 
 fn resolve_linker_attempts_for_config(
-    arch: Option<&str>,
+    qbe_arch: Option<&str>,
+    requested_target: Option<&str>,
     configured_command: Option<(&str, &str)>,
-    target_override: Option<&str>,
+    env_target_override: Option<&str>,
     extra_flags: &[String],
 ) -> anyhow::Result<Vec<LinkerAttempt>> {
     let mut attempts = Vec::new();
     let mut include_defaults = true;
+    let effective_target = env_target_override
+        .map(std::borrow::ToOwned::to_owned)
+        .or_else(|| requested_target.map(str::to_owned))
+        .or_else(|| {
+            qbe_arch
+                .and_then(default_target_triple_for_qbe_arch)
+                .map(str::to_owned)
+        });
 
     if let Some((var_name, raw_command)) = configured_command {
         let mut words = split_words(raw_command);
@@ -687,7 +725,7 @@ fn resolve_linker_attempts_for_config(
 
         let program = words.remove(0);
         let mut args = words;
-        if let Some(target) = target_override {
+        if let Some(target) = &effective_target {
             args.push(format!("--target={target}"));
         }
         args.extend(extra_flags.iter().cloned());
@@ -699,13 +737,7 @@ fn resolve_linker_attempts_for_config(
         return Ok(dedup_linker_attempts(attempts));
     }
 
-    if let Some(target) = target_override
-        .map(std::borrow::ToOwned::to_owned)
-        .or_else(|| {
-            arch.and_then(default_target_triple_for_qbe_arch)
-                .map(str::to_owned)
-        })
-    {
+    if let Some(target) = &effective_target {
         attempts.push(LinkerAttempt {
             program: "cc".to_string(),
             args: vec![format!("--target={target}")],
@@ -716,7 +748,7 @@ fn resolve_linker_attempts_for_config(
         });
     }
 
-    if let Some(arch) = arch {
+    if let Some(arch) = qbe_arch {
         if let Some(cross_cc) = default_gnu_cross_cc_for_qbe_arch(arch) {
             attempts.push(LinkerAttempt {
                 program: cross_cc.to_string(),
@@ -780,7 +812,7 @@ fn format_linker_command(
     program: &str,
     args: &[String],
     executable: &Path,
-    assembly: &Path,
+    linker_input: &Path,
 ) -> String {
     let mut parts = Vec::new();
     parts.push(program.to_string());
@@ -788,7 +820,7 @@ fn format_linker_command(
     parts.push("-g".to_string());
     parts.push("-o".to_string());
     parts.push(executable.display().to_string());
-    parts.push(assembly.display().to_string());
+    parts.push(linker_input.display().to_string());
     parts.join(" ")
 }
 
@@ -904,12 +936,43 @@ enum OacSubcommand {
 #[derive(clap::Parser)]
 struct Build {
     source: String,
-    arch: Option<String>,
+    #[clap(long, value_enum, default_value_t = RuntimeBackend::Qbe)]
+    backend: RuntimeBackend,
+    #[clap(long)]
+    qbe_arch: Option<String>,
+    #[clap(long)]
+    target: Option<String>,
+}
+
+impl Build {
+    fn codegen_options(&self) -> CodegenOptions {
+        CodegenOptions {
+            backend: self.backend,
+            qbe_arch: self.qbe_arch.clone(),
+            target: self.target.clone(),
+        }
+    }
 }
 
 #[derive(clap::Parser)]
 struct Test {
     source: String,
+    #[clap(long, value_enum, default_value_t = RuntimeBackend::Qbe)]
+    backend: RuntimeBackend,
+    #[clap(long)]
+    qbe_arch: Option<String>,
+    #[clap(long)]
+    target: Option<String>,
+}
+
+impl Test {
+    fn codegen_options(&self) -> CodegenOptions {
+        CodegenOptions {
+            backend: self.backend,
+            qbe_arch: self.qbe_arch.clone(),
+            target: self.target.clone(),
+        }
+    }
 }
 
 #[derive(clap::Parser, Debug)]
@@ -942,7 +1005,7 @@ mod tests {
 
     use super::{
         reject_proven_non_terminating_main, resolve_linker_attempts_for_config, LinkerAttempt, Oac,
-        OacSubcommand,
+        OacSubcommand, RuntimeBackend,
     };
 
     fn temp(name: &str) -> Value {
@@ -1122,8 +1185,8 @@ mod tests {
 
     #[test]
     fn linker_attempts_default_to_cc_for_host_builds() {
-        let attempts =
-            resolve_linker_attempts_for_config(None, None, None, &[]).expect("attempt resolution");
+        let attempts = resolve_linker_attempts_for_config(None, None, None, None, &[])
+            .expect("attempt resolution");
         assert_eq!(
             attempts,
             vec![LinkerAttempt {
@@ -1135,7 +1198,7 @@ mod tests {
 
     #[test]
     fn linker_attempts_for_rv64_include_cross_fallbacks() {
-        let attempts = resolve_linker_attempts_for_config(Some("rv64"), None, None, &[])
+        let attempts = resolve_linker_attempts_for_config(Some("rv64"), None, None, None, &[])
             .expect("attempt resolution");
 
         assert_eq!(
@@ -1165,6 +1228,7 @@ mod tests {
         let extra_flags = vec!["-static".to_string()];
         let attempts = resolve_linker_attempts_for_config(
             Some("rv64"),
+            None,
             Some(("OAC_CC", "custom-cc --driver-mode=clang")),
             None,
             &extra_flags,
@@ -1175,7 +1239,11 @@ mod tests {
             attempts,
             vec![LinkerAttempt {
                 program: "custom-cc".to_string(),
-                args: vec!["--driver-mode=clang".to_string(), "-static".to_string()],
+                args: vec![
+                    "--driver-mode=clang".to_string(),
+                    "--target=riscv64-linux-gnu".to_string(),
+                    "-static".to_string(),
+                ],
             }]
         );
     }
@@ -1184,6 +1252,7 @@ mod tests {
     fn configured_linker_target_override_is_applied() {
         let attempts = resolve_linker_attempts_for_config(
             Some("rv64"),
+            None,
             Some(("OAC_CC", "clang")),
             Some("aarch64-linux-gnu"),
             &[],
@@ -1203,6 +1272,7 @@ mod tests {
     fn cc_env_keeps_default_fallbacks() {
         let attempts = resolve_linker_attempts_for_config(
             Some("rv64"),
+            None,
             Some(("CC", "clang")),
             Some("aarch64-linux-gnu"),
             &[],
@@ -1225,5 +1295,127 @@ mod tests {
             program: "cc".to_string(),
             args: Vec::new(),
         }));
+    }
+
+    #[test]
+    fn requested_target_is_applied_to_default_linker_attempts() {
+        let attempts =
+            resolve_linker_attempts_for_config(None, Some("aarch64-linux-gnu"), None, None, &[])
+                .expect("attempt resolution");
+
+        assert_eq!(
+            attempts[0],
+            LinkerAttempt {
+                program: "cc".to_string(),
+                args: vec!["--target=aarch64-linux-gnu".to_string()],
+            }
+        );
+        assert!(attempts.contains(&LinkerAttempt {
+            program: "clang".to_string(),
+            args: vec!["--target=aarch64-linux-gnu".to_string()],
+        }));
+    }
+
+    #[test]
+    fn build_cli_defaults_to_qbe_backend() {
+        let parsed = Oac::parse_from(["oac", "build", "main.oa"]);
+        match parsed.subcmd {
+            OacSubcommand::Build(build) => {
+                assert_eq!(build.source, "main.oa");
+                assert_eq!(build.backend, RuntimeBackend::Qbe);
+                assert!(build.qbe_arch.is_none());
+                assert!(build.target.is_none());
+            }
+            _ => panic!("expected build subcommand"),
+        }
+    }
+
+    #[test]
+    fn build_cli_parses_backend_and_target_flags() {
+        let parsed = Oac::parse_from([
+            "oac",
+            "build",
+            "main.oa",
+            "--backend",
+            "llvm",
+            "--target",
+            "aarch64-linux-gnu",
+        ]);
+        match parsed.subcmd {
+            OacSubcommand::Build(build) => {
+                assert_eq!(build.backend, RuntimeBackend::Llvm);
+                assert_eq!(build.target.as_deref(), Some("aarch64-linux-gnu"));
+                assert!(build.qbe_arch.is_none());
+            }
+            _ => panic!("expected build subcommand"),
+        }
+    }
+
+    #[test]
+    fn build_cli_rejects_removed_positional_arch_argument() {
+        let parsed = Oac::try_parse_from(["oac", "build", "main.oa", "amd64_sysv"]);
+        assert!(
+            parsed.is_err(),
+            "positional arch argument should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_cli_defaults_to_qbe_backend() {
+        let parsed = Oac::parse_from(["oac", "test", "main.oa"]);
+        match parsed.subcmd {
+            OacSubcommand::Test(test) => {
+                assert_eq!(test.source, "main.oa");
+                assert_eq!(test.backend, RuntimeBackend::Qbe);
+                assert!(test.qbe_arch.is_none());
+                assert!(test.target.is_none());
+            }
+            _ => panic!("expected test subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_backend_and_target_flags() {
+        let parsed = Oac::parse_from([
+            "oac",
+            "test",
+            "main.oa",
+            "--backend",
+            "llvm",
+            "--target",
+            "aarch64-linux-gnu",
+        ]);
+        match parsed.subcmd {
+            OacSubcommand::Test(test) => {
+                assert_eq!(test.backend, RuntimeBackend::Llvm);
+                assert_eq!(test.target.as_deref(), Some("aarch64-linux-gnu"));
+                assert!(test.qbe_arch.is_none());
+            }
+            _ => panic!("expected test subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_cli_rejects_removed_positional_arch_argument() {
+        let parsed = Oac::try_parse_from(["oac", "test", "main.oa", "amd64_sysv"]);
+        assert!(
+            parsed.is_err(),
+            "positional arch argument should be rejected"
+        );
+    }
+
+    #[test]
+    fn codegen_options_reject_qbe_arch_for_llvm_backend() {
+        let opts = super::CodegenOptions {
+            backend: RuntimeBackend::Llvm,
+            qbe_arch: Some("rv64".to_string()),
+            target: None,
+        };
+        let err = opts
+            .validate()
+            .expect_err("llvm backend should reject --qbe-arch");
+        assert!(err
+            .render_plain()
+            .contains("--qbe-arch is only valid when --backend qbe"));
     }
 }

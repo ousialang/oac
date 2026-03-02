@@ -13,8 +13,8 @@ use crate::verification_outcomes::{
 };
 use crate::verification_profile::VerificationProfile;
 use crate::{
-    compile_source_with_artifacts, compile_source_with_artifacts_with_profile, CompileSourceCodes,
-    FrontendPipelineCodes,
+    compile_source_with_artifacts, compile_source_with_artifacts_with_profile, CodegenOptions,
+    CompileSourceCodes, FrontendPipelineCodes,
 };
 
 const BASELINE_SCHEMA_VERSION: u32 = 1;
@@ -567,11 +567,11 @@ fn capture_verification_outcomes_for_profile(
             std::fs::create_dir_all(&fixture_dir)
                 .with_context(|| format!("failed to create {}", fixture_dir.display()))?;
 
-            let _result = with_fixture_outcome_env(fixture.id, || {
+            let _result = with_fixture_context(Some(fixture.id), || {
                 compile_source_with_artifacts_with_profile(
                     &source_path,
                     &fixture_dir,
-                    None,
+                    CodegenOptions::qbe_default(),
                     "app",
                     bench_compile_codes(),
                     profile,
@@ -595,10 +595,6 @@ fn capture_verification_outcomes_for_profile(
             Ok(file)
         }
     }
-}
-
-fn with_fixture_outcome_env<T>(fixture_id: &str, run: impl FnOnce() -> T) -> T {
-    with_fixture_context(fixture_id, run)
 }
 
 fn run_fixture_iteration(
@@ -630,7 +626,7 @@ fn run_fixture_iteration(
     let compile_result = compile_source_with_artifacts(
         &source_path,
         &fixture_dir,
-        None,
+        CodegenOptions::qbe_default(),
         "app",
         bench_compile_codes(),
     );

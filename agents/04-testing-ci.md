@@ -157,9 +157,13 @@ Key tests:
 - Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags (including `--strict-outcome-gate`).
+- `crates/oac/src/main.rs` tests now also cover runtime backend CLI/linker plumbing (`--backend`, `--qbe-arch`, `--target`, positional-arch removal, and backend option validation).
+- `crates/oac/src/llvm_backend.rs` tests cover direct resolved-IR compile smoke, struct copy-barrier/equality lowering (`calloc`/`memcpy`/`memcmp`), `assert` exit-code lowering (`242`), runtime-noop `prove` lowering, extern symbol mapping, and namespace-call mangling behavior.
 - `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, deterministic `--update-baseline` rewrites (using a mocked fixture runner), and strict outcome-gate execution on the quick corpus.
+- Strict outcome-gate capture tags records with fixture-scoped thread-local context (`verification_outcomes::with_fixture_context`); untagged verification records are intentionally ignored to keep baseline/candidate obligation sets deterministic under parallel test execution.
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Fixture compile/execute work runs through one worker-thread harness and snapshot assertions are sorted and applied deterministically afterward. Default worker count is serial (`1`) for stability and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>` for explicit parallel execution. Compiler-error snapshots capture Ariadne plain-report output from the shared diagnostics layer.
+- `crates/oac/src/qbe_backend.rs` also includes an ignored/manual LLVM parity harness (`llvm_runtime_parity_against_qbe_snapshots`) that compiles execution fixtures with `--backend llvm` and compares outcome-kind/diagnostic-code and stdout parity against canonical QBE snapshots.
 - `crates/oac/src/qbe_backend.rs` also enforces snapshot hygiene contracts for execution snapshots: no committed `*.snap.new` files, no orphan execution snapshots without matching fixtures, and no duplicated Ariadne prefix artifacts (`Error: error[...]`) in snapshot content.
 - Snapshot metadata-only churn (for example insta header-only changes to `assertion_line` / `expression`) still requires cleanup: merge into `.snap` or delete `.snap.new` so tracked `*.snap.new` files stay empty.
 - `crates/oac/src/qbe_backend.rs` also has a unit test that asserts QBE emission for namespaced calls contains mangled function call symbols.
@@ -226,6 +230,7 @@ Do not commit `.snap.new` files; accept or delete them before finishing.
 
 `oac build` path requires external tools available in environment:
 - `qbe`
+- `clang` (required when runtime backend is `llvm`)
 - C compiler/linker driver (`cc`, `clang`, or target-prefixed `*-gcc`)
 - `z3` (required when struct invariant or prove obligations are present)
 
@@ -236,7 +241,7 @@ Do not commit `.snap.new` files; accept or delete them before finishing.
 - `OAC_CC_FLAGS` to append extra linker flags
 - Linker diagnostics for this stage are reported under `DiagnosticStage::Linker` with stable codes `OAC-LINK-001` (configuration resolution) and `OAC-LINK-002` (all linker attempts failed).
 
-`oac test` has the same backend dependencies as `oac build` (`qbe`, C compiler driver, and `z3` when obligations are present), and additionally executes the produced binary under `target/oac/test/app`.
+`oac test` has the same backend dependencies as `oac build` (`qbe` for verification, runtime backend toolchain (`qbe` or `clang`), C compiler driver, and `z3` when obligations are present), and additionally executes the produced binary under `target/oac/test/app`.
 
 VS Code extension development under `tools/vscode-ousia` requires:
 - `node` and `npm`
