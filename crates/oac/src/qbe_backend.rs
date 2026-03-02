@@ -1327,6 +1327,10 @@ fn new_id(labels: &[&str]) -> String {
     )
 }
 
+fn type_offset(ctx: &CodegenCtx, ty: &str) -> u64 {
+    runtime_layout::value_slot_size(&ctx.resolved, ty)
+}
+
 fn calculate_struct_field_offset(
     ctx: &CodegenCtx,
     struct_def: &StructDef,
