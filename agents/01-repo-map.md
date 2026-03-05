@@ -16,6 +16,7 @@ Editor tooling in this repository:
 ## High-Value Paths
 
 - `crates/oac/src/main.rs`: CLI entrypoint and build pipeline orchestration.
+- `crates/oac/src/cli_output.rs`: staged CLI progress/reporting formatter used by `oac build` / `oac test`.
 - `crates/oac/src/codegen_runtime.rs`: runtime backend dispatcher (`qbe`/`llvm`) and backend-tool invocation.
 - `crates/oac/src/llvm_backend.rs`: direct `ResolvedProgram` -> textual LLVM IR runtime backend (`--backend llvm`).
 - `crates/oac/src/runtime_layout.rs`: shared runtime byte-layout helpers/constants used by both QBE and LLVM backends.

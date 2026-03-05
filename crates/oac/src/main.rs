@@ -1,6 +1,7 @@
 mod ast_walk;
 mod bench_prove;
 mod builtins;
+mod cli_output;
 mod codegen_runtime;
 mod comptime;
 mod diagnostics;
@@ -27,8 +28,10 @@ mod verification_solver;
 
 use std::collections::HashSet;
 use std::env;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Instant;
 
 use clap::Parser;
 use diagnostics::{
@@ -84,29 +87,53 @@ impl CodegenOptions {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiagnosticColorMode {
+    Auto,
+    Explicit(bool),
+}
+
+impl DiagnosticColorMode {
+    fn for_subcommand(subcommand: &OacSubcommand) -> Self {
+        match subcommand {
+            OacSubcommand::Build(build) => DiagnosticColorMode::Explicit(build.use_color()),
+            OacSubcommand::Test(test) => DiagnosticColorMode::Explicit(test.use_color()),
+            _ => DiagnosticColorMode::Auto,
+        }
+    }
+
+    fn render_bundle(self, bundle: &CompilerDiagnosticBundle) -> String {
+        match self {
+            DiagnosticColorMode::Auto => bundle.render_terminal_auto(),
+            DiagnosticColorMode::Explicit(use_color) => bundle.render_with_color(use_color),
+        }
+    }
+}
+
 fn main() {
+    let oac = Oac::parse();
+    let diagnostic_color_mode = DiagnosticColorMode::for_subcommand(&oac.subcmd);
+
     let outcome = std::panic::catch_unwind(|| {
         initialize_logging();
-        run()
+        run(oac)
     });
 
     match outcome {
         Ok(Ok(())) => {}
         Ok(Err(bundle)) => {
-            eprintln!("{}", bundle.render_terminal_auto());
+            eprintln!("{}", diagnostic_color_mode.render_bundle(&bundle));
             std::process::exit(1);
         }
         Err(payload) => {
             let bundle = CompilerDiagnosticBundle::single(diagnostic_from_panic(payload));
-            eprintln!("{}", bundle.render_terminal_auto());
+            eprintln!("{}", diagnostic_color_mode.render_bundle(&bundle));
             std::process::exit(101);
         }
     }
 }
 
-fn run() -> Result<(), CompilerDiagnosticBundle> {
-    let oac = Oac::parse();
-
+fn run(oac: Oac) -> Result<(), CompilerDiagnosticBundle> {
     match oac.subcmd {
         OacSubcommand::Build(build) => {
             let current_dir = std::env::current_dir().map_err(|err| {
@@ -307,13 +334,14 @@ pub(crate) fn compile_source_with_artifacts(
     executable_name: &str,
     codes: CompileSourceCodes<'_>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
-    compile_source_with_artifacts_with_profile(
+    compile_source_with_artifacts_with_profile_and_reporter(
         source_path,
         target_dir,
         codegen_options,
         executable_name,
         codes,
         verification_profile::VerificationProfile::default(),
+        None,
     )
 }
 
@@ -325,23 +353,47 @@ pub(crate) fn compile_source_with_artifacts_with_profile(
     codes: CompileSourceCodes<'_>,
     verification_profile: verification_profile::VerificationProfile,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
-    codegen_options.validate()?;
-    let (source, ast) =
-        parse_source_to_ast_with_artifacts(source_path, target_dir, &codes.frontend)?;
-    let ast_path = target_dir.join("ast.json");
-    let ast_json = serde_json::to_string_pretty(&ast).map_err(|err| {
-        io_stage_error(codes.serialize_ast_io_code, "failed to serialize AST", err)
-    })?;
-    std::fs::write(&ast_path, ast_json).map_err(|err| {
-        io_stage_error(
-            codes.write_ast_io_code,
-            format!("failed to write {}", ast_path.display()),
-            err,
-        )
-    })?;
-    debug!(ast_path = %ast_path.display(), "Parsed source file");
+    compile_source_with_artifacts_with_profile_and_reporter(
+        source_path,
+        target_dir,
+        codegen_options,
+        executable_name,
+        codes,
+        verification_profile,
+        None,
+    )
+}
 
-    compile_ast_to_executable_with_profile(
+fn compile_source_with_artifacts_with_profile_and_reporter(
+    source_path: &Path,
+    target_dir: &Path,
+    codegen_options: CodegenOptions,
+    executable_name: &str,
+    codes: CompileSourceCodes<'_>,
+    verification_profile: verification_profile::VerificationProfile,
+    reporter: Option<&mut cli_output::CliReporter>,
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    codegen_options.validate()?;
+    let mut reporter = reporter;
+    let (source, ast) = run_compiler_stage(reporter.as_deref_mut(), "prepare source", || {
+        let (source, ast) =
+            parse_source_to_ast_with_artifacts(source_path, target_dir, &codes.frontend)?;
+        let ast_path = target_dir.join("ast.json");
+        let ast_json = serde_json::to_string_pretty(&ast).map_err(|err| {
+            io_stage_error(codes.serialize_ast_io_code, "failed to serialize AST", err)
+        })?;
+        std::fs::write(&ast_path, ast_json).map_err(|err| {
+            io_stage_error(
+                codes.write_ast_io_code,
+                format!("failed to write {}", ast_path.display()),
+                err,
+            )
+        })?;
+        debug!(ast_path = %ast_path.display(), "Parsed source file");
+        Ok((source, ast))
+    })?;
+
+    compile_ast_to_executable_with_profile_and_reporter(
         target_dir,
         ast,
         codegen_options,
@@ -349,6 +401,7 @@ pub(crate) fn compile_source_with_artifacts_with_profile(
         Some(source_path),
         Some(&source),
         verification_profile,
+        reporter,
     )
 }
 
@@ -364,7 +417,20 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
 
     let source_path = Path::new(&build.source);
     let codegen_options = build.codegen_options();
-    compile_source_with_artifacts(
+    let mut reporter = cli_output::CliReporter::stderr(build.quiet, build.use_color());
+    reporter.header("oac build");
+    reporter.metadata("source", source_path.display());
+    reporter.metadata("backend", codegen_options.backend.as_str());
+    reporter.metadata(
+        "target",
+        codegen_options.target.as_deref().unwrap_or("host"),
+    );
+    if let Some(qbe_arch) = codegen_options.qbe_arch.as_deref() {
+        reporter.metadata("qbe-arch", qbe_arch);
+    }
+
+    let command_start = Instant::now();
+    match compile_source_with_artifacts_with_profile_and_reporter(
         source_path,
         &target_dir,
         codegen_options,
@@ -385,9 +451,40 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
             serialize_ast_io_code: "OAC-IO-009",
             write_ast_io_code: "OAC-IO-010",
         },
-    )?;
+        verification_profile::VerificationProfile::default(),
+        Some(&mut reporter),
+    ) {
+        Ok(executable_path) => {
+            reporter.finish_success(command_start.elapsed(), executable_path.display());
+            Ok(())
+        }
+        Err(err) => {
+            reporter.finish_failure(command_start.elapsed());
+            Err(err)
+        }
+    }
+}
 
-    Ok(())
+fn run_compiler_stage<T>(
+    reporter: Option<&mut cli_output::CliReporter>,
+    stage: &str,
+    action: impl FnOnce() -> Result<T, CompilerDiagnosticBundle>,
+) -> Result<T, CompilerDiagnosticBundle> {
+    let mut reporter = reporter;
+    if let Some(reporter) = reporter.as_deref_mut() {
+        reporter.stage_start(stage);
+    }
+    let stage_start = Instant::now();
+    let result = action();
+    let elapsed = stage_start.elapsed();
+    if let Some(reporter) = reporter.as_deref_mut() {
+        if result.is_ok() {
+            reporter.stage_success(stage, elapsed);
+        } else {
+            reporter.stage_failure(stage, elapsed);
+        }
+    }
+    result
 }
 
 fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBundle> {
@@ -405,57 +502,106 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
 
     let source_path = Path::new(&test.source);
     let codegen_options = test.codegen_options();
-    let (source, ast) = parse_source_to_ast_with_artifacts(
-        source_path,
-        &target_dir,
-        &FrontendPipelineCodes {
-            read_source_io_code: "OAC-IO-012",
-            tokenize_code: "OAC-TOKENIZE-002",
-            serialize_tokens_io_code: "OAC-IO-013",
-            write_tokens_io_code: "OAC-IO-014",
-            parse_code: "OAC-PARSE-002",
-            parse_message: "failed to parse test source",
-            import_code: "OAC-IMPORT-002",
-            import_message: "failed to resolve test imports",
-            comptime_code: "OAC-COMPTIME-002",
-            comptime_message: "failed to execute test comptime applies",
-        },
-    )?;
+    let mut reporter = cli_output::CliReporter::stderr(test.quiet, test.use_color());
+    reporter.header("oac test");
+    reporter.metadata("source", source_path.display());
+    reporter.metadata("backend", codegen_options.backend.as_str());
+    reporter.metadata(
+        "target",
+        codegen_options.target.as_deref().unwrap_or("host"),
+    );
+    if let Some(qbe_arch) = codegen_options.qbe_arch.as_deref() {
+        reporter.metadata("qbe-arch", qbe_arch);
+    }
 
-    let lowered = test_framework::lower_tests_to_program(ast).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Resolve,
-            "OAC-TEST-001",
-            "failed to lower test declarations",
-            err,
+    let command_start = Instant::now();
+    let result = (|| {
+        let (source, ast) = run_compiler_stage(Some(&mut reporter), "prepare source", || {
+            parse_source_to_ast_with_artifacts(
+                source_path,
+                &target_dir,
+                &FrontendPipelineCodes {
+                    read_source_io_code: "OAC-IO-012",
+                    tokenize_code: "OAC-TOKENIZE-002",
+                    serialize_tokens_io_code: "OAC-IO-013",
+                    write_tokens_io_code: "OAC-IO-014",
+                    parse_code: "OAC-PARSE-002",
+                    parse_message: "failed to parse test source",
+                    import_code: "OAC-IMPORT-002",
+                    import_message: "failed to resolve test imports",
+                    comptime_code: "OAC-COMPTIME-002",
+                    comptime_message: "failed to execute test comptime applies",
+                },
+            )
+        })?;
+
+        let (lowered_ast, test_count) =
+            run_compiler_stage(Some(&mut reporter), "collect tests", || {
+                let lowered = test_framework::lower_tests_to_program(ast).map_err(|err| {
+                    stage_error_from_anyhow(
+                        DiagnosticStage::Resolve,
+                        "OAC-TEST-001",
+                        "failed to lower test declarations",
+                        err,
+                        Some(source_path),
+                        Some(&source),
+                    )
+                })?;
+                let test_count = lowered.test_names.len();
+                let lowered_ast = lowered.ast;
+                let ast_path = target_dir.join("ast.json");
+                let ast_json = serde_json::to_string_pretty(&lowered_ast).map_err(|err| {
+                    io_stage_error("OAC-IO-015", "failed to serialize lowered AST", err)
+                })?;
+                std::fs::write(&ast_path, ast_json).map_err(|err| {
+                    io_stage_error(
+                        "OAC-IO-016",
+                        format!("failed to write {}", ast_path.display()),
+                        err,
+                    )
+                })?;
+                debug!(ast_path = %ast_path.display(), "Lowered test AST");
+                Ok((lowered_ast, test_count))
+            })?;
+
+        let executable_path = compile_ast_to_executable_with_profile_and_reporter(
+            &target_dir,
+            lowered_ast,
+            codegen_options,
+            "app",
             Some(source_path),
             Some(&source),
-        )
-    })?;
-    let test_count = lowered.test_names.len();
-    let lowered_ast = lowered.ast;
-    let ast_path = target_dir.join("ast.json");
-    let ast_json = serde_json::to_string_pretty(&lowered_ast)
-        .map_err(|err| io_stage_error("OAC-IO-015", "failed to serialize lowered AST", err))?;
-    std::fs::write(&ast_path, ast_json).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-016",
-            format!("failed to write {}", ast_path.display()),
-            err,
-        )
-    })?;
-    debug!(ast_path = %ast_path.display(), "Lowered test AST");
+            verification_profile::VerificationProfile::default(),
+            Some(&mut reporter),
+        )?;
 
-    let executable_path = compile_ast_to_executable(
-        &target_dir,
-        lowered_ast,
-        codegen_options,
-        "app",
-        Some(source_path),
-        Some(&source),
-    )?;
+        run_compiler_stage(Some(&mut reporter), "run tests", || {
+            execute_test_binary(&executable_path, test_count)
+        })?;
+        Ok((executable_path, test_count))
+    })();
 
-    let output = std::process::Command::new(&executable_path)
+    match result {
+        Ok((executable_path, test_count)) => {
+            reporter.finish_tests(
+                command_start.elapsed(),
+                test_count,
+                executable_path.display(),
+            );
+            Ok(())
+        }
+        Err(err) => {
+            reporter.finish_failure(command_start.elapsed());
+            Err(err)
+        }
+    }
+}
+
+fn execute_test_binary(
+    executable_path: &Path,
+    test_count: usize,
+) -> Result<(), CompilerDiagnosticBundle> {
+    let output = std::process::Command::new(executable_path)
         .output()
         .map_err(|err| {
             io_stage_error(
@@ -485,11 +631,10 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
         .with_note("runtime assertion failures exit with code 242");
         return Err(CompilerDiagnosticBundle::single(diagnostic));
     }
-
-    println!("test run passed: {} test(s)", test_count);
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) fn compile_ast_to_executable(
     target_dir: &Path,
     ast: parser::Ast,
@@ -498,7 +643,7 @@ pub(crate) fn compile_ast_to_executable(
     source_path: Option<&Path>,
     source_text: Option<&str>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
-    compile_ast_to_executable_with_profile(
+    compile_ast_to_executable_with_profile_and_reporter(
         target_dir,
         ast,
         codegen_options,
@@ -506,9 +651,11 @@ pub(crate) fn compile_ast_to_executable(
         source_path,
         source_text,
         verification_profile::VerificationProfile::default(),
+        None,
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn compile_ast_to_executable_with_profile(
     target_dir: &Path,
     ast: parser::Ast,
@@ -518,91 +665,136 @@ pub(crate) fn compile_ast_to_executable_with_profile(
     source_text: Option<&str>,
     verification_profile: verification_profile::VerificationProfile,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    compile_ast_to_executable_with_profile_and_reporter(
+        target_dir,
+        ast,
+        codegen_options,
+        executable_name,
+        source_path,
+        source_text,
+        verification_profile,
+        None,
+    )
+}
+
+fn compile_ast_to_executable_with_profile_and_reporter(
+    target_dir: &Path,
+    ast: parser::Ast,
+    codegen_options: CodegenOptions,
+    executable_name: &str,
+    source_path: Option<&Path>,
+    source_text: Option<&str>,
+    verification_profile: verification_profile::VerificationProfile,
+    reporter: Option<&mut cli_output::CliReporter>,
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
     codegen_options.validate()?;
-    let ir = ir::resolve(ast).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Resolve,
-            "OAC-RESOLVE-001",
-            "failed to resolve/type-check program",
-            err,
-            source_path,
-            source_text,
-        )
+    let mut reporter = reporter;
+    let (ir, qbe_ir) = run_compiler_stage(reporter.as_deref_mut(), "check program", || {
+        let ir = ir::resolve(ast).map_err(|err| {
+            stage_error_from_anyhow(
+                DiagnosticStage::Resolve,
+                "OAC-RESOLVE-001",
+                "failed to resolve/type-check program",
+                err,
+                source_path,
+                source_text,
+            )
+        })?;
+        let ir_path = target_dir.join("ir.json");
+        let ir_json = serde_json::to_string_pretty(&ir)
+            .map_err(|err| io_stage_error("OAC-IO-018", "failed to serialize IR", err))?;
+        std::fs::write(&ir_path, ir_json).map_err(|err| {
+            io_stage_error(
+                "OAC-IO-019",
+                format!("failed to write {}", ir_path.display()),
+                err,
+            )
+        })?;
+        info!(ir_path = %ir_path.display(), "IR generated and type-checked");
+        let qbe_ir = qbe_backend::compile(ir.clone());
+        Ok((ir, qbe_ir))
     })?;
-    let ir_path = target_dir.join("ir.json");
-    let ir_json = serde_json::to_string_pretty(&ir)
-        .map_err(|err| io_stage_error("OAC-IO-018", "failed to serialize IR", err))?;
-    std::fs::write(&ir_path, ir_json).map_err(|err| {
-        io_stage_error(
-            "OAC-IO-019",
-            format!("failed to write {}", ir_path.display()),
-            err,
+
+    run_compiler_stage(reporter.as_deref_mut(), "check proofs", || {
+        prove::verify_prove_obligations_with_qbe_with_profile(
+            &ir,
+            &qbe_ir,
+            target_dir,
+            verification_profile,
         )
+        .map_err(|err| {
+            stage_error_from_anyhow(
+                DiagnosticStage::Prove,
+                "OAC-PROVE-001",
+                "prove obligation verification failed",
+                err,
+                source_path,
+                source_text,
+            )
+        })
     })?;
-    info!(ir_path = %ir_path.display(), "IR generated and type-checked");
-    let qbe_ir = qbe_backend::compile(ir.clone());
-    prove::verify_prove_obligations_with_qbe_with_profile(
-        &ir,
-        &qbe_ir,
-        target_dir,
-        verification_profile,
-    )
-    .map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Prove,
-            "OAC-PROVE-001",
-            "prove obligation verification failed",
-            err,
-            source_path,
-            source_text,
+
+    run_compiler_stage(reporter.as_deref_mut(), "check data rules", || {
+        struct_invariants::verify_struct_invariants_with_qbe_with_profile(
+            &ir,
+            &qbe_ir,
+            target_dir,
+            verification_profile,
         )
+        .map_err(|err| {
+            stage_error_from_anyhow(
+                DiagnosticStage::StructInvariant,
+                "OAC-INV-001",
+                "struct invariant verification failed",
+                err,
+                source_path,
+                source_text,
+            )
+        })
     })?;
-    struct_invariants::verify_struct_invariants_with_qbe_with_profile(
-        &ir,
-        &qbe_ir,
-        target_dir,
-        verification_profile,
-    )
-    .map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::StructInvariant,
-            "OAC-INV-001",
-            "struct invariant verification failed",
-            err,
-            source_path,
-            source_text,
+
+    run_compiler_stage(reporter.as_deref_mut(), "check global rules", || {
+        model_invariants::verify_model_invariants_with_qbe_with_profile(
+            &ir,
+            &qbe_ir,
+            target_dir,
+            verification_profile,
         )
+        .map_err(|err| {
+            stage_error_from_anyhow(
+                DiagnosticStage::ModelInvariant,
+                "OAC-MINV-001",
+                "model invariant verification failed",
+                err,
+                source_path,
+                source_text,
+            )
+        })
     })?;
-    model_invariants::verify_model_invariants_with_qbe_with_profile(
-        &ir,
-        &qbe_ir,
-        target_dir,
-        verification_profile,
-    )
-    .map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::ModelInvariant,
-            "OAC-MINV-001",
-            "model invariant verification failed",
-            err,
-            source_path,
-            source_text,
-        )
+
+    run_compiler_stage(reporter.as_deref_mut(), "check loops", || {
+        reject_proven_non_terminating_main(&qbe_ir).map_err(|err| {
+            stage_error_from_anyhow(
+                DiagnosticStage::LoopClassifier,
+                "OAC-LOOP-001",
+                "loop non-termination classification failed",
+                err,
+                source_path,
+                source_text,
+            )
+        })
     })?;
-    reject_proven_non_terminating_main(&qbe_ir).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::LoopClassifier,
-            "OAC-LOOP-001",
-            "loop non-termination classification failed",
-            err,
-            source_path,
-            source_text,
-        )
-    })?;
+
+    let codegen_stage = match codegen_options.backend {
+        RuntimeBackend::Qbe => "generate backend",
+        RuntimeBackend::Llvm => "generate backend",
+    };
+
     // Verification is always QBE-sourced; runtime backend selection only affects
     // post-verification artifact emission/link inputs.
-    let runtime_artifacts =
-        codegen_runtime::emit_runtime_artifacts(&ir, &qbe_ir, target_dir, &codegen_options)?;
+    let runtime_artifacts = run_compiler_stage(reporter.as_deref_mut(), codegen_stage, || {
+        codegen_runtime::emit_runtime_artifacts(&ir, &qbe_ir, target_dir, &codegen_options)
+    })?;
     debug!(
         backend = codegen_options.backend.as_str(),
         ir_artifact = %runtime_artifacts.ir_artifact_path.display(),
@@ -611,6 +803,17 @@ pub(crate) fn compile_ast_to_executable_with_profile(
     );
 
     let executable_path = target_dir.join(executable_name);
+    run_compiler_stage(reporter.as_deref_mut(), "link executable", || {
+        link_runtime_artifacts(&runtime_artifacts, &codegen_options, &executable_path)
+    })?;
+    Ok(executable_path)
+}
+
+fn link_runtime_artifacts(
+    runtime_artifacts: &codegen_runtime::RuntimeArtifacts,
+    codegen_options: &CodegenOptions,
+    executable_path: &Path,
+) -> Result<(), CompilerDiagnosticBundle> {
     let linker_attempts = resolve_linker_attempts(
         codegen_options.qbe_arch.as_deref(),
         codegen_options.target.as_deref(),
@@ -631,7 +834,7 @@ pub(crate) fn compile_ast_to_executable_with_profile(
         let command_display = format_linker_command(
             &attempt.program,
             &attempt.args,
-            &executable_path,
+            executable_path,
             &runtime_artifacts.linker_input_path,
         );
 
@@ -640,7 +843,7 @@ pub(crate) fn compile_ast_to_executable_with_profile(
             .args(&attempt.args)
             .arg("-g")
             .arg("-o")
-            .arg(&executable_path)
+            .arg(executable_path)
             .arg(&runtime_artifacts.linker_input_path);
 
         let cc_output = match cc_cmd.output() {
@@ -662,7 +865,7 @@ pub(crate) fn compile_ast_to_executable_with_profile(
                 backend = codegen_options.backend.as_str(),
                 "Backend output compiled to executable"
             );
-            return Ok(executable_path);
+            return Ok(());
         }
 
         failures.push(format!(
@@ -959,6 +1162,10 @@ struct Build {
     qbe_arch: Option<String>,
     #[clap(long)]
     target: Option<String>,
+    #[clap(long)]
+    quiet: bool,
+    #[clap(long)]
+    no_color: bool,
 }
 
 impl Build {
@@ -968,6 +1175,10 @@ impl Build {
             qbe_arch: self.qbe_arch.clone(),
             target: self.target.clone(),
         }
+    }
+
+    fn use_color(&self) -> bool {
+        !self.no_color && std::io::stderr().is_terminal()
     }
 }
 
@@ -980,6 +1191,10 @@ struct Test {
     qbe_arch: Option<String>,
     #[clap(long)]
     target: Option<String>,
+    #[clap(long)]
+    quiet: bool,
+    #[clap(long)]
+    no_color: bool,
 }
 
 impl Test {
@@ -989,6 +1204,10 @@ impl Test {
             qbe_arch: self.qbe_arch.clone(),
             target: self.target.clone(),
         }
+    }
+
+    fn use_color(&self) -> bool {
+        !self.no_color && std::io::stderr().is_terminal()
     }
 }
 
@@ -1342,6 +1561,8 @@ mod tests {
                 assert_eq!(build.backend, RuntimeBackend::Qbe);
                 assert!(build.qbe_arch.is_none());
                 assert!(build.target.is_none());
+                assert!(!build.quiet);
+                assert!(!build.no_color);
             }
             _ => panic!("expected build subcommand"),
         }
@@ -1363,6 +1584,20 @@ mod tests {
                 assert_eq!(build.backend, RuntimeBackend::Llvm);
                 assert_eq!(build.target.as_deref(), Some("aarch64-linux-gnu"));
                 assert!(build.qbe_arch.is_none());
+                assert!(!build.quiet);
+                assert!(!build.no_color);
+            }
+            _ => panic!("expected build subcommand"),
+        }
+    }
+
+    #[test]
+    fn build_cli_parses_quiet_and_no_color_flags() {
+        let parsed = Oac::parse_from(["oac", "build", "main.oa", "--quiet", "--no-color"]);
+        match parsed.subcmd {
+            OacSubcommand::Build(build) => {
+                assert!(build.quiet);
+                assert!(build.no_color);
             }
             _ => panic!("expected build subcommand"),
         }
@@ -1386,6 +1621,8 @@ mod tests {
                 assert_eq!(test.backend, RuntimeBackend::Qbe);
                 assert!(test.qbe_arch.is_none());
                 assert!(test.target.is_none());
+                assert!(!test.quiet);
+                assert!(!test.no_color);
             }
             _ => panic!("expected test subcommand"),
         }
@@ -1407,6 +1644,20 @@ mod tests {
                 assert_eq!(test.backend, RuntimeBackend::Llvm);
                 assert_eq!(test.target.as_deref(), Some("aarch64-linux-gnu"));
                 assert!(test.qbe_arch.is_none());
+                assert!(!test.quiet);
+                assert!(!test.no_color);
+            }
+            _ => panic!("expected test subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_quiet_and_no_color_flags() {
+        let parsed = Oac::parse_from(["oac", "test", "main.oa", "--quiet", "--no-color"]);
+        match parsed.subcmd {
+            OacSubcommand::Test(test) => {
+                assert!(test.quiet);
+                assert!(test.no_color);
             }
             _ => panic!("expected test subcommand"),
         }

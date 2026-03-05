@@ -159,7 +159,8 @@ Key tests:
 - Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags (including `--strict-outcome-gate`).
-- `crates/oac/src/main.rs` tests now also cover runtime backend CLI/linker plumbing (`--backend`, `--qbe-arch`, `--target`, positional-arch removal, and backend option validation).
+- `crates/oac/src/main.rs` tests now also cover runtime backend CLI/linker plumbing (`--backend`, `--qbe-arch`, `--target`, positional-arch removal, backend option validation) plus output controls (`--quiet`, `--no-color`) for both `build` and `test` subcommands.
+- `crates/oac/src/cli_output.rs` tests cover staged-row formatting/alignment, no-color ANSI suppression, quiet-mode silence, and failure-row rendering.
 - `crates/oac/src/llvm_backend.rs` tests cover direct resolved-IR compile smoke, struct copy-barrier/equality lowering (`calloc`/`memcpy`/`memcmp`), `assert` exit-code lowering (`242`), runtime-noop `prove` lowering, extern symbol mapping, and namespace-call mangling behavior.
 - Build-stage diagnostics now include model-invariant failures at `DiagnosticStage::ModelInvariant` with code `OAC-MINV-001` (in addition to existing `OAC-PROVE-001` / `OAC-INV-001` verification diagnostics).
 - `crates/oac/src/bench_prove.rs` tests cover suite selection, median/regression helpers, expected-outcome matching, report JSON emission, deterministic `--update-baseline` rewrites (using a mocked fixture runner), and strict outcome-gate execution on the quick corpus.

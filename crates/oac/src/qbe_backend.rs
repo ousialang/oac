@@ -2856,6 +2856,8 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
                             backend: RuntimeBackend::Qbe,
                             qbe_arch: None,
                             target: None,
+                            quiet: false,
+                            no_color: false,
                         },
                     ) {
                         Ok(()) => match run_executable_with_timeout(tmp.path()) {
@@ -2916,6 +2918,8 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
                     backend: RuntimeBackend::Llvm,
                     qbe_arch: None,
                     target: None,
+                    quiet: false,
+                    no_color: false,
                 },
             ) {
                 Ok(()) => run_executable_with_timeout(tmp.path())

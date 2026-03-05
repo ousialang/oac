@@ -96,7 +96,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Built-in `FP32` and `FP64` are supported end-to-end. Unsuffixed decimal literals default to `FP32` (for example `1.25`), while `f64` suffix selects `FP64` (for example `1.25f64`). Numeric arithmetic/comparisons do not perform implicit widening/coercion between integer and floating types (`U8`, `I32`, `I64`, `FP32`, `FP64` stay same-type only).
 - Generic-specialized helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
-- Runtime codegen now supports two backends selected by flags on `oac build` / `oac test`: `--backend qbe|llvm` (default `qbe`), optional `--qbe-arch` (QBE-only), and optional `--target` (shared linker/clang target triple override).
+- Runtime codegen now supports two backends selected by flags on `oac build` / `oac test`: `--backend qbe|llvm` (default `qbe`), optional `--qbe-arch` (QBE-only), optional `--target` (shared linker/clang target triple override), and output controls `--quiet` / `--no-color`.
 - Positional `arch` on `oac build` / `oac test` was removed; backend/target configuration is now flag-based.
 - QBE remains mandatory as the verification source of truth: prove obligations, struct-invariant obligations, and loop non-termination classification always run on in-memory QBE output, regardless of runtime backend.
 - Runtime artifact outputs are backend-specific: QBE emits `target/oac/ir.qbe` + `target/oac/assembly.s`; LLVM emits `target/oac/ir.ll` + `target/oac/object.o`.
@@ -105,6 +105,9 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
 - Compiler diagnostics are centralized in `crates/oac/src/diagnostics.rs` and rendered with Ariadne for both CLI output and `oac lsp` diagnostic conversion.
 - `oac build` / `oac test` stage failures are now mapped to stable diagnostic codes (for example `OAC-PARSE-001`, `OAC-RESOLVE-001`, `OAC-INV-001`, `OAC-MINV-001`, `OAC-LINK-001`, `OAC-LINK-002`) and emitted as Ariadne reports; execution fixture compilation-error snapshots therefore reflect Ariadne plain-report text.
+- `oac build` and `oac test` now emit a compact staged progress UI to `stderr` by default with user-facing stage labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`; plus `collect tests`/`run tests` for test flows), aligned durations, and low-noise ASCII status prefixes (`...`, `ok`, `!!`).
+- `--quiet` suppresses build/test harness/progress output (success path fully silent) while keeping diagnostics and `oac test` runtime program stdout/stderr forwarding behavior.
+- `--no-color` disables ANSI color for both staged progress rows and Ariadne diagnostic rendering for that build/test invocation.
 - A VS Code extension scaffold now lives in `tools/vscode-ousia/`; it launches `oac lsp` and is configured via `ousia.server.path`, `ousia.server.args`, and `ousia.trace.server`.
 - The VS Code extension must launch `oac lsp` without appending `--stdio`; `ousia.server.args` are sanitized to ignore `--stdio`.
 - Top-level tests use declaration syntax: `test "Name" { ... }`.

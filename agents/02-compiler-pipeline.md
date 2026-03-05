@@ -20,6 +20,7 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
     - LLVM runtime backend: emit `target/oac/ir.ll`, run `clang -x ir -c`, emit `target/oac/object.o`.
 12. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
 13. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+14. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -50,6 +51,7 @@ Defined in `crates/oac/src/main.rs` (`run_tests` function):
 7. Lower to QBE, run prove/struct-invariant/model-invariant checks, run non-termination classification, emit runtime backend artifacts (`qbe` or `llvm`), and link executable (same backend path as `oac build`).
 8. Execute `target/oac/test/app` and treat non-zero exit status as test failure.
 9. Map failures into shared compiler diagnostics and render Ariadne reports for CLI users.
+10. `oac test` emits the same compile-stage progress UI to `stderr`, plus `collect tests` and `run tests` stages; `--quiet` suppresses harness/progress rows while still forwarding runtime program stdout/stderr, and `--no-color` disables ANSI styling for both progress rows and diagnostics.
 
 Artifacts emitted during test runs:
 - `target/oac/test/tokens.json`
@@ -246,7 +248,7 @@ Important enforced invariants include:
 ## LSP Path
 
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
-- `build`/`test` backend flags now follow: `oac build <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>]` and `oac test <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>]`.
+- `build`/`test` backend flags now follow: `oac build <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>] [--quiet] [--no-color]` and `oac test <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>] [--quiet] [--no-color]`.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
 - `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline] [--strict-outcome-gate]`).
 - `--strict-outcome-gate` runs baseline/candidate verification-outcome captures over the selected fixture corpus and fails on forbidden transitions (`sat/unsat` drift or obligation-key set drift), writing artifacts to `target/oac/verification_outcomes/`.

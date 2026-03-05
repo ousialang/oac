@@ -130,7 +130,7 @@ impl CompilerDiagnostic {
         self.render_with_color(std::io::stderr().is_terminal())
     }
 
-    fn render_with_color(&self, use_color: bool) -> String {
+    pub fn render_with_color(&self, use_color: bool) -> String {
         let (primary_file_id, primary_span) = if let Some(label) = self.labels.first() {
             (label.file_id.clone(), sanitize_span(&label.span))
         } else if let Some((file_id, source)) = self.sources.iter().next() {
@@ -246,6 +246,10 @@ impl CompilerDiagnosticBundle {
 
     pub fn render_terminal_auto(&self) -> String {
         self.render_all(std::io::stderr().is_terminal())
+    }
+
+    pub fn render_with_color(&self, use_color: bool) -> String {
+        self.render_all(use_color)
     }
 
     fn render_all(&self, use_color: bool) -> String {
