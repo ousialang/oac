@@ -6,4 +6,4 @@ snapshot_kind: text
 COMPILATION ERROR
 
 [OAC-PROVE-001] Error: prove obligation verification failed: integer safety verification failed (SAT counterexamples found):
-main#U8Mut__add_bytes#ptrint#.oac_integer_site_ptrint__add__60 (root=main, caller=U8Mut__add_bytes, op=add, semantic_type=PtrInt, qbe_artifact=site_main_U8Mut__add_bytes_ptrint__oac_integer_site_ptrint__add__60.qbe, smt_artifact=site_main_U8Mut__add_bytes_ptrint__oac_integer_site_ptrint__add__60.smt2)
+main#U8Mut__add_bytes#ptrint#.oac_integer_site_ptrint__add__0 (root=main, caller=U8Mut__add_bytes, op=add, semantic_type=PtrInt, qbe_artifact=site_main_U8Mut__add_bytes_ptrint__oac_integer_site_ptrint__add__0.qbe, smt_artifact=site_main_U8Mut__add_bytes_ptrint__oac_integer_site_ptrint__add__0.smt2)

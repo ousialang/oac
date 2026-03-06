@@ -2415,8 +2415,10 @@ fn compile_expr(
 mod tests {
     use std::collections::VecDeque;
     use std::fs;
+    use std::panic::{self, AssertUnwindSafe};
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread::{self, sleep};
     use std::time::{Duration, Instant};
@@ -2542,6 +2544,10 @@ mod tests {
             .filter(|jobs| *jobs > 0);
 
         configured.unwrap_or(1).min(total_fixtures).max(1)
+    }
+
+    fn assert_execution_snapshot(fixture_path: &Path, snapshot_content: &str) {
+        insta::assert_snapshot!(fixture_path.display().to_string(), snapshot_content);
     }
 
     #[test]
@@ -2873,14 +2879,21 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
 
         let worker_count = execution_test_worker_count(paths.len());
         let queue = Arc::new(Mutex::new(VecDeque::from(paths)));
-        let results = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let first_failure: Arc<Mutex<Option<Box<dyn std::any::Any + Send>>>> =
+            Arc::new(Mutex::new(None));
 
         thread::scope(|scope| {
             for _ in 0..worker_count {
                 let queue = Arc::clone(&queue);
-                let results = Arc::clone(&results);
+                let stop = Arc::clone(&stop);
+                let first_failure = Arc::clone(&first_failure);
 
                 scope.spawn(move || loop {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+
                     let path = {
                         let mut queue = queue.lock().expect("lock execution fixture queue");
                         queue.pop_front()
@@ -2888,6 +2901,9 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
                     let Some(path) = path else {
                         break;
                     };
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
 
                     println!("Testing {}", path.display());
                     let tmp = tempfile::tempdir().expect("create execution tempdir");
@@ -2911,22 +2927,33 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
                         Err(err) => format!("COMPILATION ERROR\n\n{err}"),
                     };
 
-                    results
-                        .lock()
-                        .expect("lock execution fixture results")
-                        .push((path, snapshot_content));
+                    let assertion = panic::catch_unwind(AssertUnwindSafe(|| {
+                        assert_execution_snapshot(&path, &snapshot_content);
+                    }));
+                    if let Err(payload) = assertion {
+                        stop.store(true, Ordering::Relaxed);
+                        queue
+                            .lock()
+                            .expect("lock execution fixture queue for cancellation")
+                            .clear();
+                        let mut first_failure = first_failure
+                            .lock()
+                            .expect("lock first execution fixture failure");
+                        if first_failure.is_none() {
+                            *first_failure = Some(payload);
+                        }
+                        break;
+                    }
                 });
             }
         });
 
-        let mut results = Arc::into_inner(results)
-            .expect("execution fixture results still shared")
+        let first_failure = Arc::into_inner(first_failure)
+            .expect("execution fixture failure still shared")
             .into_inner()
-            .expect("consume execution fixture results");
-        results.sort_by(|(left, _), (right, _)| left.cmp(right));
-
-        for (path, snapshot_content) in results {
-            insta::assert_snapshot!(path.display().to_string(), snapshot_content);
+            .expect("consume execution fixture failure");
+        if let Some(payload) = first_failure {
+            panic::resume_unwind(payload);
         }
     }
 
