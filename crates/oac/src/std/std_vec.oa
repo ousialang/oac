@@ -6,7 +6,7 @@ generic Vec[T] {
 
 	enum List {
 		Empty,
-		Node(Node),
+		Node: Node,
 	}
 
 	struct Vec {
@@ -22,12 +22,12 @@ generic Vec[T] {
 
 	enum PopResult {
 		Empty,
-		Value(PopValue),
+		Value: PopValue,
 	}
 
 	enum Lookup {
 		Missing,
-		Found(T),
+		Found: T,
 	}
 
 	struct SetResult {

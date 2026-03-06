@@ -106,6 +106,7 @@ Core AST includes:
 - Type defs: `Struct`, `Enum`
 - Generic definitions and specializations (`generic Name[T]`, `specialize Alias = Name[ConcreteType]`), including local `specialize` declarations inside generic bodies.
 - Trait declarations and concrete impl blocks (`trait Name { ... }`, `impl Name for Type { ... }`)
+- Enum payload variants use `Variant: Type` declarations, while unit variants stay bare.
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
 - Top-level test declarations (`test "Name" { ... }`).
 - Top-level namespaces (`namespace Name { ... }`) support `fun` and `extern fun`; declarations are flattened to mangled internal function keys (`Name__fn`).
@@ -152,11 +153,11 @@ Important enforced invariants include:
 - arithmetic/comparison on numerics requires matching widths/types (`U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64`), with no implicit int/float coercions
 - `U8` comparisons/codegen are unsigned (`ult/ule/ugt/uge`), and `U8` division lowers to unsigned division (`udiv`)
 - stdlib split modules intentionally expose namespaced helper APIs for JSON (`Json.*`), now including both scanner/validator helpers (`json_kind`, `parse_json_document_result`) and value-tree parsing helpers (`parse_json_document_value_result`, `object_get`, `array_get`)
-- JSON structured values now represent booleans as `JsonValue.Bool(Bool)` (instead of separate `True`/`False` variants), and kind classification uses `JsonKind.Bool`.
+- JSON structured values now represent booleans as `JsonValue.Bool: Bool` (instead of separate `True`/`False` variants), and kind classification uses `JsonKind.Bool`.
 - stdlib split modules also include `AsciiChar`/`AsciiCharResult` helpers in `crates/oac/src/std/std_ascii.oa`, loaded through `crates/oac/src/std/std.oa` like other std modules
 - stdlib split modules also include `Char` helper API in `crates/oac/src/std/std_char.oa`, loaded through `crates/oac/src/std/std.oa` like other std modules
 - stdlib split modules now also include `Null` as an empty struct in `crates/oac/src/std/std_null.oa` (with `Null.value()` helper), loaded through `crates/oac/src/std/std.oa` like other std modules
-- stdlib split modules now also include `Bytes` + `String` in `crates/oac/src/std/std_string.oa`; `String` is std-defined as a tagged enum (`Literal(Bytes)`, `Heap(Bytes)`) and is no longer a resolver primitive
+- stdlib split modules now also include `Bytes` + `String` in `crates/oac/src/std/std_string.oa`; `String` is std-defined as a tagged enum (`Literal: Bytes`, `Heap: Bytes`) and is no longer a resolver primitive
 - `String` std helper surface includes structural accessors plus utility helpers (`String.equals`, `String.starts_with`, `String.ends_with`, `String.char_at_or`, `String.slice_clamped`)
 - stdlib split modules now also include generic `Option[T]` / `Result[T,E]` in `crates/oac/src/std/std_option_result.oa`
 - stdlib split modules now also include generic `Ref[T]` / `Mut[T]` in `crates/oac/src/std/std_ref.oa` with typed read helpers (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`) and mutable read/write helpers (`U8Mut.*`, `I32Mut.*`, `I64Mut.*`, `PtrIntMut.*`, `BoolMut.*`)

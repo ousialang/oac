@@ -7,13 +7,13 @@ enum IoError {
 }
 
 enum IoReadResult {
-	Ok(Bytes),
-	Err(IoError),
+	Ok: Bytes,
+	Err: IoError,
 }
 
 enum IoWriteResult {
 	Ok,
-	Err(IoError),
+	Err: IoError,
 }
 
 namespace Io {

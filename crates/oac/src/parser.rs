@@ -910,24 +910,21 @@ fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef
                     _ => unreachable!(),
                 };
 
-                let payload_ty = if tokens.get(0)
-                    == Some(&TokenData::Parenthesis {
+                let payload_ty = match tokens.first() {
+                    Some(TokenData::Symbols(symbol)) if symbol == ":" => {
+                        tokens.remove(0);
+                        Some(parse_type_reference(tokens)?)
+                    }
+                    Some(TokenData::Parenthesis {
                         opening: '(',
                         is_opening: true,
-                    }) {
-                    tokens.remove(0);
-                    let ty = parse_type_reference(tokens)?;
-                    anyhow::ensure!(
-                        tokens.remove(0)
-                            == TokenData::Parenthesis {
-                                opening: ')',
-                                is_opening: false
-                            },
-                        "expected closing ')' in variant payload"
-                    );
-                    Some(ty)
-                } else {
-                    None
+                    }) => {
+                        return Err(anyhow::anyhow!(
+                            "enum payload syntax uses ':' (for example `{}: Type`) instead of parentheses",
+                            variant_name
+                        ));
+                    }
+                    _ => None,
                 };
 
                 variants.push(EnumVariantDef {
@@ -2247,12 +2244,56 @@ enum JsonKind
     }
 
     #[test]
+    fn parses_enum_declaration_with_colon_payload_and_unit_variant() {
+        let source = r#"
+enum ParseResult {
+	Ok: I32,
+	Err: ParseErr,
+	UnitVariant,
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize enum payload source");
+        let ast = parse(tokens).expect("parse enum payload source");
+        let super::TypeDefDecl::Enum(enum_def) = &ast.type_definitions[0] else {
+            panic!("expected enum");
+        };
+        assert_eq!(enum_def.name, "ParseResult");
+        assert_eq!(enum_def.variants.len(), 3);
+        assert_eq!(enum_def.variants[0].name, "Ok");
+        assert_eq!(enum_def.variants[0].payload_ty.as_deref(), Some("I32"));
+        assert_eq!(enum_def.variants[1].name, "Err");
+        assert_eq!(enum_def.variants[1].payload_ty.as_deref(), Some("ParseErr"));
+        assert_eq!(enum_def.variants[2].name, "UnitVariant");
+        assert_eq!(enum_def.variants[2].payload_ty, None);
+    }
+
+    #[test]
+    fn rejects_parenthesized_enum_payload_syntax_with_migration_hint() {
+        let source = r#"
+enum Option {
+	None,
+	Some(I32),
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize legacy enum payload source");
+        let err = parse(tokens).expect_err("legacy enum payload syntax should fail");
+        assert!(
+            err.to_string().contains("enum payload syntax uses ':'"),
+            "unexpected parse error: {err}"
+        );
+    }
+
+    #[test]
     fn rejects_template_keyword_with_migration_hint() {
         let source = r#"
 template Option[T] {
 	enum Option {
 		None,
-		Some(T),
+		Some: T,
 	}
 }
 "#

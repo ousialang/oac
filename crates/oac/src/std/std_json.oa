@@ -5,8 +5,8 @@ enum ParseErr {
 }
 
 enum ParseResult {
-	Ok(I32),
-	Err(ParseErr),
+	Ok: I32,
+	Err: ParseErr,
 }
 
 enum JsonKind {
@@ -20,11 +20,11 @@ enum JsonKind {
 }
 
 enum JsonValue {
-	Object(JsonMembers),
-	Array(JsonValues),
-	String(String),
-	Number(String),
-	Bool(Bool),
+	Object: JsonMembers,
+	Array: JsonValues,
+	String: String,
+	Number: String,
+	Bool: Bool,
 	Null,
 }
 
@@ -40,7 +40,7 @@ struct JsonMembersNode {
 
 enum JsonMembers {
 	Empty,
-	Node(JsonMembersNode),
+	Node: JsonMembersNode,
 }
 
 struct JsonValuesNode {
@@ -50,7 +50,7 @@ struct JsonValuesNode {
 
 enum JsonValues {
 	Empty,
-	Node(JsonValuesNode),
+	Node: JsonValuesNode,
 }
 
 struct ParsedJsonValue {
@@ -59,23 +59,23 @@ struct ParsedJsonValue {
 }
 
 enum JsonValueParseResult {
-	Ok(ParsedJsonValue),
-	Err(ParseErr),
+	Ok: ParsedJsonValue,
+	Err: ParseErr,
 }
 
 enum JsonDocumentValueResult {
-	Ok(JsonValue),
-	Err(ParseErr),
+	Ok: JsonValue,
+	Err: ParseErr,
 }
 
 enum JsonValueLookup {
 	Missing,
-	Found(JsonValue),
+	Found: JsonValue,
 }
 
 enum JsonStringLookup {
 	Missing,
-	Found(String),
+	Found: String,
 }
 
 namespace Json {

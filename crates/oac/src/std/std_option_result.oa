@@ -1,7 +1,7 @@
 generic Option[T] {
 	enum Option {
 		None,
-		Some(T),
+		Some: T,
 	}
 
 	invariant "Option.none must agree with presence predicates" for (a: T, b: T) {
@@ -38,8 +38,8 @@ generic Option[T] {
 
 generic Result[T, E] {
 	enum Result {
-		Ok(T),
-		Err(E),
+		Ok: T,
+		Err: E,
 	}
 
 	fun ok(value: T) -> Result {

@@ -32,7 +32,7 @@ Observed in parser/IR implementation:
 - `if` / `else` and `while`.
 - Struct definitions and struct literal construction.
 - Field access.
-- Enum definitions with optional payloads.
+- Enum definitions with optional payloads using `Variant: Type` for payload variants and bare names for unit variants.
 - Pattern matching on enums (`match`) as statement and expression.
 - Generic definitions and specialization aliases with square-bracket type arguments (`generic Name[T]`, `specialize Alias = Name[ConcreteType]`).
 - Trait declarations and concrete impl blocks (`trait Name { fun method(v: Self, ...) -> ... }`, `impl Name for Type { ... }`).
@@ -105,7 +105,7 @@ Observed in parser/IR implementation:
 - Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Eq, V]`) with separate-chaining semantics while routing key hashing/equality through `Hash.hash(k)` and `Eq.equals(a, b)`.
 - The split stdlib now also defines generic `HashSet[K: Hash + Eq]` (in `crates/oac/src/std/std_set.oa`) as a persistent separate-chaining set with set algebra (`union`, `intersection`, `difference`) and explicit mutation result payloads (`InsertResult`, `RemoveResult`).
 - The split stdlib now also defines generic `Vec[T]` (in `crates/oac/src/std/std_vec.oa`) as a persistent vector-style container with `push`/`pop`/`get`/`set`/`reserve`/`clear` APIs and explicit result payloads (`PopResult`, `Lookup`, `SetResult`).
-- `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`.
+- `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal: Bytes, Heap: Bytes }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`.
 - `String.make_bytes` normalizes `Bytes.len` fail-closed (`len < 0` clamps to `0`) and is used by `String.from_literal_parts` / `String.from_heap_parts`; `String.bytes` performs equivalent inline normalization through `String.normalize_len` before constructing `Bytes` so payload invariants remain provable at call sites.
 - `String` namespaced helpers include structural accessors (`bytes`, `ptr`, `len`) and convenience operations (`is_empty`, `equals`, `starts_with`, `ends_with`, `char_at_or`, `slice_clamped`).
 - Stdlib now includes a small set of global model invariants (2+ args) chosen for solver stability:
@@ -117,7 +117,7 @@ Observed in parser/IR implementation:
   - `Ref`/`Mut` pointer wrapper laws: `ptr(from_ptr(p)) == p`
 - C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) and exposes both scanner-style APIs (`Json.parse_json_document_result`, `Json.json_kind`) and value-tree APIs (`Json.parse_json_document_value_result` returning `JsonValue` trees with `JsonMembers`/`JsonValues`).
-- JSON booleans in `JsonValue` are modeled as `JsonValue.Bool(Bool)` (not separate `True`/`False` variants), and `Json.json_kind` classifies both `true` and `false` as `JsonKind.Bool`.
+- JSON booleans in `JsonValue` are modeled as `JsonValue.Bool: Bool` (not separate `True`/`False` variants), and `Json.json_kind` classifies both `true` and `false` as `JsonKind.Bool`.
 - JSON result and value carrier types are top-level stdlib declarations (`ParseErr`, `ParseResult`, `JsonKind`, `JsonValue`, `JsonValueParseResult`, `JsonDocumentValueResult`, `JsonValueLookup`, `JsonStringLookup`).
 - JSON string scanning now accepts `\uXXXX` escapes (exactly four hex digits) and remains fail-closed for malformed escape sequences.
 - The split stdlib now also uses namespaced file-descriptor IO helpers (`Io.*`) from `crates/oac/src/std/std_io.oa` with explicit result enums (`IoError`, `IoReadResult`, `IoWriteResult`) layered over `Clib.open/read/write/close`.

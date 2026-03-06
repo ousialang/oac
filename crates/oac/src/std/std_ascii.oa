@@ -8,7 +8,7 @@ invariant code_in_ascii_range "ascii code must be in [0, 127]" for (v: AsciiChar
 }
 
 enum AsciiCharResult {
-	Ok(AsciiChar),
+	Ok: AsciiChar,
 	OutOfRange,
 }
 

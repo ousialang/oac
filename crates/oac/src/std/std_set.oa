@@ -6,7 +6,7 @@ generic HashSet[K: Hash + Eq] {
 
 	enum Bucket {
 		Empty,
-		Node(EntryNode),
+		Node: EntryNode,
 	}
 
 	struct BucketTreeNode {
@@ -15,8 +15,8 @@ generic HashSet[K: Hash + Eq] {
 	}
 
 	enum Buckets {
-		Leaf(Bucket),
-		Branch(BucketTreeNode),
+		Leaf: Bucket,
+		Branch: BucketTreeNode,
 	}
 
 	struct HashSet {

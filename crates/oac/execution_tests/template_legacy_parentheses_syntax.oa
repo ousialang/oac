@@ -1,6 +1,6 @@
 template Legacy(T) {
 	enum Legacy {
-		Value(T),
+		Value: T,
 	}
 }
 

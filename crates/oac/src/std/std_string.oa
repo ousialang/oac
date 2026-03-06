@@ -8,8 +8,8 @@ invariant non_negative_length "bytes length must be non-negative" for (v: Bytes)
 }
 
 enum String {
-	Literal(Bytes),
-	Heap(Bytes),
+	Literal: Bytes,
+	Heap: Bytes,
 }
 
 invariant make_bytes_normalizes_len_and_keeps_ptr "String.make_bytes must keep ptr and normalize len" for (ptr: PtrInt, len: I32) {
