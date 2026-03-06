@@ -96,6 +96,9 @@ Observed in parser/IR implementation:
 - Impl coherence is global: exactly one `impl Trait for Type` is allowed in a program.
 - Impl method sets/signatures must match trait declarations exactly (arity, parameter types after `Self` substitution, return type); missing/extra methods are compile errors.
 - `impl` methods cannot be `extern` or `comptime` in v1.
+- Comptime semantic reflection is compiler-provided and `Type`-driven: struct helpers are `is_struct`, `as_struct_opt`, `struct_field_count`, `struct_field_at`, `field_name`, `field_type`; enum helpers are `is_enum`, `as_enum_opt`, `enum_variant_count`, `enum_variant_at`, `variant_name`, `variant_payload_type_opt`; supporting semantic pseudo-types include `Type`, `DeclSet`, `SemanticExpr`, `SourceSpan`, `StructInfo`, `FieldInfo`, `EnumInfo`, and `VariantInfo`.
+- Comptime declaration emission is compiler-provided through `DeclSet`: `declset_new`, `declset_add_empty_enum`, `declset_add_enum_tag_variant`, `declset_add_enum_payload_variant`, `declset_add_derived_struct`, and `declset_add_invariant_field_gt_i32`. Enum emission is incremental in v1: create an emitted enum first, then append variants by emitted enum name.
+- These semantic reflection/emission builtins are comptime-only; runtime functions are rejected if they call `declset_*` or any of the struct/enum/type metadata helpers.
 - Generic specialization enforces trait bounds fail-closed: missing `impl Trait for ConcreteType` required by a bound is a compile error.
 - Generic bodies may declare local specialization aliases (`specialize LocalAlias = Name[TypeArgs...]`), and generic expansion resolves those aliases recursively into concrete type/function/invariant declarations using the parent specialization substitutions.
 - Generic expansion is ahead-of-type-checking and ahead-of-codegen: backend/proving/invariant passes still operate on concrete non-generic IR/function symbols.

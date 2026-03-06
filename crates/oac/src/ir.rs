@@ -30,28 +30,39 @@ const MODEL_INVARIANT_SIDE_EFFECT_BUILTINS: [&str; 10] = [
     "print_str",
 ];
 const RESERVED_BUILTIN_FUNCTION_NAMES: [&str; 2] = ["prove", "assert"];
-const SEMANTIC_BUILTIN_TYPES: [&str; 6] = [
+const SEMANTIC_BUILTIN_TYPES: [&str; 8] = [
     "Type",
     "DeclSet",
     "SemanticExpr",
     "SourceSpan",
     "StructInfo",
     "FieldInfo",
+    "EnumInfo",
+    "VariantInfo",
 ];
-const SEMANTIC_EMISSION_BUILTINS: [&str; 3] = [
+const SEMANTIC_EMISSION_BUILTINS: [&str; 6] = [
     "declset_new",
+    "declset_add_empty_enum",
+    "declset_add_enum_tag_variant",
+    "declset_add_enum_payload_variant",
     "declset_add_derived_struct",
     "declset_add_invariant_field_gt_i32",
 ];
-const SEMANTIC_INTROSPECTION_BUILTINS: [&str; 13] = [
+const SEMANTIC_INTROSPECTION_BUILTINS: [&str; 19] = [
     "expr_meta_opt",
     "definition_location_opt",
     "is_struct",
+    "is_enum",
     "as_struct_opt",
+    "as_enum_opt",
     "struct_field_count",
     "struct_field_at",
+    "enum_variant_count",
+    "enum_variant_at",
     "field_name",
     "field_type",
+    "variant_name",
+    "variant_payload_type_opt",
     "type_name",
     "resolve_type",
     "is_some",
@@ -4819,6 +4830,29 @@ pub(crate) fn get_expression_type(
                 }
                 return Ok("Bool".to_string());
             }
+            if function == "is_enum" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "is_enum expects exactly one Type argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if arg_ty != "Type" {
+                    return Err(anyhow::anyhow!(
+                        "is_enum expects Type argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("Bool".to_string());
+            }
             if function == "as_struct_opt" {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
@@ -4842,6 +4876,29 @@ pub(crate) fn get_expression_type(
                 }
                 return Ok("Option[StructInfo]".to_string());
             }
+            if function == "as_enum_opt" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "as_enum_opt expects exactly one Type argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if arg_ty != "Type" {
+                    return Err(anyhow::anyhow!(
+                        "as_enum_opt expects Type argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("Option[EnumInfo]".to_string());
+            }
             if function == "struct_field_count" {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
@@ -4860,6 +4917,29 @@ pub(crate) fn get_expression_type(
                 if arg_ty != "StructInfo" {
                     return Err(anyhow::anyhow!(
                         "struct_field_count expects StructInfo argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("I32".to_string());
+            }
+            if function == "enum_variant_count" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "enum_variant_count expects exactly one EnumInfo argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if arg_ty != "EnumInfo" {
+                    return Err(anyhow::anyhow!(
+                        "enum_variant_count expects EnumInfo argument, got {}",
                         arg_ty
                     ));
                 }
@@ -4897,6 +4977,38 @@ pub(crate) fn get_expression_type(
                 }
                 return Ok("Option[FieldInfo]".to_string());
             }
+            if function == "enum_variant_at" {
+                if arguments.len() != 2 {
+                    return Err(anyhow::anyhow!(
+                        "enum_variant_at expects (EnumInfo, I32), got {} arguments",
+                        arguments.len()
+                    ));
+                }
+                let a = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let b = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if a != "EnumInfo" || b != "I32" {
+                    return Err(anyhow::anyhow!(
+                        "enum_variant_at expects (EnumInfo, I32), got ({}, {})",
+                        a,
+                        b
+                    ));
+                }
+                return Ok("Option[VariantInfo]".to_string());
+            }
             if function == "field_name" {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
@@ -4915,6 +5027,29 @@ pub(crate) fn get_expression_type(
                 if arg_ty != "FieldInfo" {
                     return Err(anyhow::anyhow!(
                         "field_name expects FieldInfo argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("String".to_string());
+            }
+            if function == "variant_name" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "variant_name expects exactly one VariantInfo argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if arg_ty != "VariantInfo" {
+                    return Err(anyhow::anyhow!(
+                        "variant_name expects VariantInfo argument, got {}",
                         arg_ty
                     ));
                 }
@@ -4943,11 +5078,157 @@ pub(crate) fn get_expression_type(
                 }
                 return Ok("Type".to_string());
             }
+            if function == "variant_payload_type_opt" {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "variant_payload_type_opt expects exactly one VariantInfo argument, got {}",
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if arg_ty != "VariantInfo" {
+                    return Err(anyhow::anyhow!(
+                        "variant_payload_type_opt expects VariantInfo argument, got {}",
+                        arg_ty
+                    ));
+                }
+                return Ok("Option[Type]".to_string());
+            }
             if function == "declset_new" {
                 if !arguments.is_empty() {
                     return Err(anyhow::anyhow!(
                         "declset_new expects zero arguments, got {}",
                         arguments.len()
+                    ));
+                }
+                return Ok("DeclSet".to_string());
+            }
+            if function == "declset_add_empty_enum" {
+                if arguments.len() != 2 {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_empty_enum expects (DeclSet, String), got {} arguments",
+                        arguments.len()
+                    ));
+                }
+                let a = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let b = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if a != "DeclSet" || b != "String" {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_empty_enum expects (DeclSet, String), got ({}, {})",
+                        a,
+                        b
+                    ));
+                }
+                return Ok("DeclSet".to_string());
+            }
+            if function == "declset_add_enum_tag_variant" {
+                if arguments.len() != 3 {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_enum_tag_variant expects (DeclSet, String, String), got {} arguments",
+                        arguments.len()
+                    ));
+                }
+                let a = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let b = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let c = get_expression_type(
+                    &arguments[2],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if a != "DeclSet" || b != "String" || c != "String" {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_enum_tag_variant expects (DeclSet, String, String), got ({}, {}, {})",
+                        a,
+                        b,
+                        c
+                    ));
+                }
+                return Ok("DeclSet".to_string());
+            }
+            if function == "declset_add_enum_payload_variant" {
+                if arguments.len() != 4 {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_enum_payload_variant expects (DeclSet, String, String, Type), got {} arguments",
+                        arguments.len()
+                    ));
+                }
+                let a = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let b = get_expression_type(
+                    &arguments[1],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let c = get_expression_type(
+                    &arguments[2],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let d = get_expression_type(
+                    &arguments[3],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if a != "DeclSet" || b != "String" || c != "String" || d != "Type" {
+                    return Err(anyhow::anyhow!(
+                        "declset_add_enum_payload_variant expects (DeclSet, String, String, Type), got ({}, {}, {}, {})",
+                        a,
+                        b,
+                        c,
+                        d
                     ));
                 }
                 return Ok("DeclSet".to_string());
@@ -7243,6 +7524,109 @@ fun main() -> I32 {
         };
         assert_eq!(function_name, "Equality__Token__equals");
         assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn resolve_accepts_enum_semantic_introspection_in_comptime() {
+        let source = r#"
+struct Payload {
+	value: I32,
+}
+
+enum Token {
+	Int(I32),
+	Plus,
+	Wrapped(Payload),
+}
+
+comptime fun reflect(T: Type) -> DeclSet {
+	enum_opt = as_enum_opt(T)
+	if is_some(enum_opt) {
+		info = unwrap(enum_opt)
+		ds = declset_add_empty_enum(declset_new(), concat(type_name(T), "Clone"))
+		i = 0
+		while i < enum_variant_count(info) {
+			variant = unwrap(enum_variant_at(info, i))
+			payload_opt = variant_payload_type_opt(variant)
+			if is_some(payload_opt) {
+				payload_ty = unwrap(payload_opt)
+				same = payload_ty == I32
+				ds = declset_add_enum_payload_variant(
+					ds,
+					concat(type_name(T), "Clone"),
+					variant_name(variant),
+					payload_ty
+				)
+			} else {
+				ds = declset_add_enum_tag_variant(
+					ds,
+					concat(type_name(T), "Clone"),
+					variant_name(variant)
+				)
+			}
+			i = i + 1
+		}
+		return ds
+	}
+	return declset_new()
+}
+
+comptime apply reflect(Token)
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        resolve(ast).expect("resolve source");
+    }
+
+    #[test]
+    fn resolve_rejects_runtime_enum_semantic_introspection_builtin_call() {
+        let source = r#"
+enum Token {
+	Int(I32),
+	Plus,
+}
+
+fun main() -> I32 {
+	info = as_enum_opt(resolve_type("Token"))
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(
+            err.to_string()
+                .contains("cannot call semantic introspection builtin as_enum_opt"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_runtime_enum_semantic_emission_builtin_call() {
+        let source = r#"
+fun main() -> I32 {
+	ds = declset_add_empty_enum(declset_new(), "TokenTags")
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("resolve should fail");
+        assert!(
+            err.to_string()
+                .contains("cannot call semantic emission builtin declset_add_empty_enum"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

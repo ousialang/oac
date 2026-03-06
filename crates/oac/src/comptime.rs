@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ir::SourceSpan;
 use crate::parser::{
-    self, Ast, Expression, Literal, Op, Statement, StructDef, StructField, TypeDefDecl, UnaryOp,
+    self, Ast, EnumDef, EnumVariantDef, Expression, Literal, Op, Statement, StructDef, StructField,
+    TypeDefDecl, UnaryOp,
 };
 
 const MAX_WHILE_ITERATIONS: usize = 100_000;
@@ -31,6 +32,22 @@ struct FieldInfoValue {
 }
 
 #[derive(Clone, Debug)]
+struct EnumInfoValue {
+    name: String,
+    variants: Vec<EnumVariantDef>,
+}
+
+#[derive(Clone, Debug)]
+struct VariantInfoValue {
+    #[allow(dead_code)]
+    owner_enum: String,
+    #[allow(dead_code)]
+    index: usize,
+    name: String,
+    payload_ty: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 enum CtValue {
     Bool(bool),
     I32(i32),
@@ -40,6 +57,8 @@ enum CtValue {
     Type(String),
     StructInfo(StructInfoValue),
     FieldInfo(FieldInfoValue),
+    EnumInfo(EnumInfoValue),
+    VariantInfo(VariantInfoValue),
     DeclSet(DeclSetValue),
     SemanticExpr(String),
     #[allow(dead_code)]
@@ -66,6 +85,7 @@ impl CtValueWithMeta {
 struct TypeCatalog {
     all_types: HashSet<String>,
     structs: HashMap<String, StructDef>,
+    enums: HashMap<String, EnumDef>,
 }
 
 impl TypeCatalog {
@@ -85,6 +105,8 @@ impl TypeCatalog {
             "SourceSpan",
             "StructInfo",
             "FieldInfo",
+            "EnumInfo",
+            "VariantInfo",
         ] {
             catalog.all_types.insert(builtin.to_string());
         }
@@ -112,6 +134,7 @@ impl TypeCatalog {
                         def.name
                     ));
                 }
+                self.enums.insert(def.name.clone(), def.clone());
             }
         }
         Ok(())
@@ -828,6 +851,13 @@ fn evaluate_call(
                 world.type_catalog.structs.contains_key(type_name),
             )))
         }
+        "is_enum" => {
+            ensure_arity(name, &args, 1)?;
+            let type_name = expect_type_name(&args[0].value, "is_enum argument")?;
+            Ok(as_value(CtValue::Bool(
+                world.type_catalog.enums.contains_key(type_name),
+            )))
+        }
         "as_struct_opt" => {
             ensure_arity(name, &args, 1)?;
             let type_name = expect_type_name(&args[0].value, "as_struct_opt argument")?;
@@ -841,6 +871,21 @@ fn evaluate_call(
                 ))
             } else {
                 Ok(as_option(None, "StructInfo"))
+            }
+        }
+        "as_enum_opt" => {
+            ensure_arity(name, &args, 1)?;
+            let type_name = expect_type_name(&args[0].value, "as_enum_opt argument")?;
+            if let Some(enum_def) = world.type_catalog.enums.get(type_name) {
+                Ok(as_option(
+                    Some(CtValue::EnumInfo(EnumInfoValue {
+                        name: enum_def.name.clone(),
+                        variants: enum_def.variants.clone(),
+                    })),
+                    "EnumInfo",
+                ))
+            } else {
+                Ok(as_option(None, "EnumInfo"))
             }
         }
         "struct_field_count" => {
@@ -866,6 +911,29 @@ fn evaluate_call(
                 "FieldInfo",
             ))
         }
+        "enum_variant_count" => {
+            ensure_arity(name, &args, 1)?;
+            let enum_info = expect_enum_info(&args[0].value, "enum_variant_count argument")?;
+            Ok(as_value(CtValue::I32(enum_info.variants.len() as i32)))
+        }
+        "enum_variant_at" => {
+            ensure_arity(name, &args, 2)?;
+            let enum_info = expect_enum_info(&args[0].value, "enum_variant_at first argument")?;
+            let index = expect_i32(&args[1].value, "enum_variant_at second argument")?;
+            if index < 0 || index as usize >= enum_info.variants.len() {
+                return Ok(as_option(None, "VariantInfo"));
+            }
+            let variant = &enum_info.variants[index as usize];
+            Ok(as_option(
+                Some(CtValue::VariantInfo(VariantInfoValue {
+                    owner_enum: enum_info.name.clone(),
+                    index: index as usize,
+                    name: variant.name.clone(),
+                    payload_ty: variant.payload_ty.clone(),
+                })),
+                "VariantInfo",
+            ))
+        }
         "field_name" => {
             ensure_arity(name, &args, 1)?;
             let field_info = expect_field_info(&args[0].value, "field_name argument")?;
@@ -876,9 +944,118 @@ fn evaluate_call(
             let field_info = expect_field_info(&args[0].value, "field_type argument")?;
             Ok(as_value(CtValue::Type(field_info.ty.clone())))
         }
+        "variant_name" => {
+            ensure_arity(name, &args, 1)?;
+            let variant_info = expect_variant_info(&args[0].value, "variant_name argument")?;
+            Ok(as_value(CtValue::String(variant_info.name.clone())))
+        }
+        "variant_payload_type_opt" => {
+            ensure_arity(name, &args, 1)?;
+            let variant_info =
+                expect_variant_info(&args[0].value, "variant_payload_type_opt argument")?;
+            Ok(as_option(
+                variant_info.payload_ty.clone().map(CtValue::Type),
+                "Type",
+            ))
+        }
         "declset_new" => {
             ensure_arity(name, &args, 0)?;
             Ok(as_value(CtValue::DeclSet(DeclSetValue::default())))
+        }
+        "declset_add_empty_enum" => {
+            ensure_arity(name, &args, 2)?;
+            let mut declset =
+                expect_declset(&args[0].value, "declset_add_empty_enum first argument")?.clone();
+            let new_name = expect_string(&args[1].value, "declset_add_empty_enum second argument")?
+                .to_string();
+            if type_known_in_declset_or_catalog(&new_name, &declset, &world.type_catalog) {
+                return Err(anyhow::anyhow!(
+                    "declset_add_empty_enum cannot emit duplicate type {}",
+                    new_name
+                ));
+            }
+            declset.type_definitions.push(TypeDefDecl::Enum(EnumDef {
+                name: new_name,
+                variants: vec![],
+            }));
+            Ok(as_value(CtValue::DeclSet(declset)))
+        }
+        "declset_add_enum_tag_variant" => {
+            ensure_arity(name, &args, 3)?;
+            let mut declset = expect_declset(
+                &args[0].value,
+                "declset_add_enum_tag_variant first argument",
+            )?
+            .clone();
+            let enum_name = expect_string(
+                &args[1].value,
+                "declset_add_enum_tag_variant second argument",
+            )?;
+            let variant_name = expect_string(
+                &args[2].value,
+                "declset_add_enum_tag_variant third argument",
+            )?
+            .to_string();
+            let enum_def = find_emitted_enum_mut(&mut declset, enum_name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "declset_add_enum_tag_variant target {} is not an emitted enum in this DeclSet",
+                    enum_name
+                )
+            })?;
+            ensure_enum_variant_name_available(
+                enum_def,
+                &variant_name,
+                "declset_add_enum_tag_variant",
+            )?;
+            enum_def.variants.push(EnumVariantDef {
+                name: variant_name,
+                payload_ty: None,
+            });
+            Ok(as_value(CtValue::DeclSet(declset)))
+        }
+        "declset_add_enum_payload_variant" => {
+            ensure_arity(name, &args, 4)?;
+            let mut declset = expect_declset(
+                &args[0].value,
+                "declset_add_enum_payload_variant first argument",
+            )?
+            .clone();
+            let enum_name = expect_string(
+                &args[1].value,
+                "declset_add_enum_payload_variant second argument",
+            )?;
+            let variant_name = expect_string(
+                &args[2].value,
+                "declset_add_enum_payload_variant third argument",
+            )?
+            .to_string();
+            let payload_ty = expect_type_name(
+                &args[3].value,
+                "declset_add_enum_payload_variant fourth argument",
+            )?
+            .to_string();
+            if !type_known_in_declset_or_catalog(&payload_ty, &declset, &world.type_catalog) {
+                return Err(anyhow::anyhow!(
+                    "declset_add_enum_payload_variant payload type {} is not a known type",
+                    payload_ty
+                ));
+            }
+            let enum_def = find_emitted_enum_mut(&mut declset, enum_name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "declset_add_enum_payload_variant target {} is not an emitted enum in this DeclSet",
+                    enum_name
+                )
+            })?;
+            ensure_enum_variant_name_available(
+                enum_def,
+                &variant_name,
+                "declset_add_enum_payload_variant",
+            )?;
+            enum_def.variants.push(EnumVariantDef {
+                name: variant_name,
+                payload_ty: Some(payload_ty),
+            });
+            Ok(as_value(CtValue::DeclSet(declset)))
         }
         "declset_add_derived_struct" => {
             ensure_arity(name, &args, 3)?;
@@ -1017,6 +1194,55 @@ fn find_struct_for_type<'a>(
     catalog.structs.get(target_type)
 }
 
+fn find_emitted_enum_mut<'a>(
+    declset: &'a mut DeclSetValue,
+    target_type: &str,
+) -> Option<&'a mut EnumDef> {
+    for type_def in declset.type_definitions.iter_mut().rev() {
+        if let TypeDefDecl::Enum(def) = type_def {
+            if def.name == target_type {
+                return Some(def);
+            }
+        }
+    }
+    None
+}
+
+fn type_known_in_declset_or_catalog(
+    target_type: &str,
+    declset: &DeclSetValue,
+    catalog: &TypeCatalog,
+) -> bool {
+    catalog.all_types.contains(target_type)
+        || declset
+            .type_definitions
+            .iter()
+            .any(|type_def| match type_def {
+                TypeDefDecl::Struct(def) => def.name == target_type,
+                TypeDefDecl::Enum(def) => def.name == target_type,
+            })
+}
+
+fn ensure_enum_variant_name_available(
+    enum_def: &EnumDef,
+    variant_name: &str,
+    builtin_name: &str,
+) -> anyhow::Result<()> {
+    if enum_def
+        .variants
+        .iter()
+        .any(|variant| variant.name == variant_name)
+    {
+        return Err(anyhow::anyhow!(
+            "{} target {} already has variant {}",
+            builtin_name,
+            enum_def.name,
+            variant_name
+        ));
+    }
+    Ok(())
+}
+
 fn ensure_arity(name: &str, args: &[CtValueWithMeta], expected: usize) -> anyhow::Result<()> {
     if args.len() != expected {
         return Err(anyhow::anyhow!(
@@ -1104,6 +1330,33 @@ fn expect_field_info<'a>(value: &'a CtValue, context: &str) -> anyhow::Result<&'
     }
 }
 
+fn expect_enum_info<'a>(value: &'a CtValue, context: &str) -> anyhow::Result<&'a EnumInfoValue> {
+    if let CtValue::EnumInfo(value) = value {
+        Ok(value)
+    } else {
+        Err(anyhow::anyhow!(
+            "{} expected EnumInfo, got {}",
+            context,
+            ct_value_type_name(value)
+        ))
+    }
+}
+
+fn expect_variant_info<'a>(
+    value: &'a CtValue,
+    context: &str,
+) -> anyhow::Result<&'a VariantInfoValue> {
+    if let CtValue::VariantInfo(value) = value {
+        Ok(value)
+    } else {
+        Err(anyhow::anyhow!(
+            "{} expected VariantInfo, got {}",
+            context,
+            ct_value_type_name(value)
+        ))
+    }
+}
+
 fn expect_declset<'a>(value: &'a CtValue, context: &str) -> anyhow::Result<&'a DeclSetValue> {
     if let CtValue::DeclSet(value) = value {
         Ok(value)
@@ -1140,6 +1393,8 @@ fn ct_value_type_name(value: &CtValue) -> String {
         CtValue::Type(_) => "Type".to_string(),
         CtValue::StructInfo(_) => "StructInfo".to_string(),
         CtValue::FieldInfo(_) => "FieldInfo".to_string(),
+        CtValue::EnumInfo(_) => "EnumInfo".to_string(),
+        CtValue::VariantInfo(_) => "VariantInfo".to_string(),
         CtValue::DeclSet(_) => "DeclSet".to_string(),
         CtValue::SemanticExpr(_) => "SemanticExpr".to_string(),
         CtValue::SourceSpan(_) => "SourceSpan".to_string(),
@@ -1262,6 +1517,136 @@ comptime apply derive(CounterX)
         assert!(ast.type_definitions.iter().any(|def| {
             matches!(def, parser::TypeDefDecl::Struct(def) if def.name == "CounterXX")
         }));
+    }
+
+    #[test]
+    fn enum_reflection_builtins_work() {
+        let mut ast = parse_source(
+            r#"
+struct Payload {
+	value: I32,
+}
+
+enum Token {
+	Int(I32),
+	Plus,
+	Wrapped(Payload),
+}
+
+comptime fun reflect(T: Type) -> DeclSet {
+	ds = declset_new()
+	assert(is_enum(T))
+	assert(!is_enum(resolve_type("Payload")))
+	assert(!is_some(as_struct_opt(T)))
+	e = as_enum_opt(T)
+	assert(is_some(e))
+	info = unwrap(e)
+	assert(enum_variant_count(info) == 3)
+	out_name = concat(type_name(T), "Tags")
+	ds = declset_add_empty_enum(ds, out_name)
+	first = enum_variant_at(info, 0)
+	assert(is_some(first))
+	v0 = unwrap(first)
+	p0 = variant_payload_type_opt(v0)
+	assert(is_some(p0))
+	assert(unwrap(p0) == I32)
+	second = enum_variant_at(info, 1)
+	assert(is_some(second))
+	v1 = unwrap(second)
+	assert(!is_some(variant_payload_type_opt(v1)))
+	third = enum_variant_at(info, 2)
+	assert(is_some(third))
+	v2 = unwrap(third)
+	p2 = variant_payload_type_opt(v2)
+	assert(is_some(p2))
+	assert(unwrap(p2) == Payload)
+	neg_one = 0 - 1
+	assert(!is_some(enum_variant_at(info, neg_one)))
+	assert(!is_some(enum_variant_at(info, 3)))
+	i = 0
+	while i < enum_variant_count(info) {
+		v = unwrap(enum_variant_at(info, i))
+		ds = declset_add_enum_tag_variant(ds, out_name, variant_name(v))
+		i = i + 1
+	}
+	return ds
+}
+
+comptime apply reflect(Token)
+"#,
+        );
+
+        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        let emitted = ast
+            .type_definitions
+            .iter()
+            .find_map(|def| match def {
+                parser::TypeDefDecl::Enum(def) if def.name == "TokenTags" => Some(def),
+                _ => None,
+            })
+            .expect("missing TokenTags enum");
+        assert_eq!(emitted.variants.len(), 3);
+        assert_eq!(emitted.variants[0].name, "Int");
+        assert_eq!(emitted.variants[0].payload_ty, None);
+        assert_eq!(emitted.variants[1].name, "Plus");
+        assert_eq!(emitted.variants[1].payload_ty, None);
+        assert_eq!(emitted.variants[2].name, "Wrapped");
+        assert_eq!(emitted.variants[2].payload_ty, None);
+    }
+
+    #[test]
+    fn enum_payload_emission_builtin_works() {
+        let mut ast = parse_source(
+            r#"
+struct Payload {
+	value: I32,
+}
+
+enum Token {
+	Int(I32),
+	Plus,
+	Wrapped(Payload),
+}
+
+comptime fun clone_enum(T: Type) -> DeclSet {
+	ds = declset_new()
+	e = unwrap(as_enum_opt(T))
+	out_name = concat(type_name(T), "Clone")
+	ds = declset_add_empty_enum(ds, out_name)
+	i = 0
+	while i < enum_variant_count(e) {
+		v = unwrap(enum_variant_at(e, i))
+		payload_opt = variant_payload_type_opt(v)
+		if is_some(payload_opt) {
+			ds = declset_add_enum_payload_variant(ds, out_name, variant_name(v), unwrap(payload_opt))
+		} else {
+			ds = declset_add_enum_tag_variant(ds, out_name, variant_name(v))
+		}
+		i = i + 1
+	}
+	return ds
+}
+
+comptime apply clone_enum(Token)
+"#,
+        );
+
+        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        let emitted = ast
+            .type_definitions
+            .iter()
+            .find_map(|def| match def {
+                parser::TypeDefDecl::Enum(def) if def.name == "TokenClone" => Some(def),
+                _ => None,
+            })
+            .expect("missing TokenClone enum");
+        assert_eq!(emitted.variants.len(), 3);
+        assert_eq!(emitted.variants[0].name, "Int");
+        assert_eq!(emitted.variants[0].payload_ty.as_deref(), Some("I32"));
+        assert_eq!(emitted.variants[1].name, "Plus");
+        assert_eq!(emitted.variants[1].payload_ty, None);
+        assert_eq!(emitted.variants[2].name, "Wrapped");
+        assert_eq!(emitted.variants[2].payload_ty.as_deref(), Some("Payload"));
     }
 
     #[test]
