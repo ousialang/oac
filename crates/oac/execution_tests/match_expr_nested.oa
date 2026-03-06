@@ -4,8 +4,8 @@ enum LocalErr {
 }
 
 enum LocalResult {
-	Ok(I32),
-	Err(LocalErr),
+	Ok: I32,
+	Err: LocalErr,
 }
 
 fun score(r: LocalResult) -> Int {

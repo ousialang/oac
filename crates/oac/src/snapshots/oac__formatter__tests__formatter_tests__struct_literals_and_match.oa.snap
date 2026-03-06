@@ -5,7 +5,8 @@ snapshot_kind: text
 ---
 enum OptionI32 {
 	None,
-	Some(I32),
+	Some: I32,
+	UnitVariant,
 }
 
 fun main() -> I32 {

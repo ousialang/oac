@@ -4,13 +4,13 @@ enum Color {
 }
 
 enum Wrap {
-	C(Color),
-	N(I32),
+	C: Color,
+	N: I32,
 }
 
 enum Token {
-	Int(I32),
-	Text(String),
+	Int: I32,
+	Text: String,
 	Done,
 }
 

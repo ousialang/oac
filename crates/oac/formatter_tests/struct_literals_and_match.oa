@@ -1,4 +1,4 @@
-enum OptionI32 {None,Some(I32),}
+enum OptionI32 {None,Some:I32,UnitVariant,}
 
 fun main() -> I32 {
 	v=OptionI32.Some(1)

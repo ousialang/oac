@@ -1,6 +1,6 @@
 enum OptionI32 {
 	None,
-	Some(I32),
+	Some: I32,
 }
 
 fun main() -> I32 {
