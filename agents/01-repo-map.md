@@ -57,6 +57,7 @@ Editor tooling in this repository:
 - `crates/qbe-smt/src/classify.rs`: conservative loop non-termination classifier used during `oac build`.
 - `crates/oac/src/std/std.oa`: stdlib import entrypoint injected during resolution.
 - `crates/oac/src/std/std_*.oa`: split stdlib modules imported by `std/std.oa`.
+- `crates/oac/src/std/std_comptime.oa`: stdlib comptime-only helpers (currently including enum-tag derivation over enum reflection/emission builtins).
 - `crates/oac/src/std/std_traits.oa`: core trait declarations/impls (`Hash`, operator traits, `Equality`, `Copy`, `Drop`) used by bounded generics and infix operator resolution.
 - `crates/oac/src/std/std_option_result.oa`: core generic sum types (`Option[T]`, `Result[T,E]`) and helper methods.
 - `crates/oac/src/std/std_string.oa`: std-owned `Bytes` + `String` representation (`String` enum with literal/heap variants).

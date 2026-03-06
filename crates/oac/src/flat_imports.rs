@@ -145,7 +145,7 @@ mod tests {
     use std::fs;
 
     use super::{parse_and_resolve_file, resolve_ast};
-    use crate::{parser, tokenizer};
+    use crate::{comptime, parser, tokenizer};
 
     #[test]
     fn resolve_flat_imports_merges_same_directory_files() {
@@ -241,6 +241,79 @@ fun main() -> I32 {
         );
         assert_eq!(merged.invariants[0].parameters.len(), 1);
         assert_eq!(merged.invariants[0].parameters[0].ty, "Counter");
+    }
+
+    #[test]
+    fn resolve_flat_imports_support_imported_comptime_utility() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let helper_path = tmp.path().join("helper.oa");
+        let main_path = tmp.path().join("main.oa");
+
+        fs::write(
+            &helper_path,
+            r#"
+comptime fun derive_tags(T: Type) -> DeclSet {
+	ds = declset_new()
+	enum_opt = as_enum_opt(T)
+	if is_some(enum_opt) {
+		info = unwrap(enum_opt)
+		out_name = concat(type_name(T), "Tags")
+		ds = declset_add_empty_enum(ds, out_name)
+		i = 0
+		while i < enum_variant_count(info) {
+			variant = unwrap(enum_variant_at(info, i))
+			ds = declset_add_enum_tag_variant(ds, out_name, variant_name(variant))
+			i = i + 1
+		}
+	}
+	return ds
+}
+"#,
+        )
+        .expect("write helper");
+
+        fs::write(
+            &main_path,
+            r#"
+import "helper.oa"
+
+enum Token {
+	Int(I32),
+	Plus,
+	Wrapped(String),
+}
+
+comptime apply derive_tags(Token)
+
+fun main() -> I32 {
+	return 0
+}
+"#,
+        )
+        .expect("write main");
+
+        let main_source = fs::read_to_string(&main_path).expect("read main");
+        let main_tokens = tokenizer::tokenize(main_source).expect("tokenize main");
+        let main_ast = parser::parse(main_tokens).expect("parse main");
+
+        let mut merged = resolve_ast(main_ast, &main_path).expect("resolve imports");
+        comptime::execute_comptime_applies(&mut merged).expect("execute comptime applies");
+
+        let emitted = merged
+            .type_definitions
+            .iter()
+            .find_map(|def| match def {
+                parser::TypeDefDecl::Enum(def) if def.name == "TokenTags" => Some(def),
+                _ => None,
+            })
+            .expect("missing imported derived enum");
+        assert_eq!(emitted.variants.len(), 3);
+        assert_eq!(emitted.variants[0].name, "Int");
+        assert_eq!(emitted.variants[0].payload_ty, None);
+        assert_eq!(emitted.variants[1].name, "Plus");
+        assert_eq!(emitted.variants[1].payload_ty, None);
+        assert_eq!(emitted.variants[2].name, "Wrapped");
+        assert_eq!(emitted.variants[2].payload_ty, None);
     }
 
     #[test]

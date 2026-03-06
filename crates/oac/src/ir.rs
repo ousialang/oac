@@ -5527,6 +5527,12 @@ fun main() -> I32 {
             "missing Null__value function from split stdlib"
         );
         assert!(
+            resolved
+                .comptime_function_definitions
+                .contains_key("derive_enum_tags"),
+            "missing derive_enum_tags comptime helper from split stdlib"
+        );
+        assert!(
             resolved.trait_method_signatures.contains_key("Hash::hash"),
             "missing Hash::hash trait method from split stdlib"
         );

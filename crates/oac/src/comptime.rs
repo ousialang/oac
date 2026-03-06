@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
+use crate::flat_imports;
 use crate::ir::SourceSpan;
 use crate::parser::{
     self, Ast, EnumDef, EnumVariantDef, Expression, Literal, Op, Statement, StructDef, StructField,
@@ -154,6 +156,34 @@ struct EvalWorld {
     type_catalog: TypeCatalog,
 }
 
+fn preload_stdlib_comptime_context(world: &mut EvalWorld) -> anyhow::Result<()> {
+    let stdlib_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("std")
+        .join("std.oa");
+    let stdlib_ast = flat_imports::parse_and_resolve_file(&stdlib_path)?;
+
+    for function in stdlib_ast.top_level_functions {
+        if function.is_comptime {
+            world
+                .functions
+                .entry(function.name.clone())
+                .or_insert(function);
+        }
+    }
+    for type_def in stdlib_ast.type_definitions {
+        let already_known = match &type_def {
+            TypeDefDecl::Struct(def) => world.type_catalog.all_types.contains(&def.name),
+            TypeDefDecl::Enum(def) => world.type_catalog.all_types.contains(&def.name),
+        };
+        if !already_known {
+            world.type_catalog.insert_type_def(&type_def)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn execute_comptime_applies(ast: &mut Ast) -> anyhow::Result<()> {
     if ast.comptime_applies.is_empty() {
         return Ok(());
@@ -178,6 +208,7 @@ pub fn execute_comptime_applies(ast: &mut Ast) -> anyhow::Result<()> {
         functions,
         type_catalog: TypeCatalog::from_ast(ast)?,
     };
+    preload_stdlib_comptime_context(&mut world)?;
 
     let mut call_stack = Vec::new();
     for apply in ast.comptime_applies.clone() {
@@ -1034,12 +1065,6 @@ fn evaluate_call(
                 "declset_add_enum_payload_variant fourth argument",
             )?
             .to_string();
-            if !type_known_in_declset_or_catalog(&payload_ty, &declset, &world.type_catalog) {
-                return Err(anyhow::anyhow!(
-                    "declset_add_enum_payload_variant payload type {} is not a known type",
-                    payload_ty
-                ));
-            }
             let enum_def = find_emitted_enum_mut(&mut declset, enum_name).ok_or_else(|| {
                 anyhow::anyhow!(
                     "declset_add_enum_payload_variant target {} is not an emitted enum in this DeclSet",
@@ -1647,6 +1672,38 @@ comptime apply clone_enum(Token)
         assert_eq!(emitted.variants[1].payload_ty, None);
         assert_eq!(emitted.variants[2].name, "Wrapped");
         assert_eq!(emitted.variants[2].payload_ty.as_deref(), Some("Payload"));
+    }
+
+    #[test]
+    fn stdlib_enum_tags_helper_is_available() {
+        let mut ast = parse_source(
+            r#"
+enum Token {
+	Int(I32),
+	Plus,
+	Wrapped(String),
+}
+
+comptime apply derive_enum_tags(Token)
+"#,
+        );
+
+        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        let emitted = ast
+            .type_definitions
+            .iter()
+            .find_map(|def| match def {
+                parser::TypeDefDecl::Enum(def) if def.name == "TokenTags" => Some(def),
+                _ => None,
+            })
+            .expect("missing TokenTags enum");
+        assert_eq!(emitted.variants.len(), 3);
+        assert_eq!(emitted.variants[0].name, "Int");
+        assert_eq!(emitted.variants[0].payload_ty, None);
+        assert_eq!(emitted.variants[1].name, "Plus");
+        assert_eq!(emitted.variants[1].payload_ty, None);
+        assert_eq!(emitted.variants[2].name, "Wrapped");
+        assert_eq!(emitted.variants[2].payload_ty, None);
     }
 
     #[test]

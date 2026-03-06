@@ -1,0 +1,16 @@
+comptime fun derive_enum_tags(T: Type) -> DeclSet {
+	ds = declset_new()
+	enum_opt = as_enum_opt(T)
+	if is_some(enum_opt) {
+		info = unwrap(enum_opt)
+		out_name = concat(type_name(T), "Tags")
+		ds = declset_add_empty_enum(ds, out_name)
+		i = 0
+		while i < enum_variant_count(info) {
+			variant = unwrap(enum_variant_at(info, i))
+			ds = declset_add_enum_tag_variant(ds, out_name, variant_name(variant))
+			i = i + 1
+		}
+	}
+	return ds
+}
