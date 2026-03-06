@@ -1,0 +1,8 @@
+invariant "i32 add must stay safe" for (lhs: I32, rhs: I32) {
+	sum = lhs + rhs
+	return sum >= lhs
+}
+
+fun main() -> I32 {
+	return 0
+}

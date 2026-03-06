@@ -16,6 +16,7 @@ pub enum VerificationError {
 
 pub(crate) struct OrdinaryVerificationSession {
     prepared_prove: Vec<crate::prove::PreparedProveSite>,
+    prepared_integer: Vec<crate::integer_safety::PreparedIntegerSafetySite>,
     prepared_struct: Vec<crate::struct_invariants::PreparedStructInvariantSite>,
     cached_roots: HashSet<String>,
     uncached_summaries: Vec<VerificationSummaryCandidate>,
@@ -32,6 +33,11 @@ impl OrdinaryVerificationSession {
             program, qbe_module, target_dir, config,
         )
         .map_err(VerificationError::Prove)?;
+        let prepared_integer =
+            crate::integer_safety::prepare_integer_safety_obligations_with_config(
+                program, qbe_module, target_dir, config,
+            )
+            .map_err(VerificationError::Prove)?;
         let prepared_struct =
             crate::struct_invariants::prepare_struct_invariant_obligations_with_config(
                 program, qbe_module, target_dir, config,
@@ -42,6 +48,15 @@ impl OrdinaryVerificationSession {
         for prepared in &prepared_prove {
             inputs_by_root
                 .entry(prepared.caller().to_string())
+                .or_default()
+                .push(prepared.summary_input());
+        }
+        for prepared in &prepared_integer {
+            if prepared.summary_kind() != VerificationSummaryKind::OrdinaryFunction {
+                continue;
+            }
+            inputs_by_root
+                .entry(prepared.root_name().to_string())
                 .or_default()
                 .push(prepared.summary_input());
         }
@@ -76,6 +91,7 @@ impl OrdinaryVerificationSession {
 
         Ok(Self {
             prepared_prove,
+            prepared_integer,
             prepared_struct,
             cached_roots,
             uncached_summaries,
@@ -88,6 +104,12 @@ impl OrdinaryVerificationSession {
     ) -> Result<(), VerificationError> {
         crate::prove::verify_prepared_prove_obligations(
             &self.prepared_prove,
+            config,
+            &self.cached_roots,
+        )
+        .map_err(VerificationError::Prove)?;
+        crate::integer_safety::verify_prepared_integer_safety_obligations(
+            &self.prepared_integer,
             config,
             &self.cached_roots,
         )
@@ -148,6 +170,7 @@ mod tests {
     use super::prepare_ordinary_verification_session;
     use crate::verification_cache::{
         VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
+        VerificationSummaryFile,
     };
     use crate::verification_profile::VerificationProfile;
     use crate::verification_solver::test_support;
@@ -210,9 +233,24 @@ fun main() -> I32 {
             .count()
     }
 
+    fn load_ordinary_summary(cache_root: &std::path::Path) -> VerificationSummaryFile {
+        let dir = cache_root.join("ordinary_function").join("main");
+        let path = fs::read_dir(&dir)
+            .expect("read ordinary function cache dir")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .expect("ordinary summary cache entry");
+        let raw = fs::read_to_string(&path).expect("read ordinary summary cache file");
+        serde_json::from_str(&raw).expect("parse ordinary summary cache file")
+    }
+
     #[test]
     fn ordinary_summary_cache_trust_hit_skips_solver() {
-        let program = resolve_program(ordinary_root_source());
+        let mut program = resolve_program(ordinary_root_source());
+        program.model_invariants.clear();
+        program
+            .struct_invariants
+            .retain(|name, _| name == "Counter");
         let qbe_module = qbe_backend::compile(program.clone());
         let tempdir = tempfile::tempdir().expect("tempdir");
         let config = config(tempdir.path(), VerificationCacheMode::Trust);
@@ -256,7 +294,11 @@ fun main() -> I32 {
 
     #[test]
     fn ordinary_summary_cache_strict_mismatch_fails_closed() {
-        let program = resolve_program(ordinary_root_source());
+        let mut program = resolve_program(ordinary_root_source());
+        program.model_invariants.clear();
+        program
+            .struct_invariants
+            .retain(|name, _| name == "Counter");
         let qbe_module = qbe_backend::compile(program.clone());
         let tempdir = tempfile::tempdir().expect("tempdir");
         let trust_config = config(tempdir.path(), VerificationCacheMode::Trust);
@@ -312,7 +354,11 @@ fun main() -> I32 {
 
     #[test]
     fn ordinary_summary_cache_never_persists_non_unsat_results() {
-        let program = resolve_program(ordinary_root_source());
+        let mut program = resolve_program(ordinary_root_source());
+        program.model_invariants.clear();
+        program
+            .struct_invariants
+            .retain(|name, _| name == "Counter");
         let qbe_module = qbe_backend::compile(program.clone());
         let outcomes = [qbe_smt::SolverResult::Sat, qbe_smt::SolverResult::Unknown];
 
@@ -356,5 +402,55 @@ fun main() -> I32 {
                 "non-unsat prove results must not populate the ordinary summary cache"
             );
         }
+    }
+
+    #[test]
+    fn ordinary_summary_includes_integer_obligations() {
+        let mut program = resolve_program(
+            r#"
+fun main() -> I32 {
+	x = 1 + 2
+	prove(x == 3)
+	return x
+}
+"#,
+        );
+        program.model_invariants.clear();
+        program.struct_invariants.clear();
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let config = config(tempdir.path(), VerificationCacheMode::Trust);
+        let session =
+            prepare_ordinary_verification_session(&program, &qbe_module, tempdir.path(), &config)
+                .expect("prepare session");
+
+        test_support::with_mock_solver_runs(
+            vec![
+                Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")),
+                Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")),
+                Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")),
+            ],
+            || {
+                session
+                    .verify_prove_stage(&config)
+                    .expect("prove stage should succeed");
+                session
+                    .verify_struct_stage(&config)
+                    .expect("struct stage should persist the summary");
+            },
+        );
+
+        let summary = load_ordinary_summary(&config.cache_root);
+        assert_eq!(summary.obligations.len(), 2);
+        assert!(summary
+            .obligations
+            .iter()
+            .any(|obligation| obligation.local_id.contains(".oac_integer_site_i32__add__")));
+        assert!(summary.obligations.iter().any(|obligation| matches!(
+            obligation.kind,
+            crate::verification_outcomes::VerificationKind::Prove
+        ) && !obligation
+            .local_id
+            .contains(".oac_integer_site_")));
     }
 }

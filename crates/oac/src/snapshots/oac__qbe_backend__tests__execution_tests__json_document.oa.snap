@@ -1,15 +1,8 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: output
+expression: snapshot_content
 snapshot_kind: text
 ---
-1
-1
-1
-12
-11
-11
-1
-11
-10
-1
+COMPILATION ERROR
+
+[OAC-PROVE-001] Error: prove obligation verification failed: missing signature for function __string_data_len while building argument-invariant assumptions

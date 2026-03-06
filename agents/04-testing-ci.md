@@ -143,6 +143,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also includes resolve/type-check coverage for std `Char` API usage together with char literals.
 - `crates/oac/src/ir.rs` also includes model-invariant resolve coverage: synthesis to `__model__invariant__*`, generic parameter rewriting across all invariant parameters, unary non-struct rejection for arity-1 invariants, identifier collision checks, and strict purity checks (direct/transitive extern calls, pointer-memory builtins, side-effect builtins, and `prove`/`assert` statements).
 - `crates/qbe-smt/src/lib.rs` tests (built from in-memory `qbe::Function` and `qbe::Module` fixtures) cover CHC/fixedpoint encoding shape (`HORN` for non-FP modules and `ALL` for FP32/FP64 modules, relation declarations, `(query bad)`), branch/loop rule generation, integer+memory modeling, FP32/FP64 proving subset modeling (`copy`/`add`/`sub`/`mul`/`div`, ordered/unordered compares, `phi`, FP conversion ops `exts`/`truncd`/`stosi`/`stoui`/`dtosi`/`dtoui`/`swtof`/`uwtof`/`sltof`/`ultof`, FP32/FP64 `loads`/`stores`), interprocedural user-call summaries (including self-recursive user calls), argument-invariant precondition assumptions, fail-closed rejection for invalid conversion assignment-type combinations, and strict rejection of unsupported operations.
+- `crates/qbe-smt/src/lib.rs` also covers per-argument integer range assumptions (current production use: `[0,255]` entry assumptions for semantic `U8` parameters in checker modules).
 - `crates/qbe-smt/src/lib.rs` validates modeled CLib call coverage (`memcpy`, `memmove`, `memcmp`, `memset`, `calloc`/`realloc`/`free`, bounded `strlen`/`strcmp`, bounded `strcpy`, and constrained `open`/`read`/`write`/`close` return modeling) in addition to `exit(code)` halting transitions and malformed exit-call rejection.
 - `crates/qbe-smt/src/lib.rs` additionally covers `phi` encoding via predecessor-state guards and rejection of malformed/unknown `phi` labels.
 - `crates/qbe-smt/src/lib.rs` also verifies reachable-only encoding behavior (unsupported instructions inside unreachable blocks are ignored).
@@ -174,6 +175,7 @@ Key tests:
 - Strict outcome-gate capture tags records with fixture-scoped thread-local context (`verification_outcomes::with_fixture_context`); untagged verification records are intentionally ignored to keep baseline/candidate obligation sets deterministic under parallel test execution.
 - `crates/oac/src/test_framework.rs` tests cover isolated lowering behavior for `oac test`: generated test functions/main plus error cases (no tests, user-defined `main`).
 - `crates/oac/src/qbe_backend.rs` test loads `crates/oac/execution_tests/*`, compiles fixtures, and snapshots either compiler errors or program stdout (non-zero exit codes are allowed; only spawn/timeout/signal/UTF-8 failures are runtime errors). Fixture compile/execute work runs through one worker-thread harness and snapshot assertions are sorted and applied deterministically afterward. Default worker count is serial (`1`) for stability and can be overridden with `OAC_EXECUTION_TEST_JOBS=<n>` for explicit parallel execution. Compiler-error snapshots capture Ariadne plain-report output from the shared diagnostics layer.
+- `crates/oac/src/integer_safety.rs` includes unit coverage for reachable integer-site collection and checker injection/pruning, `crates/oac/src/verification.rs` includes cache-summary coverage that ordinary summaries now include integer-safety obligations, and `crates/oac/src/comptime.rs` includes checked-`I32` overflow/divide-by-zero regressions.
 - `crates/oac/src/qbe_backend.rs` also includes an ignored/manual LLVM parity harness (`llvm_runtime_parity_against_qbe_snapshots`) that compiles execution fixtures with `--backend llvm` and compares outcome-kind/diagnostic-code and stdout parity against canonical QBE snapshots.
 - `crates/oac/src/qbe_backend.rs` also enforces snapshot hygiene contracts for execution snapshots: no committed `*.snap.new` files, no orphan execution snapshots without matching fixtures, and no duplicated Ariadne prefix artifacts (`Error: error[...]`) in snapshot content.
 - Snapshot metadata-only churn (for example insta header-only changes to `assertion_line` / `expression`) still requires cleanup: merge into `.snap` or delete `.snap.new` so tracked `*.snap.new` files stay empty.
@@ -199,11 +201,24 @@ Key tests:
   - `struct_invariant_fp32_pass.oa`
 - Execution fixtures also include FP64 struct-invariant proving coverage:
   - `struct_invariant_fp64_pass.oa`
+- Execution fixtures also include multi-helper struct-invariant failure coverage:
+  - `struct_invariant_pass_complex.oa` (multi-call `Envelope` normalization helper composition with an intentionally failing `stable_envelope` return-site obligation, expected `OAC-INV-001`)
 - Execution fixtures also include model-invariant coverage:
   - `model_invariant_pass.oa`
   - `model_invariant_fail.oa`
   - `model_invariant_impure_print.oa`
   - `model_invariant_struct_args_pass.oa`
+  - `model_invariant_arithmetic_overflow_fail.oa`
+- Execution fixtures also include integer-safety coverage:
+  - `integer_i32_safe_pass.oa`
+  - `integer_i32_add_overflow_fail.oa`
+  - `integer_i32_sub_underflow_fail.oa`
+  - `integer_i32_mul_overflow_fail.oa`
+  - `integer_i32_div_zero_fail.oa`
+  - `integer_i32_div_min_neg_one_fail.oa`
+  - `integer_ptrint_overflow_fail.oa`
+  - `integer_u8_safe_pass.oa`
+  - `integer_u8_add_overflow_fail.oa`
 - Execution fixtures also include namespace call coverage:
   - `namespace_basic.oa`
 - Execution fixtures also include large-string length regression coverage:
@@ -267,7 +282,7 @@ Missing tools can cause test/build failures unrelated to Rust logic.
 ## Debugging Flow for Compiler Regressions
 
 1. Reproduce with a minimal `.oa` fixture in `crates/oac/execution_tests`.
-2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and checker artifacts (`target/oac/prove/site_*.qbe`, `site_*.smt2`, `target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`, `target/oac/model_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory checker modules (entry checker + reachable user callees).
+2. Inspect generated intermediates (`tokens.json`, `ast.json`, `ir.json`, `ir.qbe`) and checker artifacts (`target/oac/prove/site_*.qbe`, `site_*.smt2`, `target/oac/integer_safety/site_*.qbe`, `site_*.smt2`, `target/oac/struct_invariants/site_*.qbe`, `site_*.smt2`, `target/oac/model_invariants/site_*.qbe`, `site_*.smt2`) when applicable. Checker `.qbe` artifacts are rendered from in-memory checker modules (entry checker + reachable user callees).
 3. Isolate stage failure: tokenize, parse, resolve, codegen, or external tool invocation.
 4. Add/adjust snapshot to encode fixed behavior.
 5. Run full test suite (prefer `cargo nextest run`; use `cargo test` fallback only if nextest is unavailable).

@@ -37,10 +37,21 @@ pub struct FunctionArgInvariantAssumption {
     pub invariant_function_name: String,
 }
 
+/// Assumes that a function argument is constrained to an inclusive integer range.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FunctionArgRangeAssumption {
+    pub function_name: String,
+    pub arg_index: usize,
+    pub lower: u64,
+    pub upper: u64,
+    pub signed: bool,
+}
+
 /// Module-level assumptions injected as function-entry preconditions.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ModuleAssumptions {
     pub arg_invariant_assumptions: Vec<FunctionArgInvariantAssumption>,
+    pub arg_range_assumptions: Vec<FunctionArgRangeAssumption>,
 }
 
 /// Errors produced by the encoder/classifier.
@@ -257,7 +268,8 @@ mod tests {
     use super::{
         classify_simple_loops, classify_solver_output, qbe_module_to_smt,
         qbe_module_to_smt_with_assumptions, qbe_to_smt, EncodeOptions,
-        FunctionArgInvariantAssumption, LoopProofStatus, ModuleAssumptions, SolverResult,
+        FunctionArgInvariantAssumption, FunctionArgRangeAssumption, LoopProofStatus,
+        ModuleAssumptions, SolverResult,
     };
 
     fn temp(name: &str) -> Value {
@@ -1187,6 +1199,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "__struct__Box__invariant".to_string(),
             }],
+            arg_range_assumptions: vec![],
         };
 
         let smt = qbe_module_to_smt_with_assumptions(
@@ -1214,6 +1227,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "main".to_string(),
             }],
+            arg_range_assumptions: vec![],
         };
         let err = encode_single_function_with_assumptions(
             &function,
@@ -1238,6 +1252,7 @@ mod tests {
                 arg_index: 1,
                 invariant_function_name: "main".to_string(),
             }],
+            arg_range_assumptions: vec![],
         };
         let err = encode_single_function_with_assumptions(
             &function,
@@ -1273,6 +1288,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "invariant_bad_arity".to_string(),
             }],
+            arg_range_assumptions: vec![],
         };
 
         let err = qbe_module_to_smt_with_assumptions(
@@ -1324,6 +1340,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "__struct__Payload__invariant".to_string(),
             }],
+            arg_range_assumptions: vec![],
         };
         let module = module_with(vec![main, helper, invariant]);
 
@@ -1334,6 +1351,37 @@ mod tests {
             &assumptions,
         )
         .expect("assumptions should add invariant function to reachability closure");
+    }
+
+    #[test]
+    fn encodes_arg_range_assumption_in_entry_rule() {
+        let main = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        );
+        let module = module_with(vec![main]);
+        let assumptions = ModuleAssumptions {
+            arg_invariant_assumptions: vec![],
+            arg_range_assumptions: vec![FunctionArgRangeAssumption {
+                function_name: "main".to_string(),
+                arg_index: 0,
+                lower: 0,
+                upper: 255,
+                signed: false,
+            }],
+        };
+
+        let smt = qbe_module_to_smt_with_assumptions(
+            &module,
+            "main",
+            &EncodeOptions::default(),
+            &assumptions,
+        )
+        .expect("module with argument range assumptions should encode");
+
+        assert!(smt.contains("bvuge"));
+        assert!(smt.contains("bvule"));
+        assert!(smt.contains("(_ bv255 64)"));
     }
 
     #[test]

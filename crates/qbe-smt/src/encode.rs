@@ -7,8 +7,8 @@ use qbe::{
 
 use crate::encode_extern_models::{call_is_exit, extern_call_model, ExternCallModel};
 use crate::{
-    EncodeOptions, FunctionArgInvariantAssumption, ModuleAssumptions, QbeSmtError,
-    BLIT_INLINE_LIMIT, GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
+    EncodeOptions, FunctionArgInvariantAssumption, FunctionArgRangeAssumption, ModuleAssumptions,
+    QbeSmtError, BLIT_INLINE_LIMIT, GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
 };
 
 pub(crate) fn encode_module(
@@ -182,6 +182,42 @@ pub(crate) fn encode_module(
                 &heap_var,
             ));
             init_terms.push(format!("(distinct {ret_var} {})", bv_const_u64(0, 64)));
+        }
+
+        let function_ranges = context
+            .arg_range_assumptions
+            .get(function_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        for assumption in function_ranges {
+            let source_arg = function
+                .args
+                .get(assumption.arg_index)
+                .expect("validated function arg index exists");
+            let source_slot = *function
+                .reg_slots
+                .get(&source_arg.name)
+                .expect("validated source argument register slot exists");
+            let source_value_expr = format!("(select regs {})", reg_slot_const(source_slot));
+            if assumption.signed {
+                init_terms.push(format!(
+                    "(bvsge {source_value_expr} {})",
+                    bv_const_u64(assumption.lower, 64)
+                ));
+                init_terms.push(format!(
+                    "(bvsle {source_value_expr} {})",
+                    bv_const_u64(assumption.upper, 64)
+                ));
+            } else {
+                init_terms.push(format!(
+                    "(bvuge {source_value_expr} {})",
+                    bv_const_u64(assumption.lower, 64)
+                ));
+                init_terms.push(format!(
+                    "(bvule {source_value_expr} {})",
+                    bv_const_u64(assumption.upper, 64)
+                ));
+            }
         }
 
         if function.name == context.entry {
@@ -525,12 +561,22 @@ struct ValidatedArgInvariantAssumption {
     invariant_function_name: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct ValidatedArgRangeAssumption {
+    function_name: String,
+    arg_index: usize,
+    lower: u64,
+    upper: u64,
+    signed: bool,
+}
+
 struct ModuleEncodingContext {
     entry: String,
     function_order: Vec<String>,
     functions: HashMap<String, EncodedFunction>,
     global_map: HashMap<String, u64>,
     arg_invariant_assumptions: HashMap<String, Vec<ValidatedArgInvariantAssumption>>,
+    arg_range_assumptions: HashMap<String, Vec<ValidatedArgRangeAssumption>>,
     max_arg_invariant_assumptions: usize,
     uses_fp: bool,
 }
@@ -605,6 +651,52 @@ fn build_module_encoding_context(
         });
     }
 
+    let mut range_records = assumptions.arg_range_assumptions.clone();
+    range_records.sort_by(|lhs, rhs| {
+        lhs.function_name
+            .cmp(&rhs.function_name)
+            .then(lhs.arg_index.cmp(&rhs.arg_index))
+            .then(lhs.lower.cmp(&rhs.lower))
+            .then(lhs.upper.cmp(&rhs.upper))
+            .then(lhs.signed.cmp(&rhs.signed))
+    });
+
+    let mut seen_range_assumptions = BTreeSet::<(String, usize, u64, u64, bool)>::new();
+    let mut range_assumptions_by_function =
+        HashMap::<String, Vec<ValidatedArgRangeAssumption>>::new();
+    for assumption in range_records {
+        let key = (
+            assumption.function_name.clone(),
+            assumption.arg_index,
+            assumption.lower,
+            assumption.upper,
+            assumption.signed,
+        );
+        if !seen_range_assumptions.insert(key) {
+            continue;
+        }
+        validate_arg_range_assumption(&assumption, &all_typed_args)?;
+        range_assumptions_by_function
+            .entry(assumption.function_name.clone())
+            .or_default()
+            .push(ValidatedArgRangeAssumption {
+                function_name: assumption.function_name,
+                arg_index: assumption.arg_index,
+                lower: assumption.lower,
+                upper: assumption.upper,
+                signed: assumption.signed,
+            });
+    }
+    for function_ranges in range_assumptions_by_function.values_mut() {
+        function_ranges.sort_by(|lhs, rhs| {
+            lhs.arg_index
+                .cmp(&rhs.arg_index)
+                .then(lhs.lower.cmp(&rhs.lower))
+                .then(lhs.upper.cmp(&rhs.upper))
+                .then(lhs.signed.cmp(&rhs.signed))
+        });
+    }
+
     let mut reachable = HashSet::<String>::new();
     let mut worklist = VecDeque::<String>::from([entry.to_string()]);
     while let Some(function_name) = worklist.pop_front() {
@@ -650,6 +742,15 @@ fn build_module_encoding_context(
                     ),
                 });
             }
+        }
+    }
+    for function_name in range_assumptions_by_function.keys() {
+        if !encoded_functions.contains(function_name) {
+            return Err(QbeSmtError::Unsupported {
+                message: format!(
+                    "arg-range assumption target function ${function_name} is not encoded from entry ${entry}"
+                ),
+            });
         }
     }
 
@@ -747,6 +848,8 @@ fn build_module_encoding_context(
 
     let mut encoded_arg_invariant_assumptions =
         HashMap::<String, Vec<ValidatedArgInvariantAssumption>>::new();
+    let mut encoded_arg_range_assumptions =
+        HashMap::<String, Vec<ValidatedArgRangeAssumption>>::new();
     let mut max_arg_invariant_assumptions = 0usize;
     for function_name in &function_order {
         let function_assumptions = assumptions_by_function
@@ -759,6 +862,13 @@ fn build_module_encoding_context(
         if !function_assumptions.is_empty() {
             encoded_arg_invariant_assumptions.insert(function_name.clone(), function_assumptions);
         }
+        let function_ranges = range_assumptions_by_function
+            .get(function_name)
+            .cloned()
+            .unwrap_or_default();
+        if !function_ranges.is_empty() {
+            encoded_arg_range_assumptions.insert(function_name.clone(), function_ranges);
+        }
     }
 
     Ok(ModuleEncodingContext {
@@ -767,6 +877,7 @@ fn build_module_encoding_context(
         functions,
         global_map,
         arg_invariant_assumptions: encoded_arg_invariant_assumptions,
+        arg_range_assumptions: encoded_arg_range_assumptions,
         max_arg_invariant_assumptions,
         uses_fp,
     })
@@ -811,6 +922,42 @@ fn validate_arg_invariant_assumption(
                 "arg-invariant assumption invariant function ${} must have arity 1, found {}",
                 assumption.invariant_function_name,
                 invariant_args.len()
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_arg_range_assumption(
+    assumption: &FunctionArgRangeAssumption,
+    all_typed_args: &HashMap<String, Vec<FunctionArg>>,
+) -> Result<(), QbeSmtError> {
+    let Some(function_args) = all_typed_args.get(&assumption.function_name) else {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-range assumption target function ${} is missing from module",
+                assumption.function_name
+            ),
+        });
+    };
+
+    if assumption.arg_index >= function_args.len() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-range assumption target ${} argument index {} is out of range (arity={})",
+                assumption.function_name,
+                assumption.arg_index,
+                function_args.len()
+            ),
+        });
+    }
+
+    if assumption.lower > assumption.upper {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "arg-range assumption target ${} argument index {} has invalid range [{}..={}]",
+                assumption.function_name, assumption.arg_index, assumption.lower, assumption.upper,
             ),
         });
     }

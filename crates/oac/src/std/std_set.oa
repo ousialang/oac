@@ -51,7 +51,10 @@ generic HashSet[K: Hash + Eq] {
 	}
 
 	fun threshold_for_capacity(capacity: I32) -> I32 {
-		threshold = (capacity * 3) / 4
+		assert(capacity >= 0)
+		half = capacity / 2
+		quarter = capacity / 4
+		threshold = half + quarter
 		if threshold < 1 {
 			return 1
 		}
@@ -62,6 +65,9 @@ generic HashSet[K: Hash + Eq] {
 		n = HashSet.min_bucket_count()
 		if min_capacity <= n {
 			return n
+		}
+		if min_capacity >= 1073741824 {
+			return 1073741824
 		}
 
 		while n < min_capacity {
@@ -142,17 +148,19 @@ generic HashSet[K: Hash + Eq] {
 	}
 
 	fun modulo_non_negative(value: I32, divisor: I32) -> I32 {
-		q = value / divisor
-		r = value - (q * divisor)
-		if r < 0 {
-			return r + divisor
+		assert(value >= 0)
+		assert(divisor > 0)
+		remainder = value
+		while remainder >= divisor {
+			remainder = remainder - divisor
 		}
-		return r
+		return remainder
 	}
 
 	fun hash_key(key: K) -> I32 {
 		h = Hash.hash(key)
 		if h < 0 {
+			assert(h >= (0 - 2147483647))
 			h = 0 - h
 		}
 		return h
@@ -261,6 +269,7 @@ generic HashSet[K: Hash + Eq] {
 
 		next_len = set.len
 		if inserted.inserted_new {
+			assert(next_len < set.resize_threshold)
 			next_len = next_len + 1
 		}
 
@@ -320,7 +329,10 @@ generic HashSet[K: Hash + Eq] {
 	}
 
 	fun maybe_resize_before_insert(set: HashSet) -> HashSet {
-		if set.len + 1 > set.resize_threshold {
+		if set.len >= set.resize_threshold {
+			if set.bucket_count > 536870912 {
+				return HashSet.rehash(set, 1073741824)
+			}
 			return HashSet.rehash(set, set.bucket_count + set.bucket_count)
 		}
 		return set
@@ -339,6 +351,7 @@ generic HashSet[K: Hash + Eq] {
 
 		next_len = set.len
 		if removed.removed {
+			assert(next_len > 0)
 			next_len = next_len - 1
 		}
 

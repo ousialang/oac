@@ -31,6 +31,7 @@ Act like a compiler engineer, not a text editor:
 - For proving/invariant performance-sensitive changes, run `oac bench-prove` and inspect delta/regression output against `crates/oac/bench/prove_baseline.json`.
 - For unknown-mitigation/verification-solver changes, run `oac bench-prove --strict-outcome-gate` and require zero forbidden transitions (baseline `sat`/`unsat` must not drift).
 - When touching proof-cache behavior, validate both trusted build/test reuse and live benchmark behavior: `build` / `test` default to `--proof-cache trust`, while `bench-prove` defaults to `--proof-cache strict` with read-only cache policy.
+- When touching integer arithmetic or stdlib helpers that use it, audit both runtime lowering and proof-stage obligations: source-level `U8`/`I32`/`I64`/`PtrInt` `+/-/*//` sites now create compile-time proof obligations, so helper arithmetic often needs explicit local guards/asserts to stay provable.
 
 ## Pre-Release Compatibility Posture
 
@@ -53,11 +54,13 @@ Act like a compiler engineer, not a text editor:
 - Validate match exhaustiveness and payload rules.
 - Add positive and negative fixtures.
 - For integer-width additions (for example `U8`), audit signedness-sensitive ops in codegen (`cmp`, `div/rem`) and keep resolver/codegen rules aligned.
+- For comptime numeric changes, keep evaluator behavior deterministic: do not rely on Rust panics for overflow or divide-by-zero, and add direct unit regressions in `comptime.rs`.
 
 ### Backend/runtime behavior change
 - Inspect generated QBE text and runtime output snapshots.
 - For runtime backend changes, inspect generated backend artifacts (`ir.qbe`/`assembly.s` or `ir.ll`/`object.o`) and keep linker path fail-closed.
 - Preserve runtime parity semantics across backends (for example struct copy barriers, struct bytewise equality, and LLVM runtime-noop lowering for `prove(...)`).
+- If integer-safety behavior changes, inspect emitted `.oac_integer_site_*` markers in QBE and the generated checker artifacts under `target/oac/integer_safety/`; regressions often come from unexpected marker reachability or from checker CFG branches that were not pruned tightly enough.
 - Check interop assumptions with std `Clib.*` bindings in `crates/oac/src/std/std_clib.oa` (`namespace`-scoped `extern fun` declarations that resolve to `Clib__*` internal keys while preserving declared link symbols) and helper functions.
 
 ### Interop/bindings behavior change

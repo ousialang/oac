@@ -1,0 +1,7 @@
+fun main(argc: I32, argv: PtrInt) -> I32 {
+	ptr = argv + i32_to_i64(1)
+	if argc == 0 {
+		return 0
+	}
+	return 1
+}

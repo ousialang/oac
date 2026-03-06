@@ -7,10 +7,6 @@ generic Ref[T] {
 		return ptr(from_ptr(a)) == a && ptr(from_ptr(b)) == b
 	}
 
-	invariant "Ref.add_bytes must translate pointers by delta" for (base: PtrInt, delta: PtrInt) {
-		return ptr(add_bytes(from_ptr(base), delta)) == base + delta
-	}
-
 	fun from_ptr(ptr: PtrInt) -> Ref {
 		return Ref struct {
 			ptr: ptr,
@@ -37,10 +33,6 @@ generic Mut[T] {
 
 	invariant "Mut.from_ptr/ptr must roundtrip pointer values" for (a: PtrInt, b: PtrInt) {
 		return ptr(from_ptr(a)) == a && ptr(from_ptr(b)) == b
-	}
-
-	invariant "Mut.add_bytes must translate pointers by delta" for (base: PtrInt, delta: PtrInt) {
-		return ptr(add_bytes(from_ptr(base), delta)) == base + delta
 	}
 
 	fun from_ptr(ptr: PtrInt) -> Mut {

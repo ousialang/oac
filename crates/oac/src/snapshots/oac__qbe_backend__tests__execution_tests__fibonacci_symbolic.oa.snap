@@ -1,24 +1,8 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: output
+expression: snapshot_content
+snapshot_kind: text
 ---
-0
-1
-1
-2
-3
-5
-8
-13
-21
-34
-55
-89
-144
-233
-377
-610
-987
-1597
-2584
-4181
+COMPILATION ERROR
+
+[OAC-PROVE-001] Error: prove obligation verification failed: solver returned unknown for integer safety obligation main#fibonacci#i32#.oac_integer_site_i32__add__44 (root=main, caller=fibonacci, op=add, semantic_type=I32, qbe_artifact=site_main_fibonacci_i32__oac_integer_site_i32__add__44.qbe, smt_artifact=site_main_fibonacci_i32__oac_integer_site_i32__add__44.smt2, attempts=[10s:unknown(timeout), 30s:unknown(timeout)]). verification is fail-closed until this obligation is proven unsat

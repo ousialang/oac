@@ -66,6 +66,9 @@ Observed in parser/IR implementation:
 - Deterministic destruction uses `Drop`: resolver inserts `Drop.drop(...)` calls before overwriting initialized bindings and at scope exits (reverse declaration order); moved/uninitialized bindings are not dropped.
 - Struct `==` / `!=` are universal bytewise comparisons (`memcmp` over struct size), including pointer-containing structs.
 - Numeric binary ops are strict and same-type only: `U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
+- Fixed-width integer arithmetic uses two's-complement wrapping semantics (`I32`/`I64` overflow is not trapped); verification reasons over the same bitvector behavior as runtime rather than mathematical integers.
+- Source-level integer `+`, `-`, `*`, `/` over `U8`, `I32`, `I64`, and `PtrInt` are fail-closed at compile time: every reachable runtime site and every site reachable from struct/model-invariant roots must be proven overflow/underflow-safe during `check proofs`, or compilation stops with `OAC-PROVE-001`.
+- Integer-safety predicates are fixed in v1: `U8` requires `add/mul <= 255`, `sub >= 0`, `div rhs != 0`; `I32`/`I64`/`PtrInt` use signed monotonicity checks for `add/sub`, guarded `result / rhs == lhs` for `mul`, and `rhs != 0 && !(lhs == MIN && rhs == -1)` for `div`.
 - `U8` relational operators (`<`, `>`, `<=`, `>=`) use unsigned comparisons in codegen.
 - `U8` division lowers to unsigned integer division in codegen.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
@@ -106,7 +109,7 @@ Observed in parser/IR implementation:
   - `String.make_bytes_normalizes_len_and_keeps_ptr`: `String.make_bytes(ptr, len)` preserves `ptr` and sets `len` to `String.normalize_len(len)`
   - `String.normalize_len_is_non_negative`: `String.normalize_len(x) >= 0`
   - `Option.none must agree with presence predicates`: `Option.is_none(Option.none()) && !Option.is_some(Option.none())`
-  - `Ref`/`Mut` pointer wrapper laws: `ptr(from_ptr(p)) == p` and `ptr(add_bytes(from_ptr(p), d)) == p + d`
+  - `Ref`/`Mut` pointer wrapper laws: `ptr(from_ptr(p)) == p`
 - C interop signatures are std-defined in `crates/oac/src/std/std_clib.oa` under `namespace Clib { extern fun ... }`; namespaced lookup still uses internal mangled keys (`Clib__*`), while codegen emits declared extern symbol names for linking.
 - The split stdlib now uses namespaced helper APIs for JSON (`Json.*`) and exposes both scanner-style APIs (`Json.parse_json_document_result`, `Json.json_kind`) and value-tree APIs (`Json.parse_json_document_value_result` returning `JsonValue` trees with `JsonMembers`/`JsonValues`).
 - JSON booleans in `JsonValue` are modeled as `JsonValue.Bool(Bool)` (not separate `True`/`False` variants), and `Json.json_kind` classifies both `true` and `false` as `JsonKind.Bool`.
@@ -121,7 +124,7 @@ Observed in parser/IR implementation:
 - The split stdlib now also defines `HashTable[K: Hash + Eq, V]` as a dynamically resizing separate-chaining map in `crates/oac/src/std/std_collections.oa`; public helpers are `HashTable.new`, `HashTable.with_capacity`, `HashTable.set`, `HashTable.get`, `HashTable.remove`, `HashTable.len`, `HashTable.capacity`, `HashTable.contains_key`, and `HashTable.clear`.
 - `HashTable.set` returns `SetResult { table: HashTable, inserted_new: Bool }` and `HashTable.remove` returns `RemoveResult { table: HashTable, removed: Lookup }`.
 - `HashTable[K: Hash + Eq, V]` currently has no declaration-based struct invariant; the former `coherent_state` declaration was removed after fail-closed solver-unknown obligations on resize/rehash call sites.
-- Hash table metadata now has explicit runtime assertion guards in `HashTable.assert_metadata(...)` (`len >= 0`, `resize_threshold >= 1`, `len <= resize_threshold`) and this helper is applied on constructor/mutation return paths (`with_capacity`, `set_no_resize`, `rehash`, `maybe_resize_before_insert` passthrough, `remove`, `clear`).
+- Hash table metadata now has explicit runtime assertion guards in `HashTable.assert_metadata(...)` (`bucket_count >= 1`, `len >= 0`, `resize_threshold >= 1`, `len <= resize_threshold`) and this helper is applied on constructor/mutation return paths (`with_capacity`, `set_no_resize`, `rehash`, `maybe_resize_before_insert` passthrough, `remove`, `clear`).
 - Invariant declarations accept one or more parameters in `for (...)` for both single and grouped syntax. Empty parameter lists are rejected.
 - Arity-sensitive invariant semantics:
   - unary invariants (`for (v: TypeName)`) are struct invariants;
@@ -131,17 +134,21 @@ Observed in parser/IR implementation:
 - Malformed legacy invariant functions are compile errors.
 - Build-time verification checks struct invariants per `(call-site, invariant)` at return sites of user-defined function calls reachable from `main` (excluding invariant function bodies).
 - Build-time verification also checks `prove(...)` obligations at reachable statement sites from `main` by synthesizing checker QBE functions that return `1` on proof-condition violation.
+- Build-time verification also checks source-level integer arithmetic at reachable marker sites: ordinary roots are `main` plus reachable helper callees, and additional roots are every struct-invariant function plus every model-invariant function.
 - Build-time verification checks model invariants globally (independent of `main` reachability): one obligation per declaration.
 - Verification synthesizes each site checker from compiled QBE by instrumenting the target call with an invariant check and returning `1` on violation / `0` on success, then asks if exit code `1` is reachable (`unsat` means invariant proven, `sat` means compile failure).
 - `prove(...)` checker synthesis instruments QBE marker assignments (`.oac_prove_site_*`) and rewrites checker return to `1` when the proved condition is false at the targeted site.
+- Integer-safety checker synthesis instruments QBE marker assignments emitted by codegen (`.oac_integer_site_<type>__<op>__<id>__{lhs,rhs,out}`), clones the marker’s caller as checker `main`, prunes CFG branches that cannot reach the marker, and rewrites checker return to `1` when the operator’s safety predicate is false at that site.
 - Model-invariant checker synthesis rewrites invariant returns to checker `bad` (`ret == 0`) and queries reachability of `exit == 1`.
 - Model invariants are resolve-validated as a strict pure subset over transitive user calls: reject `prove(...)`, `assert(...)`, extern calls, pointer load/store builtins, and side-effect builtins (`print`, `print_str`).
 - Checker construction is interprocedural: the checker artifact includes entry + reachable user callees, and CHC encoding models user calls through function summary relations (`*_ret` / `*_abort`) instead of checker-time inlining.
 - Checker reachable-callee discovery now traverses only entry-reachable CFG blocks per QBE function (and stops scanning a block after terminators), so dead instrumentation blocks do not contribute spurious call targets/argument-invariant assumptions.
 - Checker entry preconditions now include argument-type invariants in prove/struct-invariant/model-invariant pipelines: for each checker function argument whose semantic type has struct invariants, encoding adds one invariant relation precondition per invariant (`*_ret` relation + non-zero return).
+- Checker entry preconditions also include integer range assumptions where available: semantic `U8` parameters become `[0,255]` assumptions in `qbe-smt`, so checker modules reason about byte ranges without requiring separate user-written invariants.
 - These argument-invariant preconditions are assumptions only: the checker’s entry memory/heap state is not replaced with the invariant-call output memory/heap.
 - Shared recursion-cycle analysis lives in `verification_cycles.rs` and uses SCCs over the combined verification graph with deterministic cycle witness reconstruction for fail-closed diagnostics.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
+- Comptime `I32` arithmetic is checked instead of panicking-through-Rust: `+/-/*` overflow and `/` divide-by-zero or `MIN / -1` produce deterministic comptime diagnostics.
 - String literals lower to std `String.Literal` values by allocating `Bytes` + tagged union wrapper in codegen; runtime string helpers (`char_at`, `string_len`, `slice`, `print_str`) read `Bytes.ptr`/`Bytes.len` from that layout.
 - Runtime `i32_to_i64` helper lowering uses signed extension (`extsw`) so values above `255` are not truncated in pointer/length conversion paths.
 - Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` or `(argc: I32, argv: PtrInt)` form.

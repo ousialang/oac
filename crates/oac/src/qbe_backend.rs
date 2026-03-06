@@ -14,12 +14,14 @@ use crate::symbol_keys::{trait_impl_method_key, trait_method_key};
 type QbeAssignName = String;
 type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
 pub(crate) const PROVE_MARKER_PREFIX: &str = ".oac_prove_site_";
+pub(crate) const INTEGER_SAFETY_MARKER_PREFIX: &str = ".oac_integer_site_";
 const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
 
 struct CodegenCtx {
     module: qbe::Module,
     resolved: Arc<ResolvedProgram>,
     qbe_types_by_name: HashMap<String, qbe::Type>,
+    integer_site_counter: usize,
 }
 
 fn add_builtins(ctx: &mut CodegenCtx) {
@@ -1242,6 +1244,9 @@ fn compile_assign_statement(
 }
 
 fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
+    // Integer-safety marker ids only need to be unique within a function.
+    // Resetting here keeps obligation ids stable even if function emission order changes.
+    ctx.integer_site_counter = 0;
     let qbe_args = func_def
         .sig
         .parameters
@@ -1304,6 +1309,7 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module {
         module: qbe::Module::default(),
         resolved: Arc::new(ir),
         qbe_types_by_name: HashMap::new(),
+        integer_site_counter: 0,
     };
 
     add_builtins(&mut ctx);
@@ -1337,6 +1343,56 @@ fn calculate_struct_field_offset(
     field_name: &str,
 ) -> u64 {
     runtime_layout::struct_field_offset(&ctx.resolved, struct_def, field_name)
+}
+
+fn integer_safety_type_label(ty: &str) -> Option<&'static str> {
+    match ty {
+        "U8" => Some("u8"),
+        "I32" | "Int" => Some("i32"),
+        "I64" => Some("i64"),
+        "PtrInt" => Some("ptrint"),
+        _ => None,
+    }
+}
+
+fn integer_safety_op_label(op: Op) -> Option<&'static str> {
+    match op {
+        Op::Add => Some("add"),
+        Op::Sub => Some("sub"),
+        Op::Mul => Some("mul"),
+        Op::Div => Some("div"),
+        _ => None,
+    }
+}
+
+fn emit_integer_safety_markers(
+    ctx: &mut CodegenCtx,
+    func: &mut qbe::Function,
+    op: Op,
+    ty: &str,
+    left_var: &str,
+    right_var: &str,
+    out_var: &str,
+) {
+    let Some(type_label) = integer_safety_type_label(ty) else {
+        return;
+    };
+    let Some(op_label) = integer_safety_op_label(op) else {
+        return;
+    };
+
+    let site_id = ctx.integer_site_counter;
+    ctx.integer_site_counter += 1;
+
+    let base = format!("{INTEGER_SAFETY_MARKER_PREFIX}{type_label}__{op_label}__{site_id}");
+    let qbe_ty = type_ref_to_qbe(ctx, ty);
+    for (suffix, source) in [("lhs", left_var), ("rhs", right_var), ("out", out_var)] {
+        func.assign_instr(
+            qbe::Value::Temporary(format!("{base}__{suffix}")),
+            qbe_ty.clone(),
+            qbe::Instr::Copy(qbe::Value::Temporary(source.to_string())),
+        );
+    }
 }
 
 fn struct_size_bytes(ctx: &CodegenCtx, struct_def: &StructDef) -> u64 {
@@ -2234,120 +2290,103 @@ fn compile_expr(
             let use_unsigned_int_cmp = left_ty == "U8";
             let use_ordered_float_cmp =
                 matches!(operand_qbe_ty, qbe::Type::Single | qbe::Type::Double);
+            let left_value = qbe::Value::Temporary(left_var.clone());
+            let right_value = qbe::Value::Temporary(right_var.clone());
 
             let instr = match (op, &operand_qbe_ty) {
                 (Op::Eq, _) => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Eq,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Neq, _) => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Ne,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Lt, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Lt,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Gt, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Gt,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Le, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Le,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Ge, _) if use_ordered_float_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Ge,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Lt, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Ult,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Gt, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Ugt,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Le, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Ule,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Ge, _) if use_unsigned_int_cmp => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Uge,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Lt, _) => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Slt,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Gt, _) => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Sgt,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Le, _) => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Sle,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
                 (Op::Ge, _) => qbe::Instr::Cmp(
                     operand_qbe_ty.clone(),
                     qbe::Cmp::Sge,
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
+                    left_value.clone(),
+                    right_value.clone(),
                 ),
-                (Op::Add, _) => qbe::Instr::Add(
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
-                ),
-                (Op::Sub, _) => qbe::Instr::Sub(
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
-                ),
-                (Op::Mul, _) => qbe::Instr::Mul(
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
-                ),
-                (Op::Div, _) if use_unsigned_int_cmp => qbe::Instr::Udiv(
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
-                ),
-                (Op::Div, _) => qbe::Instr::Div(
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
-                ),
-                (Op::And, _) => qbe::Instr::And(
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
-                ),
-                (Op::Or, _) => qbe::Instr::Or(
-                    qbe::Value::Temporary(left_var),
-                    qbe::Value::Temporary(right_var),
-                ),
+                (Op::Add, _) => qbe::Instr::Add(left_value.clone(), right_value.clone()),
+                (Op::Sub, _) => qbe::Instr::Sub(left_value.clone(), right_value.clone()),
+                (Op::Mul, _) => qbe::Instr::Mul(left_value.clone(), right_value.clone()),
+                (Op::Div, _) if use_unsigned_int_cmp => {
+                    qbe::Instr::Udiv(left_value.clone(), right_value.clone())
+                }
+                (Op::Div, _) => qbe::Instr::Div(left_value.clone(), right_value.clone()),
+                (Op::And, _) => qbe::Instr::And(left_value.clone(), right_value.clone()),
+                (Op::Or, _) => qbe::Instr::Or(left_value.clone(), right_value.clone()),
             };
 
             let result_qbe_ty = match op {
@@ -2356,6 +2395,10 @@ fn compile_expr(
                 Op::And | Op::Or => qbe::Type::Word,
             };
             func.assign_instr(qbe::Value::Temporary(id.clone()), result_qbe_ty, instr);
+
+            if matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div) {
+                emit_integer_safety_markers(ctx, func, *op, &left_ty, &left_var, &right_var, &id);
+            }
 
             let out_ty = match op {
                 Op::And | Op::Or => "Bool".to_string(),

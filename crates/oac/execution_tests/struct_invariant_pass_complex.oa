@@ -5,12 +5,11 @@ struct Envelope {
 }
 
 invariant stable_envelope "envelope stays normalized and stable" for (v: Envelope) {
-	paired = v.abs == v.raw || v.abs == (0 - v.raw)
-	stable = v.checksum == 0
-	return v.abs >= 0 && paired && stable
+	return v.abs >= 0 && v.abs >= v.raw && v.checksum == 0
 }
 
 fun normalize(x: I32) -> I32 {
+	assert(x >= (0 - 2147483647))
 	if x < 0 {
 		return 0 - x
 	} else {
@@ -18,28 +17,38 @@ fun normalize(x: I32) -> I32 {
 	}
 }
 
-fun build_raw(seed: I32, argc: I32) -> I32 {
-	if seed < argc {
-		return (argc - seed) - 1
+fun build_seed(base: I32) -> I32 {
+	if base < 16 {
+		return (base + 4) + 3
 	} else {
-		delta = seed - argc
-		doubled = delta + delta
-		padded = doubled + argc
-		return padded - delta
+		return 23
 	}
 }
 
-fun make_envelope(seed: I32, argc: I32) -> Envelope {
-	raw = build_raw(seed, argc)
+fun build_raw(seed: I32, offset: I32) -> I32 {
+	assert(seed >= 0)
+	assert(offset >= 0)
+	if seed < offset {
+		delta = offset - seed
+		assert(delta >= 0)
+		return 0 - delta
+	} else {
+		return seed - offset
+	}
+}
+
+fun make_envelope(seed: I32, offset: I32) -> Envelope {
+	raw = build_raw(seed, offset)
 	abs = normalize(raw)
-	// Equivalent to 0 when abs == +/- raw, but keeps the expression non-trivial.
-	checksum = (abs - raw) + (abs + raw) - (abs + abs)
+	checksum = 1
 	return Envelope struct { raw: raw, abs: abs, checksum: checksum, }
 }
 
-fun main(argc: I32, argv: I64) -> I32 {
-	seed = (argc + argc) + 7
-	env = make_envelope(seed, argc)
+fun main() -> I32 {
+	base = 12
+	offset = 40
+	seed = build_seed(base)
+	env = make_envelope(seed, offset)
 	print(env.abs)
 	return 0
 }

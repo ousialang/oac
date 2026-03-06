@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: snapshot_content
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+[OAC-PROVE-001] Error: prove obligation verification failed: integer safety verification failed (SAT counterexamples found):
+main#main#ptrint#.oac_integer_site_ptrint__add__42 (root=main, caller=main, op=add, semantic_type=PtrInt, qbe_artifact=site_main_main_ptrint__oac_integer_site_ptrint__add__42.qbe, smt_artifact=site_main_main_ptrint__oac_integer_site_ptrint__add__42.smt2)

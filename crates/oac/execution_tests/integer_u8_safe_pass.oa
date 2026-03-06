@@ -1,0 +1,12 @@
+fun main() -> I32 {
+	ptr = Clib.calloc(i32_to_i64(1), i32_to_i64(1))
+	zero = load_u8(ptr)
+	sum = zero + zero
+	product = zero * zero
+	difference = sum - zero
+	if difference == zero {
+		print(1)
+	}
+	Clib.free(ptr)
+	return 0
+}

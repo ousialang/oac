@@ -1,0 +1,8 @@
+fun main() -> I32 {
+	ptr = Clib.malloc(i32_to_i64(1))
+	x = load_u8(ptr)
+	ascii = load_u8(String.ptr("A"))
+	y = x + ascii
+	Clib.free(ptr)
+	return 0
+}

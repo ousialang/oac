@@ -1,8 +1,9 @@
 ---
 source: crates/oac/src/qbe_backend.rs
-expression: output
+expression: snapshot_content
 snapshot_kind: text
 ---
-6
-10
-11
+COMPILATION ERROR
+
+[OAC-PROVE-001] Error: prove obligation verification failed: integer safety verification failed (SAT counterexamples found):
+main#score#i32#.oac_integer_site_i32__add__16 (root=main, caller=score, op=add, semantic_type=I32, qbe_artifact=site_main_score_i32__oac_integer_site_i32__add__16.qbe, smt_artifact=site_main_score_i32__oac_integer_site_i32__add__16.smt2)

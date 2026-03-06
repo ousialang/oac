@@ -136,6 +136,36 @@ pub(crate) fn build_function_arg_invariant_assumptions_for_names(
     build_assumptions_from_function_name_pairs(program, &pairs, invariant_bindings)
 }
 
+pub(crate) fn build_function_arg_range_assumptions(
+    program: &ResolvedProgram,
+    checker_module_functions: &[qbe::Function],
+) -> anyhow::Result<Vec<qbe_smt::FunctionArgRangeAssumption>> {
+    build_function_arg_range_assumptions_with_name_overrides(
+        program,
+        checker_module_functions,
+        &HashMap::new(),
+    )
+}
+
+pub(crate) fn build_function_arg_range_assumptions_with_name_overrides(
+    program: &ResolvedProgram,
+    checker_module_functions: &[qbe::Function],
+    checker_to_program_name: &HashMap<String, String>,
+) -> anyhow::Result<Vec<qbe_smt::FunctionArgRangeAssumption>> {
+    let mut pairs = checker_module_functions
+        .iter()
+        .map(|function| {
+            let semantic = checker_to_program_name
+                .get(&function.name)
+                .cloned()
+                .unwrap_or_else(|| function.name.clone());
+            (function.name.clone(), semantic)
+        })
+        .collect::<Vec<_>>();
+    pairs.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0).then(lhs.1.cmp(&rhs.1)));
+    build_range_assumptions_from_function_name_pairs(program, &pairs)
+}
+
 fn build_assumptions_from_function_name_pairs(
     program: &ResolvedProgram,
     function_name_pairs: &[(String, String)],
@@ -196,6 +226,57 @@ fn build_assumptions_from_function_name_pairs(
         lhs.function_name == rhs.function_name
             && lhs.arg_index == rhs.arg_index
             && lhs.invariant_function_name == rhs.invariant_function_name
+    });
+    Ok(out)
+}
+
+fn build_range_assumptions_from_function_name_pairs(
+    program: &ResolvedProgram,
+    function_name_pairs: &[(String, String)],
+) -> anyhow::Result<Vec<qbe_smt::FunctionArgRangeAssumption>> {
+    let mut out = Vec::new();
+    for (checker_name, semantic_name) in function_name_pairs {
+        let Some(sig) = program.function_sigs.get(semantic_name) else {
+            return Err(anyhow::anyhow!(
+                "missing signature for function {} while building argument-range assumptions",
+                semantic_name
+            ));
+        };
+        if sig.extern_symbol_name.is_some() {
+            continue;
+        }
+        if !program.function_definitions.contains_key(semantic_name) {
+            continue;
+        }
+
+        for (arg_index, parameter) in sig.parameters.iter().enumerate() {
+            if parameter.ty != "U8" {
+                continue;
+            }
+            out.push(qbe_smt::FunctionArgRangeAssumption {
+                function_name: checker_name.clone(),
+                arg_index,
+                lower: 0,
+                upper: 255,
+                signed: false,
+            });
+        }
+    }
+
+    out.sort_by(|lhs, rhs| {
+        lhs.function_name
+            .cmp(&rhs.function_name)
+            .then(lhs.arg_index.cmp(&rhs.arg_index))
+            .then(lhs.lower.cmp(&rhs.lower))
+            .then(lhs.upper.cmp(&rhs.upper))
+            .then(lhs.signed.cmp(&rhs.signed))
+    });
+    out.dedup_by(|lhs, rhs| {
+        lhs.function_name == rhs.function_name
+            && lhs.arg_index == rhs.arg_index
+            && lhs.lower == rhs.lower
+            && lhs.upper == rhs.upper
+            && lhs.signed == rhs.signed
     });
     Ok(out)
 }

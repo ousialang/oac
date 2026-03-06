@@ -1,0 +1,7 @@
+fun main() -> I32 {
+	min = 0 - 2147483647
+	min = min - 1
+	neg_one = 0 - 1
+	x = min / neg_one
+	return x
+}

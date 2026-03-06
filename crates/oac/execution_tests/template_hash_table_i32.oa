@@ -79,12 +79,46 @@ fun main() -> I32 {
 	print(IntTable.len(table))
 
 	print(IntTable.capacity(table))
-	i = 0
-	while i < 20 {
-		r = IntTable.set(table, 100 + i, i)
-		table = r.table
-		i = i + 1
-	}
+	r = IntTable.set(table, 100, 0)
+	table = r.table
+	r = IntTable.set(table, 101, 1)
+	table = r.table
+	r = IntTable.set(table, 102, 2)
+	table = r.table
+	r = IntTable.set(table, 103, 3)
+	table = r.table
+	r = IntTable.set(table, 104, 4)
+	table = r.table
+	r = IntTable.set(table, 105, 5)
+	table = r.table
+	r = IntTable.set(table, 106, 6)
+	table = r.table
+	r = IntTable.set(table, 107, 7)
+	table = r.table
+	r = IntTable.set(table, 108, 8)
+	table = r.table
+	r = IntTable.set(table, 109, 9)
+	table = r.table
+	r = IntTable.set(table, 110, 10)
+	table = r.table
+	r = IntTable.set(table, 111, 11)
+	table = r.table
+	r = IntTable.set(table, 112, 12)
+	table = r.table
+	r = IntTable.set(table, 113, 13)
+	table = r.table
+	r = IntTable.set(table, 114, 14)
+	table = r.table
+	r = IntTable.set(table, 115, 15)
+	table = r.table
+	r = IntTable.set(table, 116, 16)
+	table = r.table
+	r = IntTable.set(table, 117, 17)
+	table = r.table
+	r = IntTable.set(table, 118, 18)
+	table = r.table
+	r = IntTable.set(table, 119, 19)
+	table = r.table
 	print(IntTable.len(table))
 	print(IntTable.capacity(table))
 	print_lookup(IntTable.get(table, 1))

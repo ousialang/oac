@@ -2,7 +2,9 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use crate::invariant_metadata::{
     build_function_arg_invariant_assumptions,
-    build_function_arg_invariant_assumptions_with_name_overrides, InvariantBinding,
+    build_function_arg_invariant_assumptions_with_name_overrides,
+    build_function_arg_range_assumptions, build_function_arg_range_assumptions_with_name_overrides,
+    InvariantBinding,
 };
 use crate::ir::ResolvedProgram;
 
@@ -45,20 +47,37 @@ pub(crate) fn checker_module_with_reachable_callees(
         }
 
         let assumptions = if checker_to_program_name.is_empty() {
-            build_function_arg_invariant_assumptions(
+            let arg_invariant_assumptions = build_function_arg_invariant_assumptions(
                 program,
                 &module.functions,
                 invariant_by_struct,
-            )?
+            )?;
+            let arg_range_assumptions =
+                build_function_arg_range_assumptions(program, &module.functions)?;
+            qbe_smt::ModuleAssumptions {
+                arg_invariant_assumptions,
+                arg_range_assumptions,
+            }
         } else {
-            build_function_arg_invariant_assumptions_with_name_overrides(
+            let arg_invariant_assumptions =
+                build_function_arg_invariant_assumptions_with_name_overrides(
+                    program,
+                    &module.functions,
+                    invariant_by_struct,
+                    checker_to_program_name,
+                )?;
+            let arg_range_assumptions = build_function_arg_range_assumptions_with_name_overrides(
                 program,
                 &module.functions,
-                invariant_by_struct,
                 checker_to_program_name,
-            )?
+            )?;
+            qbe_smt::ModuleAssumptions {
+                arg_invariant_assumptions,
+                arg_range_assumptions,
+            }
         };
         let required_invariant_functions = assumptions
+            .arg_invariant_assumptions
             .iter()
             .map(|assumption| assumption.invariant_function_name.clone())
             .collect::<BTreeSet<_>>();
@@ -66,12 +85,7 @@ pub(crate) fn checker_module_with_reachable_callees(
         let mut next_roots = additional_roots.clone();
         next_roots.extend(required_invariant_functions);
         if next_roots == additional_roots {
-            return Ok((
-                module,
-                qbe_smt::ModuleAssumptions {
-                    arg_invariant_assumptions: assumptions,
-                },
-            ));
+            return Ok((module, assumptions));
         }
         additional_roots = next_roots;
     }

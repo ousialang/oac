@@ -542,18 +542,32 @@ fn evaluate_binary_op(op: Op, left: &CtValue, right: &CtValue) -> anyhow::Result
         Op::Or => Ok(CtValue::Bool(
             expect_bool(left, "|| left operand")? || expect_bool(right, "|| right operand")?,
         )),
-        Op::Add => Ok(CtValue::I32(
-            expect_i32(left, "+ left operand")? + expect_i32(right, "+ right operand")?,
-        )),
-        Op::Sub => Ok(CtValue::I32(
-            expect_i32(left, "- left operand")? - expect_i32(right, "- right operand")?,
-        )),
-        Op::Mul => Ok(CtValue::I32(
-            expect_i32(left, "* left operand")? * expect_i32(right, "* right operand")?,
-        )),
-        Op::Div => Ok(CtValue::I32(
-            expect_i32(left, "/ left operand")? / expect_i32(right, "/ right operand")?,
-        )),
+        Op::Add => checked_i32_binary(
+            expect_i32(left, "+ left operand")?,
+            expect_i32(right, "+ right operand")?,
+            "+",
+            i32::checked_add,
+        )
+        .map(CtValue::I32),
+        Op::Sub => checked_i32_binary(
+            expect_i32(left, "- left operand")?,
+            expect_i32(right, "- right operand")?,
+            "-",
+            i32::checked_sub,
+        )
+        .map(CtValue::I32),
+        Op::Mul => checked_i32_binary(
+            expect_i32(left, "* left operand")?,
+            expect_i32(right, "* right operand")?,
+            "*",
+            i32::checked_mul,
+        )
+        .map(CtValue::I32),
+        Op::Div => checked_i32_div(
+            expect_i32(left, "/ left operand")?,
+            expect_i32(right, "/ right operand")?,
+        )
+        .map(CtValue::I32),
         Op::Eq => Ok(CtValue::Bool(values_equal(left, right)?)),
         Op::Neq => Ok(CtValue::Bool(!values_equal(left, right)?)),
         Op::Lt => Ok(CtValue::Bool(
@@ -569,6 +583,26 @@ fn evaluate_binary_op(op: Op, left: &CtValue, right: &CtValue) -> anyhow::Result
             expect_i32(left, ">= left operand")? >= expect_i32(right, ">= right operand")?,
         )),
     }
+}
+
+fn checked_i32_binary(
+    left: i32,
+    right: i32,
+    op: &str,
+    checked: fn(i32, i32) -> Option<i32>,
+) -> anyhow::Result<i32> {
+    checked(left, right)
+        .ok_or_else(|| anyhow::anyhow!("comptime integer overflow in {left} {op} {right}"))
+}
+
+fn checked_i32_div(left: i32, right: i32) -> anyhow::Result<i32> {
+    if right == 0 {
+        return Err(anyhow::anyhow!(
+            "comptime division by zero in {left} / {right}"
+        ));
+    }
+    left.checked_div(right)
+        .ok_or_else(|| anyhow::anyhow!("comptime integer overflow in {left} / {right}"))
 }
 
 fn evaluate_call(
@@ -1143,5 +1177,62 @@ comptime apply bad(I32)
         );
         let err = execute_comptime_applies(&mut ast).expect_err("bad emit should fail");
         assert!(err.to_string().contains("unwrap called on None"));
+    }
+
+    #[test]
+    fn checked_i32_overflow_fails_closed() {
+        let mut ast = parse_source(
+            r#"
+comptime fun overflow(T: Type) -> DeclSet {
+	x = 2147483647 + 1
+	return declset_new()
+}
+
+comptime apply overflow(I32)
+"#,
+        );
+        let err = execute_comptime_applies(&mut ast).expect_err("overflow should fail");
+        assert!(err
+            .to_string()
+            .contains("comptime integer overflow in 2147483647 + 1"));
+    }
+
+    #[test]
+    fn checked_i32_divide_by_zero_fails_closed() {
+        let mut ast = parse_source(
+            r#"
+comptime fun div_zero(T: Type) -> DeclSet {
+	x = 1 / 0
+	return declset_new()
+}
+
+comptime apply div_zero(I32)
+"#,
+        );
+        let err = execute_comptime_applies(&mut ast).expect_err("division by zero should fail");
+        assert!(err
+            .to_string()
+            .contains("comptime division by zero in 1 / 0"));
+    }
+
+    #[test]
+    fn checked_i32_min_over_neg_one_fails_closed() {
+        let mut ast = parse_source(
+            r#"
+comptime fun div_min(T: Type) -> DeclSet {
+	min = 0 - 2147483647
+	min = min - 1
+	neg_one = 0 - 1
+	x = min / neg_one
+	return declset_new()
+}
+
+comptime apply div_min(I32)
+"#,
+        );
+        let err = execute_comptime_applies(&mut ast).expect_err("min / -1 should fail");
+        assert!(err
+            .to_string()
+            .contains("comptime integer overflow in -2147483648 / -1"));
     }
 }

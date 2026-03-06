@@ -1,0 +1,4 @@
+fun main() -> I32 {
+	x = 1 / 0
+	return x
+}

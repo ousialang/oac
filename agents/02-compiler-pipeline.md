@@ -11,17 +11,18 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
    - CLI `build`/`test`/`bench-prove` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` and `main.rs::compile_source_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
 5. Resolve/type-check with `ir::resolve`.
 6. Lower to QBE with `qbe_backend::compile`.
-7. Prepare prove + struct-invariant checker artifacts, group them into ordinary-function summary candidates, and consult repo-local proof cache policy from `VerificationConfig` / `--proof-cache`.
+7. Prepare prove + integer-safety + struct-invariant checker artifacts, group ordinary-root obligations into repo-local summary candidates, and consult proof-cache policy from `VerificationConfig` / `--proof-cache`.
 8. Verify `prove(...)` obligations with `prove::verify_prepared_prove_obligations` (SMT-based, fail-closed, trust mode skips solver only when the combined ordinary-function summary matches a cached `unsat` entry).
-9. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as prove checking); after both stages succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
-10. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe_with_config` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module, and uses one summary candidate per model-invariant checker root).
-11. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
-12. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
+9. Verify source-level integer arithmetic obligations with `integer_safety::verify_prepared_integer_safety_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable integer `+/-/*//` sites from `main` plus all struct/model-invariant roots).
+10. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as prove/int-safety checking); after all ordinary-root obligations succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
+11. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe_with_config` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module, and uses one summary candidate per model-invariant checker root).
+12. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
+13. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
     - QBE runtime backend: emit `target/oac/ir.qbe`, run `qbe`, emit `target/oac/assembly.s`.
     - LLVM runtime backend: emit `target/oac/ir.ll`, run `clang -x ir -c`, emit `target/oac/object.o`.
-13. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
-14. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
-15. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
+14. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+15. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+16. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -31,6 +32,8 @@ Artifacts emitted during build:
 - `target/oac/ir.ll` (LLVM runtime backend)
 - `target/oac/prove/site_*.qbe` (generated checker programs, when prove obligations exist)
 - `target/oac/prove/site_*.smt2` (when prove obligations exist)
+- `target/oac/integer_safety/site_*.qbe` (generated checker programs, when integer-safety obligations exist)
+- `target/oac/integer_safety/site_*.smt2` (when integer-safety obligations exist)
 - `target/oac/struct_invariants/site_*.qbe` (generated checker programs, when obligations exist)
 - `target/oac/struct_invariants/site_*.smt2` (when invariant obligations exist)
 - `target/oac/model_invariants/site_*.qbe` (generated checker programs, when model-invariant obligations exist)
@@ -115,6 +118,7 @@ Operator precedence is explicitly encoded in parser.
 
 `resolve(ast)` performs:
 - stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- deterministic comptime evaluation, including checked `I32` arithmetic in `comptime.rs` (`+/-/*` overflow and `/` divide-by-zero or `MIN / -1` now produce deterministic comptime errors instead of Rust panics)
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
 - generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages, including recursive expansion of local generic-body specializations after parent type substitutions are applied.
 - type definition graph creation
@@ -198,6 +202,7 @@ Important enforced invariants include:
 - String helper builtins (`char_at`, `string_len`, `slice`, `print_str`) operate over std `String`/`Bytes` layout rather than raw C-string pointers.
 - Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.
 - Maps `U8` to QBE word temporaries with unsigned compare/div lowering for `U8` arithmetic relations.
+- Emits lightweight integer-site markers for source-level integer `+`, `-`, `*`, `/` expressions (`.oac_integer_site_<semantic_type>__<op>__<site_id>` plus `lhs`/`rhs`/`out` copies) so proof-stage integer checkers can recover operands/results without marking compiler-internal pointer math or offset arithmetic.
 - Produces snapshots in tests for codegen and runtime behavior.
 
 ## Runtime Backend Dispatch (`codegen_runtime.rs` + `llvm_backend.rs`)
@@ -215,8 +220,9 @@ Important enforced invariants include:
 
 - `main.rs` also exposes `riscv-smt` subcommand.
 - `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
-- `verification.rs` is the shared in-crate verification entrypoint; it runs prove obligations first, then struct invariants, then model invariants.
+- `verification.rs` is the shared in-crate verification entrypoint; it runs ordinary-root prove obligations first, then ordinary-root integer-safety obligations, then struct invariants, then model invariants.
 - `qbe-smt` is used by prove, struct-invariant, and model-invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
+- `integer_safety.rs` reuses the same checker-module closure helpers as `prove.rs`: it collects marker sites reachable from `main` plus struct/model-invariant roots, clones the site’s caller into checker `main`, prunes CFG branches that cannot reach the target marker, injects a `ret bad` predicate after the marker, and groups resulting obligations into ordinary/model summary candidates for cache reuse.
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so invariant/prove verification shares one encode+solve backend path.
 - `oac` routes prove/struct-invariant/model-invariant solver calls through `crates/oac/src/verification_solver.rs`, which preserves baseline two-step retries (`10s`, `30s`) and can add a candidate-only third attempt for large obligations that remain `unknown`.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
@@ -244,7 +250,7 @@ Important enforced invariants include:
 - Invalid conversion assignment-type pairings remain fail-closed in checker encoding (`Unsupported` errors).
 - Encoding/validation is reachable-code-aware: only blocks reachable from function entry are flattened into Horn rules, so unreachable unsupported code does not block proving.
 - Main-argument-aware assumption remains available: when enabled and main has `argc`, encoding asserts `argc >= 0`.
-- Module-level argument assumptions are also available: `oac` now passes per-function invariant-bearing argument assumptions, and `qbe-smt` validates these references fail-closed (function exists/encoded, argument index in range, invariant target unary).
+- Module-level argument assumptions are also available: `oac` passes both per-function invariant-bearing argument assumptions and integer range assumptions, and `qbe-smt` validates these references fail-closed (function exists/encoded, argument index in range, invariant target unary, range bounds/order valid). Current integer range use is checker-entry `[0,255]` assumptions for semantic `U8` parameters.
 - Struct-invariant SAT failures include a compact checker CFG witness (block path + branch directions); for `main(argc, argv)` obligations, `oac` also extracts a concrete `argc` witness via additional CHC range queries.
 - Loop classification is intentionally conservative: currently proves only a narrow canonical while-loop shape where the guard is initially true on entry and the body preserves the guard variable (`x' = x`), otherwise result is unknown and build proceeds.
 

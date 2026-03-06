@@ -293,7 +293,10 @@ generic HashTable[K: Hash + Eq, V] {
 	}
 
 	fun threshold_for_capacity(capacity: I32) -> I32 {
-		threshold = (capacity * 3) / 4
+		assert(capacity >= 0)
+		half = capacity / 2
+		quarter = capacity / 4
+		threshold = half + quarter
 		if threshold < 1 {
 			return 1
 		}
@@ -301,6 +304,7 @@ generic HashTable[K: Hash + Eq, V] {
 	}
 
 	fun assert_metadata(table: HashTable) -> HashTable {
+		assert(table.bucket_count >= 1)
 		assert(table.len >= 0)
 		assert(table.resize_threshold >= 1)
 		assert(table.len <= table.resize_threshold)
@@ -311,6 +315,9 @@ generic HashTable[K: Hash + Eq, V] {
 		n = HashTable.min_bucket_count()
 		if min_capacity <= n {
 			return n
+		}
+		if min_capacity >= 1073741824 {
+			return 1073741824
 		}
 
 		while n < min_capacity {
@@ -391,17 +398,19 @@ generic HashTable[K: Hash + Eq, V] {
 	}
 
 	fun modulo_non_negative(value: I32, divisor: I32) -> I32 {
-		q = value / divisor
-		r = value - (q * divisor)
-		if r < 0 {
-			return r + divisor
+		assert(value >= 0)
+		assert(divisor > 0)
+		remainder = value
+		while remainder >= divisor {
+			remainder = remainder - divisor
 		}
-		return r
+		return remainder
 	}
 
 	fun hash_key(key: K) -> I32 {
 		k = Hash.hash(key)
 		if k < 0 {
+			assert(k >= (0 - 2147483647))
 			k = 0 - k
 		}
 		return k
@@ -526,6 +535,7 @@ generic HashTable[K: Hash + Eq, V] {
 
 		next_len = table.len
 		if bucket_result.inserted_new {
+			assert(next_len < table.resize_threshold)
 			next_len = next_len + 1
 		}
 
@@ -568,21 +578,47 @@ generic HashTable[K: Hash + Eq, V] {
 		return out
 	}
 
+	fun insert_all_buckets(dst: HashTable, src: Buckets, count: I32) -> HashTable {
+		if count <= 1 {
+			match src {
+				Buckets.Leaf(bucket) => {
+					return HashTable.insert_bucket_entries(dst, bucket)
+				}
+				Buckets.Branch(node) => {
+					left = HashTable.insert_all_buckets(dst, node.left, 1)
+					return HashTable.insert_all_buckets(left, node.right, 1)
+				}
+			}
+		}
+
+		half = count / 2
+		match src {
+			Buckets.Leaf(bucket) => {
+				return HashTable.insert_bucket_entries(dst, bucket)
+			}
+			Buckets.Branch(node) => {
+				left = HashTable.insert_all_buckets(dst, node.left, half)
+				return HashTable.insert_all_buckets(left, node.right, half)
+			}
+		}
+	}
+
 	fun rehash(table: HashTable, new_bucket_count: I32) -> HashTable {
 		cap = HashTable.next_power_of_two(new_bucket_count)
 		out = HashTable.with_capacity(cap)
-		i = 0
-		while i < table.bucket_count {
-			bucket = HashTable.bucket_at(table.buckets, table.bucket_count, i)
-			out = HashTable.insert_bucket_entries(out, bucket)
-			i = i + 1
-		}
+		out = HashTable.insert_all_buckets(out, table.buckets, table.bucket_count)
 		return HashTable.assert_metadata(out)
 	}
 
 	fun maybe_resize_before_insert(table: HashTable) -> HashTable {
-		if table.len + 1 > table.resize_threshold {
-			return HashTable.rehash(table, table.bucket_count + table.bucket_count)
+		table = HashTable.assert_metadata(table)
+		if table.len >= table.resize_threshold {
+			bucket_count = table.bucket_count
+			if bucket_count > 536870912 {
+				return HashTable.rehash(table, 1073741824)
+			}
+			assert(bucket_count <= 536870912)
+			return HashTable.rehash(table, bucket_count + bucket_count)
 		}
 		return HashTable.assert_metadata(table)
 	}
@@ -609,6 +645,7 @@ generic HashTable[K: Hash + Eq, V] {
 			Lookup.Missing => {
 			}
 			Lookup.Found(_value) => {
+				assert(next_len > 0)
 				next_len = next_len - 1
 			}
 		}
