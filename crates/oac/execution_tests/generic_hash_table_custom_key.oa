@@ -9,7 +9,7 @@ impl Hash for UserKey {
 	}
 }
 
-impl Eq for UserKey {
+impl Equality for UserKey {
 	fun equals(a: UserKey, b: UserKey) -> Bool {
 		return a.id == b.id
 	}

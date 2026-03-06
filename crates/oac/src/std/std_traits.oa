@@ -2,8 +2,28 @@ trait Hash {
 	fun hash(v: Self) -> I32
 }
 
-trait Eq {
+trait Addition {
+	fun add(lhs: Self, rhs: Self) -> Self
+}
+
+trait Subtraction {
+	fun sub(lhs: Self, rhs: Self) -> Self
+}
+
+trait Multiplication {
+	fun mul(lhs: Self, rhs: Self) -> Self
+}
+
+trait Division {
+	fun div(lhs: Self, rhs: Self) -> Self
+}
+
+trait Equality {
 	fun equals(a: Self, b: Self) -> Bool
+}
+
+trait Comparison {
+	fun compare(a: Self, b: Self) -> I32
 }
 
 trait Copy {
@@ -68,12 +88,6 @@ impl Hash for I32 {
 	}
 }
 
-impl Eq for I32 {
-	fun equals(a: I32, b: I32) -> Bool {
-		return a == b
-	}
-}
-
 impl Hash for Bool {
 	fun hash(v: Bool) -> I32 {
 		if v {
@@ -83,21 +97,27 @@ impl Hash for Bool {
 	}
 }
 
-impl Eq for Bool {
-	fun equals(a: Bool, b: Bool) -> Bool {
-		return a == b
-	}
-}
-
 impl Hash for Char {
 	fun hash(v: Char) -> I32 {
 		return v.code()
 	}
 }
 
-impl Eq for Char {
+impl Equality for Char {
 	fun equals(a: Char, b: Char) -> Bool {
 		return a.equals(b)
+	}
+}
+
+impl Comparison for Char {
+	fun compare(a: Char, b: Char) -> I32 {
+		if a.code() < b.code() {
+			return 0 - 1
+		}
+		if a.code() > b.code() {
+			return 1
+		}
+		return 0
 	}
 }
 
@@ -107,8 +127,26 @@ impl Hash for AsciiChar {
 	}
 }
 
-impl Eq for AsciiChar {
+impl Equality for AsciiChar {
 	fun equals(a: AsciiChar, b: AsciiChar) -> Bool {
+		return a.equals(b)
+	}
+}
+
+impl Comparison for AsciiChar {
+	fun compare(a: AsciiChar, b: AsciiChar) -> I32 {
+		if a.code() < b.code() {
+			return 0 - 1
+		}
+		if a.code() > b.code() {
+			return 1
+		}
+		return 0
+	}
+}
+
+impl Equality for String {
+	fun equals(a: String, b: String) -> Bool {
 		return a.equals(b)
 	}
 }

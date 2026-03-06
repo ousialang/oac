@@ -1,0 +1,70 @@
+struct Counter {
+	value: I32,
+}
+
+impl Copy for Counter {
+	fun copy(v: Counter) -> Counter {
+		return v
+	}
+}
+
+impl Addition for Counter {
+	fun add(lhs: Counter, rhs: Counter) -> Counter {
+		if lhs.value > rhs.value {
+			return lhs
+		}
+		return rhs
+	}
+}
+
+impl Subtraction for Counter {
+	fun sub(lhs: Counter, rhs: Counter) -> Counter {
+		if lhs.value < rhs.value {
+			return lhs
+		}
+		return rhs
+	}
+}
+
+impl Equality for Counter {
+	fun equals(a: Counter, b: Counter) -> Bool {
+		return a.value == b.value
+	}
+}
+
+impl Comparison for Counter {
+	fun compare(a: Counter, b: Counter) -> I32 {
+		if a.value < b.value {
+			return 0 - 1
+		}
+		if a.value > b.value {
+			return 1
+		}
+		return 0
+	}
+}
+
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+		return 1
+	}
+	print(0)
+	return 0
+}
+
+fun main() -> I32 {
+	a = Counter struct { value: 7 }
+	b = Counter struct { value: 2 }
+	sum = a + b
+	diff = a - b
+	print(sum.value)
+	print(diff.value)
+	print_bool(a == Counter struct { value: 7 })
+	print_bool(a != b)
+	print_bool(b < a)
+	print_bool(a <= Counter struct { value: 7 })
+	print_bool(a > b)
+	print_bool(a >= Counter struct { value: 7 })
+	return 0
+}

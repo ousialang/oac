@@ -1,0 +1,8 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+[OAC-RESOLVE-001] Error: failed to resolve/type-check program: direct Eq comparison is not supported for tagged enum Token without an Equality impl

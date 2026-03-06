@@ -1,4 +1,4 @@
-generic HashSet[K: Hash + Eq] {
+generic HashSet[K: Hash + Equality] {
 	struct EntryNode {
 		key: K,
 		next: Bucket,
@@ -176,7 +176,7 @@ generic HashSet[K: Hash + Eq] {
 				return false
 			}
 			Bucket.Node(node) => {
-				if Eq.equals(node.key, key) {
+				if node.key == key {
 					return true
 				}
 				return HashSet.bucket_contains(node.next, key)
@@ -197,7 +197,7 @@ generic HashSet[K: Hash + Eq] {
 				}
 			}
 			Bucket.Node(node) => {
-				if Eq.equals(node.key, key) {
+				if node.key == key {
 					return BucketInsertResult struct {
 						bucket: bucket,
 						inserted_new: false,
@@ -226,7 +226,7 @@ generic HashSet[K: Hash + Eq] {
 				}
 			}
 			Bucket.Node(node) => {
-				if Eq.equals(node.key, key) {
+				if node.key == key {
 					return BucketRemoveResult struct {
 						bucket: node.next,
 						removed: true,

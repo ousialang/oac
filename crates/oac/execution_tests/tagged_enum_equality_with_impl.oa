@@ -1,0 +1,42 @@
+enum Token {
+	End,
+	Int(I32),
+}
+
+impl Copy for Token {
+	fun copy(v: Token) -> Token {
+		return v
+	}
+}
+
+impl Equality for Token {
+	fun equals(a: Token, b: Token) -> Bool {
+		return match a {
+			Token.End => match b {
+				Token.End => true
+				Token.Int(_) => false
+			}
+			Token.Int(av) => match b {
+				Token.End => false
+				Token.Int(bv) => av == bv
+			}
+		}
+	}
+}
+
+fun print_bool(v: Bool) -> I32 {
+	if v {
+		print(1)
+		return 1
+	}
+	print(0)
+	return 0
+}
+
+fun main() -> I32 {
+	print_bool(Token.Int(1) == Token.Int(1))
+	print_bool(Token.Int(1) != Token.Int(2))
+	print_bool(Token.End == Token.End)
+	print_bool(Token.End != Token.Int(0))
+	return 0
+}

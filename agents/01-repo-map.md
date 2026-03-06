@@ -57,11 +57,11 @@ Editor tooling in this repository:
 - `crates/qbe-smt/src/classify.rs`: conservative loop non-termination classifier used during `oac build`.
 - `crates/oac/src/std/std.oa`: stdlib import entrypoint injected during resolution.
 - `crates/oac/src/std/std_*.oa`: split stdlib modules imported by `std/std.oa`.
-- `crates/oac/src/std/std_traits.oa`: core trait declarations/impls (`Hash`, `Eq`) used by bounded generics (for example hash table keys).
+- `crates/oac/src/std/std_traits.oa`: core trait declarations/impls (`Hash`, operator traits, `Equality`, `Copy`, `Drop`) used by bounded generics and infix operator resolution.
 - `crates/oac/src/std/std_option_result.oa`: core generic sum types (`Option[T]`, `Result[T,E]`) and helper methods.
 - `crates/oac/src/std/std_string.oa`: std-owned `Bytes` + `String` representation (`String` enum with literal/heap variants).
 - `crates/oac/src/std/std_ref.oa`: pointer wrappers (`Ref[T]`, `Mut[T]`) and typed read/write helper specializations.
-- `crates/oac/src/std/std_set.oa`: generic persistent `HashSet[K: Hash + Eq]` operations and set algebra helpers.
+- `crates/oac/src/std/std_set.oa`: generic persistent `HashSet[K: Hash + Equality]` operations and set algebra helpers.
 - `crates/oac/src/std/std_vec.oa`: generic persistent `Vec[T]` API (`push`/`pop`/`get`/`set`/`reserve`/`clear`).
 - `crates/oac/src/std/std_clib.oa`: std-owned C interop declarations for `Clib.*` namespaced API via `namespace Clib { extern fun ... }` (resolver keys remain `Clib__*`; replaces compiler hardcoded libc signature JSON).
 - `crates/oac/src/std/std_io.oa`: std-owned `Io.*` wrappers over `Clib.open/read/write/close` with explicit result enums.

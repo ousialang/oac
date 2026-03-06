@@ -1,0 +1,13 @@
+enum Token {
+	End,
+	Int(I32),
+}
+
+fun main() -> I32 {
+	a = Token.Int(1)
+	b = Token.Int(1)
+	if a == b {
+		print(1)
+	}
+	return 0
+}

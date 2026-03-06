@@ -2104,7 +2104,7 @@ mod tests {
     #[test]
     fn parses_generic_with_bounds_and_specialization() {
         let source = r#"
-generic HashMap[K: Hash + Eq, V] {
+generic HashMap[K: Hash + Equality, V] {
 	struct HashMap {
 		_size: I32,
 	}
@@ -2124,7 +2124,7 @@ specialize IntToInt = HashMap[I32, I32]
         assert_eq!(generic.params.len(), 2);
         assert!(generic.generic_specializations.is_empty());
         assert_eq!(generic.params[0].name, "K");
-        assert_eq!(generic.params[0].bounds, vec!["Hash", "Eq"]);
+        assert_eq!(generic.params[0].bounds, vec!["Hash", "Equality"]);
         assert_eq!(generic.params[1].name, "V");
         assert!(generic.params[1].bounds.is_empty());
         assert_eq!(ast.generic_specializations[0].alias, "IntToInt");

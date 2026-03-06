@@ -504,12 +504,56 @@ fn evaluate_expression(
                 .collect::<anyhow::Result<Vec<_>>>()?;
             evaluate_call(name, evaluated_args, path, world, call_stack)
         }
-        Expression::MethodCall { .. } => Err(anyhow::anyhow!(
-            "method calls are unsupported in comptime evaluator v1"
-        )),
-        Expression::PostfixCall { .. } => Err(anyhow::anyhow!(
-            "postfix calls are unsupported in comptime evaluator v1"
-        )),
+        Expression::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
+            let Expression::Variable(trait_name) = receiver.as_ref() else {
+                return Err(anyhow::anyhow!(
+                    "method calls are unsupported in comptime evaluator v1"
+                ));
+            };
+            let evaluated_args = args
+                .iter()
+                .enumerate()
+                .map(|(index, arg)| {
+                    evaluate_expression(
+                        arg,
+                        &format!("{path}/method.arg.{index}"),
+                        env,
+                        world,
+                        call_stack,
+                    )
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            evaluate_builtin_operator_trait_call(trait_name, method, evaluated_args, path)
+        }
+        Expression::PostfixCall { callee, args } => {
+            let Expression::FieldAccess {
+                struct_variable,
+                field,
+            } = callee.as_ref()
+            else {
+                return Err(anyhow::anyhow!(
+                    "postfix calls are unsupported in comptime evaluator v1"
+                ));
+            };
+            let evaluated_args = args
+                .iter()
+                .enumerate()
+                .map(|(index, arg)| {
+                    evaluate_expression(
+                        arg,
+                        &format!("{path}/postfix.arg.{index}"),
+                        env,
+                        world,
+                        call_stack,
+                    )
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            evaluate_builtin_operator_trait_call(struct_variable, field, evaluated_args, path)
+        }
         Expression::BinOp(op, left, right) => {
             let left =
                 evaluate_expression(left, &format!("{path}/bin.left"), env, world, call_stack)?;
@@ -584,6 +628,85 @@ fn evaluate_binary_op(op: Op, left: &CtValue, right: &CtValue) -> anyhow::Result
         )),
         Op::Ge => Ok(CtValue::Bool(
             expect_i32(left, ">= left operand")? >= expect_i32(right, ">= right operand")?,
+        )),
+    }
+}
+
+fn evaluate_builtin_operator_trait_call(
+    trait_name: &str,
+    method_name: &str,
+    args: Vec<CtValueWithMeta>,
+    path: &str,
+) -> anyhow::Result<CtValueWithMeta> {
+    let as_value = |value| CtValueWithMeta::new(value, Some(path.to_string()));
+    if args.len() != 2 {
+        return Err(anyhow::anyhow!(
+            "trait call {}.{} expects 2 arguments in comptime evaluator, got {}",
+            trait_name,
+            method_name,
+            args.len()
+        ));
+    }
+    let left = &args[0].value;
+    let right = &args[1].value;
+
+    match (trait_name, method_name) {
+        ("Addition", "add") => checked_i32_binary(
+            expect_i32(left, "Addition.add left operand")?,
+            expect_i32(right, "Addition.add right operand")?,
+            "+",
+            i32::checked_add,
+        )
+        .map(CtValue::I32)
+        .map(as_value),
+        ("Subtraction", "sub") => checked_i32_binary(
+            expect_i32(left, "Subtraction.sub left operand")?,
+            expect_i32(right, "Subtraction.sub right operand")?,
+            "-",
+            i32::checked_sub,
+        )
+        .map(CtValue::I32)
+        .map(as_value),
+        ("Multiplication", "mul") => checked_i32_binary(
+            expect_i32(left, "Multiplication.mul left operand")?,
+            expect_i32(right, "Multiplication.mul right operand")?,
+            "*",
+            i32::checked_mul,
+        )
+        .map(CtValue::I32)
+        .map(as_value),
+        ("Division", "div") => checked_i32_div(
+            expect_i32(left, "Division.div left operand")?,
+            expect_i32(right, "Division.div right operand")?,
+        )
+        .map(CtValue::I32)
+        .map(as_value),
+        ("Equality", "equals") => match (left, right) {
+            (CtValue::Bool(a), CtValue::Bool(b)) => Ok(as_value(CtValue::Bool(a == b))),
+            (CtValue::I32(a), CtValue::I32(b)) => Ok(as_value(CtValue::Bool(a == b))),
+            (CtValue::I64(a), CtValue::I64(b)) => Ok(as_value(CtValue::Bool(a == b))),
+            _ => Err(anyhow::anyhow!(
+                "trait call Equality.equals is unsupported in comptime evaluator for {} and {}",
+                ct_value_type_name(left),
+                ct_value_type_name(right)
+            )),
+        },
+        ("Comparison", "compare") => {
+            let lhs = expect_i32(left, "Comparison.compare left operand")?;
+            let rhs = expect_i32(right, "Comparison.compare right operand")?;
+            let value = if lhs < rhs {
+                -1
+            } else if lhs > rhs {
+                1
+            } else {
+                0
+            };
+            Ok(as_value(CtValue::I32(value)))
+        }
+        _ => Err(anyhow::anyhow!(
+            "trait call {}.{} is unsupported in comptime evaluator v1",
+            trait_name,
+            method_name
         )),
     }
 }
@@ -998,11 +1121,10 @@ fn values_equal(left: &CtValue, right: &CtValue) -> anyhow::Result<bool> {
         (CtValue::Bool(a), CtValue::Bool(b)) => Ok(a == b),
         (CtValue::I32(a), CtValue::I32(b)) => Ok(a == b),
         (CtValue::I64(a), CtValue::I64(b)) => Ok(a == b),
-        (CtValue::String(a), CtValue::String(b)) => Ok(a == b),
         (CtValue::Type(a), CtValue::Type(b)) => Ok(a == b),
         (CtValue::SemanticExpr(a), CtValue::SemanticExpr(b)) => Ok(a == b),
         _ => Err(anyhow::anyhow!(
-            "unsupported equality comparison between {} and {}",
+            "unsupported equality in comptime evaluator for {} and {}",
             ct_value_type_name(left),
             ct_value_type_name(right)
         )),
@@ -1237,5 +1359,45 @@ comptime apply div_min(I32)
         assert!(err
             .to_string()
             .contains("comptime integer overflow in -2147483648 / -1"));
+    }
+
+    #[test]
+    fn builtin_operator_trait_calls_work_for_i32_in_comptime() {
+        let mut ast = parse_source(
+            r#"
+comptime fun ops(T: Type) -> DeclSet {
+	sum = Addition.add(1, 2)
+	diff = Subtraction.sub(sum, 1)
+	product = Multiplication.mul(diff, 3)
+	quotient = Division.div(product, 2)
+	cmp = Comparison.compare(quotient, 3)
+	assert(Equality.equals(quotient, 3))
+	assert(cmp == 0)
+	return declset_new()
+}
+
+comptime apply ops(I32)
+"#,
+        );
+        execute_comptime_applies(&mut ast).expect("builtin operator trait calls should work");
+    }
+
+    #[test]
+    fn custom_operator_trait_calls_fail_closed_in_comptime() {
+        let mut ast = parse_source(
+            r#"
+comptime fun bad(T: Type) -> DeclSet {
+	same = "alpha" == "alpha"
+	return declset_new()
+}
+
+comptime apply bad(I32)
+"#,
+        );
+        let err = execute_comptime_applies(&mut ast)
+            .expect_err("custom operator trait calls should fail closed in comptime");
+        assert!(err
+            .to_string()
+            .contains("unsupported equality in comptime evaluator for String and String"));
     }
 }

@@ -36,7 +36,7 @@ Observed in parser/IR implementation:
 - Pattern matching on enums (`match`) as statement and expression.
 - Generic definitions and specialization aliases with square-bracket type arguments (`generic Name[T]`, `specialize Alias = Name[ConcreteType]`).
 - Trait declarations and concrete impl blocks (`trait Name { fun method(v: Self, ...) -> ... }`, `impl Name for Type { ... }`).
-- Generic inline bounds (`generic Map[K: Hash + Eq, V] { ... }`).
+- Generic inline bounds (`generic Map[K: Hash + Equality, V] { ... }`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
 - Top-level namespaces for helper/interop declarations: `namespace TypeName { fun helper(...) -> ... { ... } }` and `namespace TypeName { extern fun symbol(...) -> ... }`, callable as `TypeName.helper(...)`.
 - Call-only receiver method sugar is supported for namespace helpers: `value.helper(args...)` resolves through the receiver's concrete type and rewrites to `TypeName.helper(value, args...)`.
@@ -66,8 +66,10 @@ Observed in parser/IR implementation:
 - Ownership is move-only by default: reading a non-`Copy` binding moves it and invalidates that binding until reassigned.
 - For types with a concrete `Copy` impl, read sites implicitly clone by lowering to static `Copy.copy(...)` calls; codegen passes either the value directly (legacy by-value impl signatures) or a synthesized temporary `Ref` wrapper (ref-style impl signatures).
 - Deterministic destruction uses `Drop`: resolver inserts `Drop.drop(...)` calls before overwriting initialized bindings and at scope exits (reverse declaration order); moved/uninitialized bindings are not dropped.
-- Struct `==` / `!=` are universal bytewise comparisons (`memcmp` over struct size), including pointer-containing structs.
+- Struct `==` / `!=` fall back to universal bytewise comparisons (`memcmp` over struct size), including pointer-containing structs, only when no explicit `Equality` impl exists.
+- Tag-only enums likewise keep builtin equality fallback; tagged payload enums reject direct `==` / `!=` unless an explicit `Equality` impl exists.
 - Numeric binary ops are strict and same-type only: `U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
+- Non-logical infix operators are trait-based for non-primitive cases: `+/-/*//==/!=/< <= > >=` resolve through `Addition`, `Subtraction`, `Multiplication`, `Division`, `Equality`, and `Comparison` impls when the compiler does not keep a primitive builtin path.
 - Fixed-width integer arithmetic uses two's-complement wrapping semantics (`I32`/`I64` overflow is not trapped); verification reasons over the same bitvector behavior as runtime rather than mathematical integers.
 - Source-level integer `+`, `-`, `*`, `/` over `U8`, `I32`, `I64`, and `PtrInt` are fail-closed at compile time: every reachable runtime site and every site reachable from struct/model-invariant roots must be proven overflow/underflow-safe during `check proofs`, or compilation stops with `OAC-PROVE-001`.
 - Integer-safety predicates are fixed in v1: `U8` requires `add/mul <= 255`, `sub >= 0`, `div rhs != 0`; `I32`/`I64`/`PtrInt` use signed monotonicity checks for `add/sub`, guarded `result / rhs == lhs` for `mul`, and `rhs != 0 && !(lhs == MIN && rhs == -1)` for `div`.
@@ -99,11 +101,11 @@ Observed in parser/IR implementation:
 - Generic expansion is ahead-of-type-checking and ahead-of-codegen: backend/proving/invariant passes still operate on concrete non-generic IR/function symbols.
 - Imports are file-local-only and flat: import paths must be string literals naming `.oa` files in the same directory.
 - The built-in stdlib is composed through flat imports from `crates/oac/src/std/std.oa` into split sibling files under `crates/oac/src/std/` (including `std_clib.oa` extern bindings and `std_traits.oa` trait/impl declarations), then merged into one global scope before user type-checking (including stdlib invariant declarations).
-- `std_traits.oa` defines `Copy` and `Drop` alongside `Hash`/`Eq`; scalar types (`Bool`, `U8`, `I32`, `I64`, `FP32`, `FP64`, `Char`, `AsciiChar`) ship concrete `Copy` impls in std.
+- `std_traits.oa` defines `Copy` and `Drop` alongside `Hash`, operator traits (`Addition`, `Subtraction`, `Multiplication`, `Division`, `Equality`, `Comparison`); scalar types (`Bool`, `U8`, `I32`, `I64`, `FP32`, `FP64`, `Char`, `AsciiChar`) ship concrete `Copy` impls in std, and std owns non-primitive operator impls such as `Char`/`AsciiChar` comparison and `String` equality.
 - The split stdlib includes generic `Option[T]` / `Result[T,E]` in `crates/oac/src/std/std_option_result.oa` with namespaced constructors/predicates/unwrapping helpers.
 - The split stdlib includes generic `Ref[T]` and `Mut[T]` (in `crates/oac/src/std/std_ref.oa`) for pointer-wrapper value semantics (`from_ptr`, `ptr`, `is_null`, `add_bytes`), with typed read-only dereference helpers (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`) and typed mutable helpers (`U8Mut.*`, `I32Mut.*`, `I64Mut.*`, `PtrIntMut.*`, `BoolMut.*`) that use builtin stores.
-- Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Eq, V]`) with separate-chaining semantics while routing key hashing/equality through `Hash.hash(k)` and `Eq.equals(a, b)`.
-- The split stdlib now also defines generic `HashSet[K: Hash + Eq]` (in `crates/oac/src/std/std_set.oa`) as a persistent separate-chaining set with set algebra (`union`, `intersection`, `difference`) and explicit mutation result payloads (`InsertResult`, `RemoveResult`).
+- Stdlib `HashTable` is now a bounded generic (`HashTable[K: Hash + Equality, V]`) with separate-chaining semantics while routing key hashing through `Hash.hash(k)` and key equality through infix `==` backed by `Equality`.
+- The split stdlib now also defines generic `HashSet[K: Hash + Equality]` (in `crates/oac/src/std/std_set.oa`) as a persistent separate-chaining set with set algebra (`union`, `intersection`, `difference`) and explicit mutation result payloads (`InsertResult`, `RemoveResult`).
 - The split stdlib now also defines generic `Vec[T]` (in `crates/oac/src/std/std_vec.oa`) as a persistent vector-style container with `push`/`pop`/`get`/`set`/`reserve`/`clear` APIs and explicit result payloads (`PopResult`, `Lookup`, `SetResult`).
 - `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal(Bytes), Heap(Bytes) }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`.
 - `String.make_bytes` normalizes `Bytes.len` fail-closed (`len < 0` clamps to `0`) and is used by `String.from_literal_parts` / `String.from_heap_parts`; `String.bytes` performs equivalent inline normalization through `String.normalize_len` before constructing `Bytes` so payload invariants remain provable at call sites.
@@ -126,9 +128,9 @@ Observed in parser/IR implementation:
 - The split stdlib also defines `AsciiChar` and `AsciiCharResult`; construction/parsing is explicit and fail-closed through `AsciiChar.from_code(...)` and `AsciiChar.from_string_at(...)` (returning `AsciiCharResult.OutOfRange` on invalid inputs). `AsciiChar` wraps `Char` and has an invariant requiring `0 <= Char.code(ch) <= 127`.
 - The split stdlib also defines `Char` as an `I32` wrapper (`struct Char { code: I32 }`) with helpers `Char.from_code(...)`, `Char.code(...)`, and `Char.equals(...)`.
 - The split stdlib now also defines `Null` as an empty struct (`struct Null {}`), with a namespaced constructor helper `Null.value() -> Null`.
-- The split stdlib now also defines `HashTable[K: Hash + Eq, V]` as a dynamically resizing separate-chaining map in `crates/oac/src/std/std_collections.oa`; public helpers are `HashTable.new`, `HashTable.with_capacity`, `HashTable.set`, `HashTable.get`, `HashTable.remove`, `HashTable.len`, `HashTable.capacity`, `HashTable.contains_key`, and `HashTable.clear`.
+- The split stdlib now also defines `HashTable[K: Hash + Equality, V]` as a dynamically resizing separate-chaining map in `crates/oac/src/std/std_collections.oa`; public helpers are `HashTable.new`, `HashTable.with_capacity`, `HashTable.set`, `HashTable.get`, `HashTable.remove`, `HashTable.len`, `HashTable.capacity`, `HashTable.contains_key`, and `HashTable.clear`.
 - `HashTable.set` returns `SetResult { table: HashTable, inserted_new: Bool }` and `HashTable.remove` returns `RemoveResult { table: HashTable, removed: Lookup }`.
-- `HashTable[K: Hash + Eq, V]` currently has no declaration-based struct invariant; the former `coherent_state` declaration was removed after fail-closed solver-unknown obligations on resize/rehash call sites.
+- `HashTable[K: Hash + Equality, V]` currently has no declaration-based struct invariant; the former `coherent_state` declaration was removed after fail-closed solver-unknown obligations on resize/rehash call sites.
 - Hash table metadata now has explicit runtime assertion guards in `HashTable.assert_metadata(...)` (`bucket_count >= 1`, `len >= 0`, `resize_threshold >= 1`, `len <= resize_threshold`) and this helper is applied on constructor/mutation return paths (`with_capacity`, `set_no_resize`, `rehash`, `maybe_resize_before_insert` passthrough, `remove`, `clear`).
 - Invariant declarations accept one or more parameters in `for (...)` for both single and grouped syntax. Empty parameter lists are rejected.
 - Arity-sensitive invariant semantics:

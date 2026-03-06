@@ -230,7 +230,7 @@ generic LinkedList[T] {
 	}
 }
 
-generic HashTable[K: Hash + Eq, V] {
+generic HashTable[K: Hash + Equality, V] {
 	struct Entry {
 		key: K,
 		value: V,
@@ -427,7 +427,7 @@ generic HashTable[K: Hash + Eq, V] {
 			}
 			Bucket.Node(node) => {
 				entry = node.entry
-				if Eq.equals(entry.key, key) {
+				if entry.key == key {
 					return Lookup.Found(entry.value)
 				}
 				return HashTable.bucket_get(node.next, key)
@@ -453,7 +453,7 @@ generic HashTable[K: Hash + Eq, V] {
 			}
 			Bucket.Node(node) => {
 				entry = node.entry
-				if Eq.equals(entry.key, key) {
+				if entry.key == key {
 					replaced_entry = Entry struct {
 						key: key,
 						value: value,
@@ -491,7 +491,7 @@ generic HashTable[K: Hash + Eq, V] {
 			}
 			Bucket.Node(node) => {
 				entry = node.entry
-				if Eq.equals(entry.key, key) {
+				if entry.key == key {
 					return BucketRemoveResult struct {
 						bucket: node.next,
 						removed: Lookup.Found(entry.value),

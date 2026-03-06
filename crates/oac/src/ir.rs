@@ -67,6 +67,391 @@ fn normalize_numeric_alias(ty: &str) -> &str {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BuiltinTraitOperator {
+    Addition,
+    Subtraction,
+    Multiplication,
+    Division,
+    Equality,
+    Comparison,
+}
+
+impl BuiltinTraitOperator {
+    fn from_trait_method(trait_name: &str, method_name: &str) -> Option<Self> {
+        match (trait_name, method_name) {
+            ("Addition", "add") => Some(Self::Addition),
+            ("Subtraction", "sub") => Some(Self::Subtraction),
+            ("Multiplication", "mul") => Some(Self::Multiplication),
+            ("Division", "div") => Some(Self::Division),
+            ("Equality", "equals") => Some(Self::Equality),
+            ("Comparison", "compare") => Some(Self::Comparison),
+            _ => None,
+        }
+    }
+
+    fn from_binary_op(op: parser::Op) -> Option<Self> {
+        match op {
+            parser::Op::Add => Some(Self::Addition),
+            parser::Op::Sub => Some(Self::Subtraction),
+            parser::Op::Mul => Some(Self::Multiplication),
+            parser::Op::Div => Some(Self::Division),
+            parser::Op::Eq | parser::Op::Neq => Some(Self::Equality),
+            parser::Op::Lt | parser::Op::Gt | parser::Op::Le | parser::Op::Ge => {
+                Some(Self::Comparison)
+            }
+            parser::Op::And | parser::Op::Or => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TraitCallTarget {
+    Function(String),
+    BuiltinOperator(BuiltinTraitOperator),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BinaryOperatorResolution {
+    Builtin {
+        return_type: TypeRef,
+    },
+    TraitCall {
+        target_function: String,
+        return_type: TypeRef,
+    },
+    ComparisonTraitCall {
+        target_function: String,
+    },
+}
+
+fn is_builtin_scalar_arithmetic_type(ty: &str) -> bool {
+    matches!(
+        normalize_numeric_alias(ty),
+        "U8" | "I32" | "I64" | "FP32" | "FP64"
+    )
+}
+
+fn is_builtin_scalar_equality_type(ty: &str) -> bool {
+    matches!(
+        normalize_numeric_alias(ty),
+        "Bool" | "U8" | "I32" | "I64" | "FP32" | "FP64"
+    )
+}
+
+fn is_builtin_semantic_equality_type(ty: &str) -> bool {
+    matches!(ty, "Type" | "SemanticExpr")
+}
+
+fn is_builtin_trait_operator_for_type(operator: BuiltinTraitOperator, ty: &str) -> bool {
+    match operator {
+        BuiltinTraitOperator::Addition
+        | BuiltinTraitOperator::Subtraction
+        | BuiltinTraitOperator::Multiplication
+        | BuiltinTraitOperator::Division
+        | BuiltinTraitOperator::Comparison => is_builtin_scalar_arithmetic_type(ty),
+        BuiltinTraitOperator::Equality => is_builtin_scalar_equality_type(ty),
+    }
+}
+
+fn is_reserved_builtin_operator_impl(trait_name: &str, for_type: &str) -> bool {
+    match trait_name {
+        "Addition" | "Subtraction" | "Multiplication" | "Division" | "Comparison" => {
+            is_builtin_scalar_arithmetic_type(for_type)
+        }
+        "Equality" => is_builtin_scalar_equality_type(for_type),
+        _ => false,
+    }
+}
+
+fn seed_builtin_operator_trait_impl_targets(
+    declared_traits: &HashMap<String, Vec<TraitMethodSignature>>,
+    trait_impl_targets: &mut HashSet<String>,
+) {
+    for (trait_name, concrete_types) in [
+        (
+            "Addition",
+            &["U8", "I32", "Int", "I64", "PtrInt", "FP32", "FP64"][..],
+        ),
+        (
+            "Subtraction",
+            &["U8", "I32", "Int", "I64", "PtrInt", "FP32", "FP64"][..],
+        ),
+        (
+            "Multiplication",
+            &["U8", "I32", "Int", "I64", "PtrInt", "FP32", "FP64"][..],
+        ),
+        (
+            "Division",
+            &["U8", "I32", "Int", "I64", "PtrInt", "FP32", "FP64"][..],
+        ),
+        (
+            "Comparison",
+            &["U8", "I32", "Int", "I64", "PtrInt", "FP32", "FP64"][..],
+        ),
+        (
+            "Equality",
+            &["Bool", "U8", "I32", "Int", "I64", "PtrInt", "FP32", "FP64"][..],
+        ),
+    ] {
+        if !declared_traits.contains_key(trait_name) {
+            continue;
+        }
+        for concrete_type in concrete_types {
+            trait_impl_targets.insert(trait_impl_target_key(trait_name, concrete_type));
+        }
+    }
+}
+
+pub(crate) fn resolve_trait_call_target(
+    trait_name: &str,
+    method_name: &str,
+    args: &[Expression],
+    var_types: &HashMap<String, TypeRef>,
+    fns: &HashMap<String, FunctionSignature>,
+    type_definitions: &HashMap<String, TypeDef>,
+    trait_method_signatures: &HashMap<String, TraitMethodSignature>,
+    trait_impl_methods: &HashMap<String, String>,
+) -> anyhow::Result<(TraitCallTarget, TypeRef)> {
+    let trait_method = trait_method_signatures
+        .get(&trait_method_key(trait_name, method_name))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unsupported trait call {}.{}(...): expected a declared trait method",
+                trait_name,
+                method_name
+            )
+        })?;
+    if args.is_empty() {
+        return Err(anyhow::anyhow!(
+            "trait call {}.{} requires at least one argument for Self",
+            trait_name,
+            method_name
+        ));
+    }
+    if args.len() != trait_method.parameter_types.len() {
+        return Err(anyhow::anyhow!(
+            "trait call {}.{} expects {} arguments, got {}",
+            trait_name,
+            method_name,
+            trait_method.parameter_types.len(),
+            args.len()
+        ));
+    }
+    let self_type = get_expression_type(
+        &args[0],
+        var_types,
+        fns,
+        type_definitions,
+        trait_method_signatures,
+        trait_impl_methods,
+    )?;
+    for (index, (argument, param_ty)) in args
+        .iter()
+        .zip(trait_method.parameter_types.iter())
+        .enumerate()
+    {
+        let argument_type = get_expression_type(
+            argument,
+            var_types,
+            fns,
+            type_definitions,
+            trait_method_signatures,
+            trait_impl_methods,
+        )?;
+        let expected_type = replace_self_type(param_ty, &self_type);
+        if normalize_numeric_alias(&argument_type) != normalize_numeric_alias(&expected_type) {
+            return Err(anyhow::anyhow!(
+                "trait call {}.{} argument {} mismatch: expected {}, got {}",
+                trait_name,
+                method_name,
+                index,
+                expected_type,
+                argument_type
+            ));
+        }
+    }
+
+    let return_type = replace_self_type(&trait_method.return_type, &self_type);
+    if let Some(operator) = BuiltinTraitOperator::from_trait_method(trait_name, method_name) {
+        if is_builtin_trait_operator_for_type(operator, &self_type) {
+            return Ok((TraitCallTarget::BuiltinOperator(operator), return_type));
+        }
+    }
+
+    let impl_key = trait_impl_method_key(trait_name, &self_type, method_name);
+    let target_function = trait_impl_methods.get(&impl_key).ok_or_else(|| {
+        anyhow::anyhow!(
+            "missing impl {} for {} required by trait call {}.{}",
+            trait_name,
+            self_type,
+            trait_name,
+            method_name
+        )
+    })?;
+
+    Ok((
+        TraitCallTarget::Function(target_function.clone()),
+        return_type,
+    ))
+}
+
+fn resolve_binary_operator(
+    op: parser::Op,
+    left: &Expression,
+    right: &Expression,
+    var_types: &HashMap<String, TypeRef>,
+    fns: &HashMap<String, FunctionSignature>,
+    type_definitions: &HashMap<String, TypeDef>,
+    trait_method_signatures: &HashMap<String, TraitMethodSignature>,
+    trait_impl_methods: &HashMap<String, String>,
+) -> anyhow::Result<BinaryOperatorResolution> {
+    let left_type = get_expression_type(
+        left,
+        var_types,
+        fns,
+        type_definitions,
+        trait_method_signatures,
+        trait_impl_methods,
+    )?;
+    let right_type = get_expression_type(
+        right,
+        var_types,
+        fns,
+        type_definitions,
+        trait_method_signatures,
+        trait_impl_methods,
+    )?;
+    let left_norm = normalize_numeric_alias(&left_type);
+    let right_norm = normalize_numeric_alias(&right_type);
+
+    match op {
+        parser::Op::And | parser::Op::Or => {
+            if left_norm == "Bool" && right_norm == "Bool" {
+                return Ok(BinaryOperatorResolution::Builtin {
+                    return_type: "Bool".to_string(),
+                });
+            }
+            return Err(anyhow::anyhow!(
+                "expected Bool operands for {:?}, but got {:?} and {:?}",
+                op,
+                left_type,
+                right_type
+            ));
+        }
+        parser::Op::Add | parser::Op::Sub | parser::Op::Mul | parser::Op::Div => {
+            if left_norm == right_norm && is_builtin_scalar_arithmetic_type(left_norm) {
+                return Ok(BinaryOperatorResolution::Builtin {
+                    return_type: left_norm.to_string(),
+                });
+            }
+        }
+        parser::Op::Eq | parser::Op::Neq => {
+            if left_norm != right_norm {
+                return Err(anyhow::anyhow!(
+                    "expected both operands of {:?} to have the same type, but got {:?} and {:?}",
+                    op,
+                    left_type,
+                    right_type
+                ));
+            }
+            if is_builtin_scalar_equality_type(left_norm)
+                || is_builtin_semantic_equality_type(left_norm)
+            {
+                return Ok(BinaryOperatorResolution::Builtin {
+                    return_type: "Bool".to_string(),
+                });
+            }
+        }
+        parser::Op::Lt | parser::Op::Gt | parser::Op::Le | parser::Op::Ge => {
+            if left_norm == right_norm && is_builtin_scalar_arithmetic_type(left_norm) {
+                return Ok(BinaryOperatorResolution::Builtin {
+                    return_type: "Bool".to_string(),
+                });
+            }
+        }
+    }
+
+    let Some(operator_trait) = BuiltinTraitOperator::from_binary_op(op) else {
+        unreachable!("bool operators are handled above");
+    };
+    if left_norm != right_norm {
+        return Err(anyhow::anyhow!(
+            "expected both operands of {:?} to have the same type, but got {:?} and {:?}",
+            op,
+            left_type,
+            right_type
+        ));
+    }
+
+    let trait_name = match operator_trait {
+        BuiltinTraitOperator::Addition => "Addition",
+        BuiltinTraitOperator::Subtraction => "Subtraction",
+        BuiltinTraitOperator::Multiplication => "Multiplication",
+        BuiltinTraitOperator::Division => "Division",
+        BuiltinTraitOperator::Equality => "Equality",
+        BuiltinTraitOperator::Comparison => "Comparison",
+    };
+    let method_name = match operator_trait {
+        BuiltinTraitOperator::Addition => "add",
+        BuiltinTraitOperator::Subtraction => "sub",
+        BuiltinTraitOperator::Multiplication => "mul",
+        BuiltinTraitOperator::Division => "div",
+        BuiltinTraitOperator::Equality => "equals",
+        BuiltinTraitOperator::Comparison => "compare",
+    };
+
+    let impl_key = trait_impl_method_key(trait_name, left_norm, method_name);
+    if let Some(target_function) = trait_impl_methods.get(&impl_key) {
+        return Ok(match operator_trait {
+            BuiltinTraitOperator::Comparison => BinaryOperatorResolution::ComparisonTraitCall {
+                target_function: target_function.clone(),
+            },
+            BuiltinTraitOperator::Addition
+            | BuiltinTraitOperator::Subtraction
+            | BuiltinTraitOperator::Multiplication
+            | BuiltinTraitOperator::Division => BinaryOperatorResolution::TraitCall {
+                target_function: target_function.clone(),
+                return_type: left_type,
+            },
+            BuiltinTraitOperator::Equality => BinaryOperatorResolution::TraitCall {
+                target_function: target_function.clone(),
+                return_type: "Bool".to_string(),
+            },
+        });
+    }
+
+    if matches!(operator_trait, BuiltinTraitOperator::Equality) {
+        return match type_definitions.get(left_norm) {
+            Some(TypeDef::Struct(_)) => Ok(BinaryOperatorResolution::Builtin {
+                return_type: "Bool".to_string(),
+            }),
+            Some(TypeDef::Enum(enum_def)) if !enum_def.is_tagged_union => {
+                Ok(BinaryOperatorResolution::Builtin {
+                    return_type: "Bool".to_string(),
+                })
+            }
+            Some(TypeDef::Enum(enum_def)) => Err(anyhow::anyhow!(
+                "direct {:?} comparison is not supported for tagged enum {} without an Equality impl",
+                op,
+                enum_def.name
+            )),
+            _ => Err(anyhow::anyhow!(
+                "missing impl Equality for {} required by operator {:?}",
+                left_type,
+                op
+            )),
+        };
+    }
+
+    Err(anyhow::anyhow!(
+        "missing impl {} for {} required by operator {:?}",
+        trait_name,
+        left_type,
+        op
+    ))
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub enum TypeDef {
     Struct(StructDef),
@@ -760,18 +1145,92 @@ impl ResolvedProgram {
                     &self.trait_impl_methods,
                 )
             }
-            Expression::PostfixCall { callee, args } => Ok(Expression::PostfixCall {
-                callee: Box::new(self.normalize_method_calls_in_expression(callee, var_types)?),
-                args: args
+            Expression::PostfixCall { callee, args } => {
+                let normalized_callee =
+                    self.normalize_method_calls_in_expression(callee, var_types)?;
+                let normalized_args = args
                     .iter()
                     .map(|arg| self.normalize_method_calls_in_expression(arg, var_types))
-                    .collect::<anyhow::Result<Vec<_>>>()?,
-            }),
-            Expression::BinOp(op, left, right) => Ok(Expression::BinOp(
-                *op,
-                Box::new(self.normalize_method_calls_in_expression(left, var_types)?),
-                Box::new(self.normalize_method_calls_in_expression(right, var_types)?),
-            )),
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                if let Expression::FieldAccess {
+                    struct_variable,
+                    field,
+                } = &normalized_callee
+                {
+                    if self
+                        .trait_method_signatures
+                        .contains_key(&trait_method_key(struct_variable, field))
+                    {
+                        let (target, _) = resolve_trait_call_target(
+                            struct_variable,
+                            field,
+                            &normalized_args,
+                            var_types,
+                            &self.function_sigs,
+                            &self.type_definitions,
+                            &self.trait_method_signatures,
+                            &self.trait_impl_methods,
+                        )?;
+                        return Ok(match target {
+                            TraitCallTarget::Function(target_function) => {
+                                Expression::Call(target_function, normalized_args)
+                            }
+                            TraitCallTarget::BuiltinOperator(_) => Expression::PostfixCall {
+                                callee: Box::new(normalized_callee),
+                                args: normalized_args,
+                            },
+                        });
+                    }
+                }
+                Ok(Expression::PostfixCall {
+                    callee: Box::new(normalized_callee),
+                    args: normalized_args,
+                })
+            }
+            Expression::BinOp(op, left, right) => {
+                let normalized_left = self.normalize_method_calls_in_expression(left, var_types)?;
+                let normalized_right =
+                    self.normalize_method_calls_in_expression(right, var_types)?;
+                match resolve_binary_operator(
+                    *op,
+                    &normalized_left,
+                    &normalized_right,
+                    var_types,
+                    &self.function_sigs,
+                    &self.type_definitions,
+                    &self.trait_method_signatures,
+                    &self.trait_impl_methods,
+                )? {
+                    BinaryOperatorResolution::Builtin { .. } => Ok(Expression::BinOp(
+                        *op,
+                        Box::new(normalized_left),
+                        Box::new(normalized_right),
+                    )),
+                    BinaryOperatorResolution::TraitCall {
+                        target_function, ..
+                    } => {
+                        let call = Expression::Call(
+                            target_function,
+                            vec![normalized_left, normalized_right],
+                        );
+                        if matches!(op, parser::Op::Neq) {
+                            Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(call)))
+                        } else {
+                            Ok(call)
+                        }
+                    }
+                    BinaryOperatorResolution::ComparisonTraitCall { target_function } => {
+                        Ok(Expression::BinOp(
+                            *op,
+                            Box::new(Expression::Call(
+                                target_function,
+                                vec![normalized_left, normalized_right],
+                            )),
+                            Box::new(Expression::Literal(Literal::Int(0))),
+                        ))
+                    }
+                }
+            }
             Expression::UnaryOp(op, expr) => Ok(Expression::UnaryOp(
                 *op,
                 Box::new(self.normalize_method_calls_in_expression(expr, var_types)?),
@@ -2743,73 +3202,29 @@ fn normalize_method_call_expression(
             ));
         }
 
-        if let Some(trait_method) =
-            trait_method_signatures.get(&trait_method_key(receiver_name, method))
-        {
-            if args.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "trait call {}.{} requires at least one argument for Self",
-                    receiver_name,
-                    method
-                ));
-            }
-            if args.len() != trait_method.parameter_types.len() {
-                return Err(anyhow::anyhow!(
-                    "trait call {}.{} expects {} arguments, got {}",
-                    receiver_name,
-                    method,
-                    trait_method.parameter_types.len(),
-                    args.len()
-                ));
-            }
-            let self_type = get_expression_type(
-                &args[0],
+        if trait_method_signatures.contains_key(&trait_method_key(receiver_name, method)) {
+            let (target, _) = resolve_trait_call_target(
+                receiver_name,
+                method,
+                args,
                 var_types,
                 fns,
                 type_definitions,
                 trait_method_signatures,
                 trait_impl_methods,
             )?;
-            for (index, (argument, param_ty)) in args
-                .iter()
-                .zip(trait_method.parameter_types.iter())
-                .enumerate()
-            {
-                let argument_type = get_expression_type(
-                    argument,
-                    var_types,
-                    fns,
-                    type_definitions,
-                    trait_method_signatures,
-                    trait_impl_methods,
-                )?;
-                let expected_type = replace_self_type(param_ty, &self_type);
-                if normalize_numeric_alias(&argument_type)
-                    != normalize_numeric_alias(&expected_type)
-                {
-                    return Err(anyhow::anyhow!(
-                        "trait call {}.{} argument {} mismatch: expected {}, got {}",
-                        receiver_name,
-                        method,
-                        index,
-                        expected_type,
-                        argument_type
-                    ));
+            return Ok(match target {
+                TraitCallTarget::Function(target_function) => {
+                    Expression::Call(target_function, args.to_vec())
                 }
-            }
-
-            let impl_key = trait_impl_method_key(receiver_name, &self_type, method);
-            let target_function = trait_impl_methods.get(&impl_key).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing impl {} for {} required by trait call {}.{}",
-                    receiver_name,
-                    self_type,
-                    receiver_name,
-                    method
-                )
-            })?;
-
-            return Ok(Expression::Call(target_function.clone(), args.to_vec()));
+                TraitCallTarget::BuiltinOperator(_) => Expression::PostfixCall {
+                    callee: Box::new(Expression::FieldAccess {
+                        struct_variable: receiver_name.clone(),
+                        field: method.to_string(),
+                    }),
+                    args: args.to_vec(),
+                },
+            });
         }
 
         let namespaced_call = parser::qualify_namespace_function_name(receiver_name, method);
@@ -2843,6 +3258,33 @@ fn normalize_method_call_expression(
 }
 
 fn validate_special_trait_shape(trait_decl: &parser::TraitDecl) -> anyhow::Result<()> {
+    let expect_binary_trait =
+        |trait_name: &str, method_name: &str, return_type: &str| -> anyhow::Result<()> {
+            if trait_decl.methods.len() != 1 {
+                return Err(anyhow::anyhow!(
+                    "trait {} must define {}(lhs: Self, rhs: Self) -> {}",
+                    trait_name,
+                    method_name,
+                    return_type
+                ));
+            }
+            let method = &trait_decl.methods[0];
+            if method.name != method_name
+                || method.parameters.len() != 2
+                || method.parameters[0].ty != "Self"
+                || method.parameters[1].ty != "Self"
+                || method.return_type != return_type
+            {
+                return Err(anyhow::anyhow!(
+                    "trait {} must define {}(lhs: Self, rhs: Self) -> {}",
+                    trait_name,
+                    method_name,
+                    return_type
+                ));
+            }
+            Ok(())
+        };
+
     if trait_decl.name == "Copy" {
         if trait_decl.methods.len() != 1 {
             return Err(anyhow::anyhow!(
@@ -2876,6 +3318,24 @@ fn validate_special_trait_shape(trait_decl: &parser::TraitDecl) -> anyhow::Resul
                 "trait Drop must define drop(v: Self) -> Void"
             ));
         }
+    }
+    if trait_decl.name == "Addition" {
+        expect_binary_trait("Addition", "add", "Self")?;
+    }
+    if trait_decl.name == "Subtraction" {
+        expect_binary_trait("Subtraction", "sub", "Self")?;
+    }
+    if trait_decl.name == "Multiplication" {
+        expect_binary_trait("Multiplication", "mul", "Self")?;
+    }
+    if trait_decl.name == "Division" {
+        expect_binary_trait("Division", "div", "Self")?;
+    }
+    if trait_decl.name == "Equality" {
+        expect_binary_trait("Equality", "equals", "Bool")?;
+    }
+    if trait_decl.name == "Comparison" {
+        expect_binary_trait("Comparison", "compare", "I32")?;
     }
     Ok(())
 }
@@ -2943,6 +3403,13 @@ fn collect_trait_metadata(
     let mut impl_functions = vec![];
 
     for impl_decl in &ast.impl_declarations {
+        if is_reserved_builtin_operator_impl(&impl_decl.trait_name, &impl_decl.for_type) {
+            return Err(anyhow::anyhow!(
+                "impl {} for {} is reserved to compiler builtin operator semantics",
+                impl_decl.trait_name,
+                impl_decl.for_type
+            ));
+        }
         let trait_methods = trait_methods_by_trait
             .get(&impl_decl.trait_name)
             .ok_or_else(|| anyhow::anyhow!("unknown trait {} in impl", impl_decl.trait_name))?;
@@ -3078,6 +3545,8 @@ fn collect_trait_metadata(
             ));
         }
     }
+
+    seed_builtin_operator_trait_impl_targets(&trait_methods_by_trait, &mut trait_impl_targets);
 
     Ok((
         trait_method_signatures,
@@ -4091,80 +4560,18 @@ pub(crate) fn get_expression_type(
                     ));
                 }
 
-                if let Some(trait_method) =
-                    trait_method_signatures.get(&trait_method_key(struct_variable, field))
-                {
-                    if args.is_empty() {
-                        return Err(anyhow::anyhow!(
-                            "trait call {}.{} requires at least one argument for Self",
-                            struct_variable,
-                            field
-                        ));
-                    }
-                    if args.len() != trait_method.parameter_types.len() {
-                        return Err(anyhow::anyhow!(
-                            "trait call {}.{} expects {} arguments, got {}",
-                            struct_variable,
-                            field,
-                            trait_method.parameter_types.len(),
-                            args.len()
-                        ));
-                    }
-                    let self_type = get_expression_type(
-                        &args[0],
+                if trait_method_signatures.contains_key(&trait_method_key(struct_variable, field)) {
+                    let (_, return_type) = resolve_trait_call_target(
+                        struct_variable,
+                        field,
+                        args,
                         var_types,
                         fns,
                         type_definitions,
                         trait_method_signatures,
                         trait_impl_methods,
                     )?;
-                    for (index, (argument, param_ty)) in args
-                        .iter()
-                        .zip(trait_method.parameter_types.iter())
-                        .enumerate()
-                    {
-                        let argument_type = get_expression_type(
-                            argument,
-                            var_types,
-                            fns,
-                            type_definitions,
-                            trait_method_signatures,
-                            trait_impl_methods,
-                        )?;
-                        let expected_type = replace_self_type(param_ty, &self_type);
-                        if normalize_numeric_alias(&argument_type)
-                            != normalize_numeric_alias(&expected_type)
-                        {
-                            return Err(anyhow::anyhow!(
-                                "trait call {}.{} argument {} mismatch: expected {}, got {}",
-                                struct_variable,
-                                field,
-                                index,
-                                expected_type,
-                                argument_type
-                            ));
-                        }
-                    }
-
-                    let impl_key = trait_impl_method_key(struct_variable, &self_type, field);
-                    let target_function = trait_impl_methods.get(&impl_key).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "missing impl {} for {} required by trait call {}.{}",
-                            struct_variable,
-                            self_type,
-                            struct_variable,
-                            field
-                        )
-                    })?;
-
-                    return get_expression_type(
-                        &Expression::Call(target_function.clone(), args.clone()),
-                        var_types,
-                        fns,
-                        type_definitions,
-                        trait_method_signatures,
-                        trait_impl_methods,
-                    );
+                    return Ok(return_type);
                 }
 
                 let namespaced_call =
@@ -4701,95 +5108,19 @@ pub(crate) fn get_expression_type(
             }
         }
         Expression::BinOp(op, left, right) => {
-            let left_type = get_expression_type(
+            match resolve_binary_operator(
+                *op,
                 left,
-                var_types,
-                fns,
-                type_definitions,
-                trait_method_signatures,
-                trait_impl_methods,
-            )?;
-            let right_type = get_expression_type(
                 right,
                 var_types,
                 fns,
                 type_definitions,
                 trait_method_signatures,
                 trait_impl_methods,
-            )?;
-            let left_norm = normalize_numeric_alias(&left_type);
-            let right_norm = normalize_numeric_alias(&right_type);
-            match op {
-                parser::Op::And | parser::Op::Or => {
-                    if left_norm == "Bool" && right_norm == "Bool" {
-                        Ok("Bool".to_string())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "expected Bool operands for {:?}, but got {:?} and {:?}",
-                            op,
-                            left_type,
-                            right_type
-                        ))
-                    }
-                }
-                parser::Op::Add | parser::Op::Sub | parser::Op::Mul | parser::Op::Div => {
-                    if left_norm == "U8" && right_norm == "U8" {
-                        Ok("U8".to_string())
-                    } else if left_norm == "I32" && right_norm == "I32" {
-                        Ok("I32".to_string())
-                    } else if left_norm == "I64" && right_norm == "I64" {
-                        Ok("I64".to_string())
-                    } else if left_norm == "FP32" && right_norm == "FP32" {
-                        Ok("FP32".to_string())
-                    } else if left_norm == "FP64" && right_norm == "FP64" {
-                        Ok("FP64".to_string())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "expected both operands of {:?} to be numeric, but got {:?} and {:?}",
-                            op,
-                            left_type,
-                            right_type
-                        ))
-                    }
-                }
-                parser::Op::Eq | parser::Op::Neq => {
-                    if left_norm == right_norm {
-                        if let Some(TypeDef::Enum(enum_def)) = type_definitions.get(left_norm) {
-                            if enum_def.is_tagged_union {
-                                return Err(anyhow::anyhow!(
-                                    "direct {:?} comparison is not supported for tagged enum {}",
-                                    op,
-                                    enum_def.name
-                                ));
-                            }
-                        }
-                        Ok("Bool".to_string())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "expected both operands of {:?} to have the same type, but got {:?} and {:?}",
-                            op,
-                            left_type,
-                            right_type
-                        ))
-                    }
-                }
-                parser::Op::Lt | parser::Op::Gt | parser::Op::Le | parser::Op::Ge => {
-                    if (left_norm == "U8" && right_norm == "U8")
-                        || (left_norm == "I32" && right_norm == "I32")
-                        || (left_norm == "I64" && right_norm == "I64")
-                        || (left_norm == "FP32" && right_norm == "FP32")
-                        || (left_norm == "FP64" && right_norm == "FP64")
-                    {
-                        Ok("Bool".to_string())
-                    } else {
-                        Err(anyhow::anyhow!(
-                            "expected both operands of {:?} to be numeric and of same width, but got {:?} and {:?}",
-                            op,
-                            left_type,
-                            right_type
-                        ))
-                    }
-                }
+            )? {
+                BinaryOperatorResolution::Builtin { return_type }
+                | BinaryOperatorResolution::TraitCall { return_type, .. } => Ok(return_type),
+                BinaryOperatorResolution::ComparisonTraitCall { .. } => Ok("Bool".to_string()),
             }
         }
     }
@@ -4837,6 +5168,7 @@ fn expression_kind(expr: &Expression) -> &'static str {
 mod tests {
     use super::{resolve, TypeDef};
     use crate::builtins::BuiltInType;
+    use crate::parser::UnaryOp;
     use crate::{parser, tokenizer};
 
     #[test]
@@ -4918,16 +5250,38 @@ fun main() -> I32 {
             "missing Hash::hash trait method from split stdlib"
         );
         assert!(
-            resolved.trait_method_signatures.contains_key("Eq::equals"),
-            "missing Eq::equals trait method from split stdlib"
+            resolved
+                .trait_method_signatures
+                .contains_key("Equality::equals"),
+            "missing Equality::equals trait method from split stdlib"
+        );
+        assert!(
+            resolved
+                .trait_method_signatures
+                .contains_key("Addition::add"),
+            "missing Addition::add trait method from split stdlib"
+        );
+        assert!(
+            resolved
+                .trait_method_signatures
+                .contains_key("Comparison::compare"),
+            "missing Comparison::compare trait method from split stdlib"
         );
         assert!(
             resolved.function_sigs.contains_key("Hash__I32__hash"),
             "missing synthesized Hash__I32__hash impl function from split stdlib"
         );
         assert!(
-            resolved.function_sigs.contains_key("Eq__I32__equals"),
-            "missing synthesized Eq__I32__equals impl function from split stdlib"
+            resolved
+                .function_sigs
+                .contains_key("Equality__Char__equals"),
+            "missing synthesized Equality__Char__equals impl function from split stdlib"
+        );
+        assert!(
+            resolved
+                .function_sigs
+                .contains_key("Comparison__Char__compare"),
+            "missing synthesized Comparison__Char__compare impl function from split stdlib"
         );
         assert!(
             resolved
@@ -6268,6 +6622,198 @@ fun main() -> I32 {
     }
 
     #[test]
+    fn resolve_normalizes_custom_addition_operator_to_call() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+impl Addition for Counter {
+	fun add(lhs: Counter, rhs: Counter) -> Counter {
+		return Counter struct { value: lhs.value + rhs.value }
+	}
+}
+
+fun main() -> I32 {
+	a = Counter struct { value: 7 }
+	b = Counter struct { value: 2 }
+	sum = a + b
+	return sum.value
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Assign { value, .. } = &main.body[2] else {
+            panic!("expected normalized assignment");
+        };
+        let parser::Expression::Call(function_name, args) = value else {
+            panic!("expected custom operator to normalize to a direct call");
+        };
+        assert_eq!(function_name, "Addition__Counter__add");
+        assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn resolve_keeps_struct_equality_fallback_as_builtin_binop() {
+        let source = r#"
+struct Pair {
+	left: I32,
+	right: I32,
+}
+
+fun main() -> I32 {
+	a = Pair struct { left: 1, right: 2 }
+	b = Pair struct { left: 1, right: 2 }
+	same = a == b
+	if same {
+		return 1
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Assign { value, .. } = &main.body[2] else {
+            panic!("expected normalized assignment");
+        };
+        let parser::Expression::BinOp(parser::Op::Eq, _, _) = value else {
+            panic!("expected struct equality fallback to stay as a builtin binop");
+        };
+    }
+
+    #[test]
+    fn resolve_prefers_explicit_equality_impl_over_struct_fallback() {
+        let source = r#"
+struct Pair {
+	value: I32,
+}
+
+impl Copy for Pair {
+	fun copy(v: Pair) -> Pair {
+		return v
+	}
+}
+
+impl Equality for Pair {
+	fun equals(a: Pair, b: Pair) -> Bool {
+		return a.value == b.value
+	}
+}
+
+fun main() -> I32 {
+	a = Pair struct { value: 7 }
+	b = Pair struct { value: 7 }
+	same = a == b
+	diff = a != b
+	if same && diff == false {
+		return 1
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Assign { value, .. } = &main.body[2] else {
+            panic!("expected normalized equality assignment");
+        };
+        let parser::Expression::Call(function_name, args) = value else {
+            panic!("expected explicit Equality impl to win over struct fallback");
+        };
+        assert_eq!(function_name, "Equality__Pair__equals");
+        assert_eq!(args.len(), 2);
+
+        let parser::Statement::Assign { value, .. } = &main.body[3] else {
+            panic!("expected normalized inequality assignment");
+        };
+        let parser::Expression::UnaryOp(UnaryOp::Not, inner) = value else {
+            panic!("expected != to normalize through unary not");
+        };
+        let parser::Expression::Call(function_name, args) = inner.as_ref() else {
+            panic!("expected != to normalize through Equality impl call");
+        };
+        assert_eq!(function_name, "Equality__Pair__equals");
+        assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn resolve_normalizes_custom_comparison_operator_to_compare_call() {
+        let source = r#"
+struct Rank {
+	value: I32,
+}
+
+impl Copy for Rank {
+	fun copy(v: Rank) -> Rank {
+		return v
+	}
+}
+
+impl Comparison for Rank {
+	fun compare(a: Rank, b: Rank) -> I32 {
+		if a.value < b.value {
+			return 0 - 1
+		}
+		if a.value > b.value {
+			return 1
+		}
+		return 0
+	}
+}
+
+fun main() -> I32 {
+	a = Rank struct { value: 1 }
+	b = Rank struct { value: 2 }
+	lt = a < b
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Assign { value, .. } = &main.body[2] else {
+            panic!("expected normalized assignment");
+        };
+        let parser::Expression::BinOp(parser::Op::Lt, left, right) = value else {
+            panic!("expected comparison operator to stay as compare-call < 0");
+        };
+        let parser::Expression::Call(function_name, args) = left.as_ref() else {
+            panic!("expected comparison operator left side to be compare call");
+        };
+        assert_eq!(function_name, "Comparison__Rank__compare");
+        assert_eq!(args.len(), 2);
+        let parser::Expression::Literal(parser::Literal::Int(0)) = right.as_ref() else {
+            panic!("expected comparison operator right side to be literal 0");
+        };
+    }
+
+    #[test]
     fn resolve_expands_local_specialization_in_generic_body() {
         let source = r#"
 generic Wrapper[T] {
@@ -6314,7 +6860,7 @@ fun main() -> I32 {
     #[test]
     fn resolve_rejects_missing_impl_for_generic_bound() {
         let source = r#"
-generic Table[K: Hash + Eq] {
+generic Table[K: Hash + Equality] {
 	struct Table {
 		k: K,
 	}
@@ -6369,6 +6915,29 @@ fun main() -> I32 {
         assert!(err
             .to_string()
             .contains("duplicate impl for trait MyEq and type I32"));
+    }
+
+    #[test]
+    fn resolve_rejects_reserved_builtin_operator_impl() {
+        let source = r#"
+impl Addition for I32 {
+	fun add(lhs: I32, rhs: I32) -> I32 {
+		return lhs + rhs
+	}
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("builtin primitive operator impl should fail");
+        assert!(err
+            .to_string()
+            .contains("impl Addition for I32 is reserved to compiler builtin operator semantics"));
     }
 
     #[test]
@@ -6597,7 +7166,83 @@ fun main() -> I32 {
         let err = resolve(ast).expect_err("mixed U8/I32 arithmetic should fail");
         assert!(err
             .to_string()
-            .contains("expected both operands of Add to be numeric"));
+            .contains("expected both operands of Add to have the same type"));
+    }
+
+    #[test]
+    fn resolve_rejects_tagged_enum_equality_without_impl() {
+        let source = r#"
+enum Token {
+	End,
+	Int(I32),
+}
+
+fun main() -> I32 {
+	a = Token.Int(1)
+	b = Token.Int(1)
+	if a == b {
+		return 1
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err = resolve(ast).expect_err("tagged enum equality should require an impl");
+        assert!(err.to_string().contains(
+            "direct Eq comparison is not supported for tagged enum Token without an Equality impl"
+        ));
+    }
+
+    #[test]
+    fn resolve_accepts_tagged_enum_equality_with_impl() {
+        let source = r#"
+enum Token {
+	End,
+	Int(I32),
+}
+
+impl Equality for Token {
+	fun equals(a: Token, b: Token) -> Bool {
+		return match a {
+			Token.End => match b {
+				Token.End => true
+				Token.Int(_) => false
+			}
+			Token.Int(av) => match b {
+				Token.End => false
+				Token.Int(bv) => av == bv
+			}
+		}
+	}
+}
+
+fun main() -> I32 {
+	a = Token.Int(1)
+	b = Token.Int(1)
+	same = a == b
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Assign { value, .. } = &main.body[2] else {
+            panic!("expected normalized assignment");
+        };
+        let parser::Expression::Call(function_name, args) = value else {
+            panic!("expected tagged enum equality to normalize to explicit impl call");
+        };
+        assert_eq!(function_name, "Equality__Token__equals");
+        assert_eq!(args.len(), 2);
     }
 
     #[test]

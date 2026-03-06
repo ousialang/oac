@@ -6,7 +6,7 @@ use crate::builtins::BuiltInType;
 use crate::ir::{self, FunctionSignature, ResolvedProgram, TypeDef};
 use crate::parser::{self, Op, UnaryOp};
 use crate::runtime_layout;
-use crate::symbol_keys::{trait_impl_method_key, trait_method_key};
+use crate::symbol_keys::trait_method_key;
 
 const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
 const INTEGER_FMT_GLOBAL: &str = "integer_fmt";
@@ -679,6 +679,133 @@ impl<'m, 'p> FunctionEmitter<'m, 'p> {
         })
     }
 
+    fn compile_builtin_trait_operator_call(
+        &mut self,
+        operator: ir::BuiltinTraitOperator,
+        args: &[parser::Expression],
+    ) -> anyhow::Result<ExprValue> {
+        if args.len() != 2 {
+            bail!("builtin operator trait calls expect exactly two arguments");
+        }
+        let left_value = self.compile_expr(&args[0])?;
+        let right_value = self.compile_expr(&args[1])?;
+        let operand_ty = left_value.llvm_ty;
+        let left_repr = self.cast_value(&left_value.repr, left_value.llvm_ty, operand_ty)?;
+        let right_repr = self.cast_value(&right_value.repr, right_value.llvm_ty, operand_ty)?;
+        let use_unsigned_int_cmp = left_value.ty == "U8";
+        let use_ordered_float_cmp = operand_ty.is_float();
+
+        match operator {
+            ir::BuiltinTraitOperator::Addition
+            | ir::BuiltinTraitOperator::Subtraction
+            | ir::BuiltinTraitOperator::Multiplication
+            | ir::BuiltinTraitOperator::Division => {
+                let op_name = match operator {
+                    ir::BuiltinTraitOperator::Addition if operand_ty.is_float() => "fadd",
+                    ir::BuiltinTraitOperator::Subtraction if operand_ty.is_float() => "fsub",
+                    ir::BuiltinTraitOperator::Multiplication if operand_ty.is_float() => "fmul",
+                    ir::BuiltinTraitOperator::Division if operand_ty.is_float() => "fdiv",
+                    ir::BuiltinTraitOperator::Division if use_unsigned_int_cmp => "udiv",
+                    ir::BuiltinTraitOperator::Addition => "add",
+                    ir::BuiltinTraitOperator::Subtraction => "sub",
+                    ir::BuiltinTraitOperator::Multiplication => "mul",
+                    ir::BuiltinTraitOperator::Division => "sdiv",
+                    _ => unreachable!(),
+                };
+                let reg = self.new_reg();
+                self.emit_instr(format!(
+                    "{} = {} {} {}, {}",
+                    reg,
+                    op_name,
+                    operand_ty.as_ir(),
+                    left_repr,
+                    right_repr
+                ));
+                Ok(ExprValue {
+                    ty: left_value.ty,
+                    llvm_ty: operand_ty,
+                    repr: reg,
+                })
+            }
+            ir::BuiltinTraitOperator::Equality => {
+                let cmp_i1 = self.new_reg();
+                if use_ordered_float_cmp {
+                    self.emit_instr(format!(
+                        "{} = fcmp oeq {} {}, {}",
+                        cmp_i1,
+                        operand_ty.as_ir(),
+                        left_repr,
+                        right_repr
+                    ));
+                } else {
+                    self.emit_instr(format!(
+                        "{} = icmp eq {} {}, {}",
+                        cmp_i1,
+                        operand_ty.as_ir(),
+                        left_repr,
+                        right_repr
+                    ));
+                }
+                let as_i32 = self.bool_i1_to_i32(&cmp_i1);
+                Ok(ExprValue {
+                    ty: "Bool".to_string(),
+                    llvm_ty: LlvmType::I32,
+                    repr: as_i32,
+                })
+            }
+            ir::BuiltinTraitOperator::Comparison => {
+                let lt_i1 = self.new_reg();
+                let gt_i1 = self.new_reg();
+                if use_ordered_float_cmp {
+                    self.emit_instr(format!(
+                        "{} = fcmp olt {} {}, {}",
+                        lt_i1,
+                        operand_ty.as_ir(),
+                        left_repr,
+                        right_repr
+                    ));
+                    self.emit_instr(format!(
+                        "{} = fcmp ogt {} {}, {}",
+                        gt_i1,
+                        operand_ty.as_ir(),
+                        left_repr,
+                        right_repr
+                    ));
+                } else {
+                    let lt_pred = if use_unsigned_int_cmp { "ult" } else { "slt" };
+                    let gt_pred = if use_unsigned_int_cmp { "ugt" } else { "sgt" };
+                    self.emit_instr(format!(
+                        "{} = icmp {} {} {}, {}",
+                        lt_i1,
+                        lt_pred,
+                        operand_ty.as_ir(),
+                        left_repr,
+                        right_repr
+                    ));
+                    self.emit_instr(format!(
+                        "{} = icmp {} {} {}, {}",
+                        gt_i1,
+                        gt_pred,
+                        operand_ty.as_ir(),
+                        left_repr,
+                        right_repr
+                    ));
+                }
+                let lt_i32 = self.bool_i1_to_i32(&lt_i1);
+                let gt_i32 = self.bool_i1_to_i32(&gt_i1);
+                let neg_lt = self.new_reg();
+                self.emit_instr(format!("{} = sub i32 0, {}", neg_lt, lt_i32));
+                let result = self.new_reg();
+                self.emit_instr(format!("{} = add i32 {}, {}", result, gt_i32, neg_lt));
+                Ok(ExprValue {
+                    ty: "I32".to_string(),
+                    llvm_ty: LlvmType::I32,
+                    repr: result,
+                })
+            }
+        }
+    }
+
     fn compile_void_call_statement(&mut self, expr: &parser::Expression) -> anyhow::Result<bool> {
         let Some((function_name, args)) = resolve_void_call_target(self.module.program(), expr)
         else {
@@ -1181,41 +1308,32 @@ impl<'m, 'p> FunctionEmitter<'m, 'p> {
             .trait_method_signatures
             .contains_key(&trait_method_key(struct_variable, field))
         {
-            if args.is_empty() {
-                bail!(
-                    "trait call {}.{} must pass receiver argument",
-                    struct_variable,
-                    field
-                );
-            }
             let var_types = self
                 .vars
                 .iter()
                 .map(|(name, slot)| (name.clone(), slot.ty.clone()))
                 .collect::<HashMap<_, _>>();
-            let self_type = ir::get_expression_type(
-                &args[0],
+            let (target, _return_type) = ir::resolve_trait_call_target(
+                struct_variable,
+                field,
+                args,
                 &var_types,
                 &self.module.program().function_sigs,
                 &self.module.program().type_definitions,
                 &self.module.program().trait_method_signatures,
                 &self.module.program().trait_impl_methods,
             )
-            .context("failed to resolve trait call receiver type")?;
-            let impl_key = trait_impl_method_key(struct_variable, &self_type, field);
-            let target = self
-                .module
-                .program()
-                .trait_impl_methods
-                .get(&impl_key)
-                .with_context(|| {
-                    format!(
-                        "missing impl for trait call {}.{} with receiver type {}",
-                        struct_variable, field, self_type
-                    )
-                })?
-                .clone();
-            return self.compile_named_call(&target, args);
+            .with_context(|| {
+                format!("failed to resolve trait call {}.{}", struct_variable, field)
+            })?;
+            return match target {
+                ir::TraitCallTarget::Function(target_function) => {
+                    self.compile_named_call(&target_function, args)
+                }
+                ir::TraitCallTarget::BuiltinOperator(operator) => {
+                    self.compile_builtin_trait_operator_call(operator, args)
+                }
+            };
         }
 
         let namespaced_call = parser::qualify_namespace_function_name(struct_variable, field);

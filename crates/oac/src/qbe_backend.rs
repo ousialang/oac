@@ -1758,6 +1758,117 @@ fn compile_named_call(
     (id, sig.return_type.clone())
 }
 
+fn compile_builtin_trait_operator_call(
+    ctx: &mut CodegenCtx,
+    func: &mut qbe::Function,
+    operator: ir::BuiltinTraitOperator,
+    args: &[parser::Expression],
+    variables: &mut Variables,
+) -> (QbeAssignName, ir::TypeRef) {
+    assert_eq!(
+        args.len(),
+        2,
+        "builtin operator trait calls currently require exactly two arguments"
+    );
+    let (left_var, left_ty) = compile_expr(ctx, func, &args[0], variables);
+    let (right_var, _right_ty) = compile_expr(ctx, func, &args[1], variables);
+    let operand_qbe_ty = type_ref_to_qbe(ctx, &left_ty);
+    let use_unsigned_int_cmp = left_ty == "U8";
+    let use_ordered_float_cmp = matches!(operand_qbe_ty, qbe::Type::Single | qbe::Type::Double);
+    let left_value = qbe::Value::Temporary(left_var.clone());
+    let right_value = qbe::Value::Temporary(right_var.clone());
+    let emit_cmp = |cmp: qbe::Cmp| {
+        qbe::Instr::Cmp(
+            operand_qbe_ty.clone(),
+            cmp,
+            left_value.clone(),
+            right_value.clone(),
+        )
+    };
+
+    match operator {
+        ir::BuiltinTraitOperator::Addition
+        | ir::BuiltinTraitOperator::Subtraction
+        | ir::BuiltinTraitOperator::Multiplication
+        | ir::BuiltinTraitOperator::Division => {
+            let id = new_id(&["builtin", "trait", "op"]);
+            let instr = match operator {
+                ir::BuiltinTraitOperator::Addition => {
+                    qbe::Instr::Add(left_value.clone(), right_value.clone())
+                }
+                ir::BuiltinTraitOperator::Subtraction => {
+                    qbe::Instr::Sub(left_value.clone(), right_value.clone())
+                }
+                ir::BuiltinTraitOperator::Multiplication => {
+                    qbe::Instr::Mul(left_value.clone(), right_value.clone())
+                }
+                ir::BuiltinTraitOperator::Division if use_unsigned_int_cmp => {
+                    qbe::Instr::Udiv(left_value.clone(), right_value.clone())
+                }
+                ir::BuiltinTraitOperator::Division => {
+                    qbe::Instr::Div(left_value.clone(), right_value.clone())
+                }
+                _ => unreachable!(),
+            };
+            func.assign_instr(qbe::Value::Temporary(id.clone()), operand_qbe_ty, instr);
+            (id, left_ty)
+        }
+        ir::BuiltinTraitOperator::Equality => {
+            let id = new_id(&["builtin", "trait", "eq"]);
+            func.assign_instr(
+                qbe::Value::Temporary(id.clone()),
+                qbe::Type::Word,
+                emit_cmp(qbe::Cmp::Eq),
+            );
+            (id, "Bool".to_string())
+        }
+        ir::BuiltinTraitOperator::Comparison => {
+            let lt_id = new_id(&["builtin", "trait", "cmp", "lt"]);
+            let gt_id = new_id(&["builtin", "trait", "cmp", "gt"]);
+            let neg_lt_id = new_id(&["builtin", "trait", "cmp", "neg_lt"]);
+            let result_id = new_id(&["builtin", "trait", "cmp", "result"]);
+            let lt_cmp = if use_ordered_float_cmp {
+                qbe::Cmp::Lt
+            } else if use_unsigned_int_cmp {
+                qbe::Cmp::Ult
+            } else {
+                qbe::Cmp::Slt
+            };
+            let gt_cmp = if use_ordered_float_cmp {
+                qbe::Cmp::Gt
+            } else if use_unsigned_int_cmp {
+                qbe::Cmp::Ugt
+            } else {
+                qbe::Cmp::Sgt
+            };
+            func.assign_instr(
+                qbe::Value::Temporary(lt_id.clone()),
+                qbe::Type::Word,
+                emit_cmp(lt_cmp),
+            );
+            func.assign_instr(
+                qbe::Value::Temporary(gt_id.clone()),
+                qbe::Type::Word,
+                emit_cmp(gt_cmp),
+            );
+            func.assign_instr(
+                qbe::Value::Temporary(neg_lt_id.clone()),
+                qbe::Type::Word,
+                qbe::Instr::Sub(qbe::Value::Const(0), qbe::Value::Temporary(lt_id.clone())),
+            );
+            func.assign_instr(
+                qbe::Value::Temporary(result_id.clone()),
+                qbe::Type::Word,
+                qbe::Instr::Add(
+                    qbe::Value::Temporary(gt_id),
+                    qbe::Value::Temporary(neg_lt_id),
+                ),
+            );
+            (result_id, "I32".to_string())
+        }
+    }
+}
+
 fn compile_expr(
     ctx: &mut CodegenCtx,
     func: &mut qbe::Function,
@@ -2001,38 +2112,36 @@ fn compile_expr(
                     .trait_method_signatures
                     .contains_key(&trait_method_key(struct_variable, field))
                 {
-                    assert!(
-                        !args.is_empty(),
-                        "trait call {}.{} must pass receiver argument",
-                        struct_variable,
-                        field
-                    );
                     let var_types = variables
                         .iter()
                         .map(|(name, (_, ty))| (name.clone(), ty.clone()))
                         .collect::<HashMap<_, _>>();
-                    let self_type = ir::get_expression_type(
-                        &args[0],
+                    let (target, _return_type) = ir::resolve_trait_call_target(
+                        struct_variable,
+                        field,
+                        args,
                         &var_types,
                         &ctx.resolved.function_sigs,
                         &ctx.resolved.type_definitions,
                         &ctx.resolved.trait_method_signatures,
                         &ctx.resolved.trait_impl_methods,
                     )
-                    .expect("failed to resolve trait call receiver type");
-                    let impl_key = trait_impl_method_key(struct_variable, &self_type, field);
-                    let target = ctx
-                        .resolved
-                        .trait_impl_methods
-                        .get(&impl_key)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "missing impl for trait call {}.{} with receiver type {}",
-                                struct_variable, field, self_type
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "failed to resolve trait call {}.{} in codegen: {err}",
+                            struct_variable, field
+                        )
+                    });
+                    return match target {
+                        ir::TraitCallTarget::Function(target_function) => {
+                            compile_named_call(ctx, func, &target_function, args, variables)
+                        }
+                        ir::TraitCallTarget::BuiltinOperator(operator) => {
+                            compile_builtin_trait_operator_call(
+                                ctx, func, operator, args, variables,
                             )
-                        })
-                        .clone();
-                    return compile_named_call(ctx, func, &target, args, variables);
+                        }
+                    };
                 }
 
                 let namespaced_call =
@@ -2757,6 +2866,105 @@ fun main() -> I32 {
         assert!(
             qbe_ir.contains("udiv"),
             "expected unsigned U8 division in qbe output, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_builtin_operator_trait_calls_stay_inline() {
+        let source = r#"
+fun main() -> I32 {
+	sum = Addition.add(1, 2)
+	diff = Subtraction.sub(sum, 1)
+	product = Multiplication.mul(diff, 3)
+	return Division.div(product, 2)
+}
+"#
+        .to_string();
+
+        let qbe_ir = compile_source_to_qbe_ir(&source);
+        assert!(
+            !qbe_ir.contains("call $Addition__I32__add"),
+            "builtin operator trait calls should not dispatch through synthesized functions, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("=w add"),
+            "expected inline integer add for Addition.add, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("=w sub"),
+            "expected inline integer sub for Subtraction.sub, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("=w mul"),
+            "expected inline integer mul for Multiplication.mul, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("=w div"),
+            "expected inline integer div for Division.div, got:\n{qbe_ir}"
+        );
+    }
+
+    #[test]
+    fn qbe_codegen_custom_operator_traits_lower_to_impl_calls() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+impl Copy for Counter {
+	fun copy(v: Counter) -> Counter {
+		return v
+	}
+}
+
+impl Addition for Counter {
+	fun add(lhs: Counter, rhs: Counter) -> Counter {
+		return Counter struct { value: lhs.value + rhs.value }
+	}
+}
+
+impl Equality for Counter {
+	fun equals(a: Counter, b: Counter) -> Bool {
+		return a.value == b.value
+	}
+}
+
+impl Comparison for Counter {
+	fun compare(a: Counter, b: Counter) -> I32 {
+		if a.value < b.value {
+			return 0 - 1
+		}
+		if a.value > b.value {
+			return 1
+		}
+		return 0
+	}
+}
+
+fun main() -> I32 {
+	a = Counter struct { value: 1 }
+	b = Counter struct { value: 2 }
+	sum = a + b
+	if sum == b || a < b {
+		return sum.value
+	}
+	return 0
+}
+"#
+        .to_string();
+
+        let qbe_ir = compile_source_to_qbe_ir(&source);
+        assert!(
+            qbe_ir.contains("call $Addition__Counter__add"),
+            "expected custom Addition impl call in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $Equality__Counter__equals"),
+            "expected custom Equality impl call in qbe output, got:\n{qbe_ir}"
+        );
+        assert!(
+            qbe_ir.contains("call $Comparison__Counter__compare"),
+            "expected custom Comparison impl call in qbe output, got:\n{qbe_ir}"
         );
     }
 

@@ -11,6 +11,7 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
    - CLI `build`/`test`/`bench-prove` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` and `main.rs::compile_source_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
 5. Resolve/type-check with `ir::resolve`.
    - After the initial function-body type check, resolve normalizes receiver method syntax (`value.helper(...)`) into ordinary calls (`TypeName__helper(value, ...)`) or enum-constructor postfix forms before ownership rewriting, purity checks, call indexing, and codegen.
+   - The same normalization pass also rewrites non-builtin infix operators into ordinary calls to resolved operator-trait impls (`Addition`, `Subtraction`, `Multiplication`, `Division`, `Equality`, `Comparison`), while keeping compiler-owned primitive scalar operators as builtin `BinOp` nodes.
 6. Lower to QBE with `qbe_backend::compile`.
 7. Prepare prove + integer-safety + struct-invariant checker artifacts, group ordinary-root obligations into repo-local summary candidates, and consult proof-cache policy from `VerificationConfig` / `--proof-cache`.
    - Prove, integer-safety, and struct-invariant site checkers first prune the cloned caller CFG to blocks that can still reach the targeted site before reachable-callee closure is computed.
@@ -123,6 +124,7 @@ Operator precedence is explicitly encoded in parser.
 - stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - deterministic comptime evaluation, including checked `I32` arithmetic in `comptime.rs` (`+/-/*` overflow and `/` divide-by-zero or `MIN / -1` now produce deterministic comptime errors instead of Rust panics)
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
+- binary-operator resolution that first keeps compiler-owned primitive scalar behavior builtin, then falls back to resolved operator-trait impls for std/user types, with struct/tag-only-enum equality fallback and tagged-payload-enum equality rejection unless `Equality` is implemented
 - generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages, including recursive expansion of local generic-body specializations after parent type substitutions are applied.
 - type definition graph creation
 - function signature collection
@@ -142,6 +144,8 @@ Important enforced invariants include:
 - receiver method calls (`value.fn(args)`) are resolved through the receiver's concrete type (`TypeName__fn(value, args...)`) and normalized into ordinary `Call(...)` nodes before ownership/codegen
 - namespace call lowering is also used for generic-specialized helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
 - trait calls are v1 namespaced calls (`Trait.method(value, ...)`) that type-check against trait signatures and resolve to concrete impl function names (`Trait__Type__method`)
+- user/std infix operator lowering shares the same trait-resolution path as explicit trait calls; comparison impls normalize to `Comparison.compare(lhs, rhs)` plus a builtin compare-to-zero step
+- compiler-reserved primitive operator trait/type pairs (`Addition`/`Subtraction`/`Multiplication`/`Division`/`Comparison` on numeric scalars, `Equality` on numeric scalars plus `Bool`) reject user/std overrides during impl collection
 - trait coherence is enforced globally: duplicate `impl Trait for Type` is rejected, and missing impls for generic bounds are rejected at specialization time
 - special lifecycle-trait signatures are enforced: `Copy.copy(Ref[Self]) -> Self` and `Drop.drop(Self) -> Void`
 - ownership analysis/rewriting runs during resolve for user runtime functions:
@@ -160,7 +164,7 @@ Important enforced invariants include:
 - `String` std helper surface includes structural accessors plus utility helpers (`String.equals`, `String.starts_with`, `String.ends_with`, `String.char_at_or`, `String.slice_clamped`)
 - stdlib split modules now also include generic `Option[T]` / `Result[T,E]` in `crates/oac/src/std/std_option_result.oa`
 - stdlib split modules now also include generic `Ref[T]` / `Mut[T]` in `crates/oac/src/std/std_ref.oa` with typed read helpers (`U8Ref.read`, `I32Ref.read`, `I64Ref.read`, `PtrIntRef.read`, `BoolRef.read`) and mutable read/write helpers (`U8Mut.*`, `I32Mut.*`, `I64Mut.*`, `PtrIntMut.*`, `BoolMut.*`)
-- stdlib split modules now also include generic `HashSet[K: Hash + Eq]` in `crates/oac/src/std/std_set.oa` with persistent set-algebra helpers (`union`, `intersection`, `difference`) and insertion/removal result payloads (`InsertResult`, `RemoveResult`)
+- stdlib split modules now also include generic `HashSet[K: Hash + Equality]` in `crates/oac/src/std/std_set.oa` with persistent set-algebra helpers (`union`, `intersection`, `difference`) and insertion/removal result payloads (`InsertResult`, `RemoveResult`)
 - stdlib split modules now also include generic `Vec[T]` in `crates/oac/src/std/std_vec.oa` with persistent vector-style helpers (`push`, `pop`, `get`, `set`, `reserve`, `clear`) and explicit result enums/structs
 - C interop signatures are no longer compiler-injected from JSON; stdlib exposes them via `namespace Clib { extern fun ... }` in `crates/oac/src/std/std_clib.oa` (resolver keys are still mangled as `Clib__*` for namespaced-call lookup)
 - stdlib split modules now also include `namespace Io` wrappers in `crates/oac/src/std/std_io.oa` over `Clib.open/read/write/close` with explicit result enums (`IoError`, `IoReadResult`, `IoWriteResult`)
