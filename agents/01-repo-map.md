@@ -25,6 +25,8 @@ Editor tooling in this repository:
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
 - `crates/oac/src/ast_walk.rs`: shared AST traversal helpers (expression-path indexing + call walking) reused across resolve and verification passes.
 - `crates/oac/src/verification_checker.rs`: shared prove/invariant checker assembly helpers for QBE+CHC verification.
+- `crates/oac/src/verification.rs`: ordinary-root verification-session orchestration that combines prove + struct-invariant summary caching for build/test flows.
+- `crates/oac/src/verification_cache.rs`: repo-local proof-summary cache config/schema/helpers (`--proof-cache`, content-hash summary files, and cache read/write policy).
 - `crates/oac/src/verification_profile.rs`: baseline/candidate verification profile selection used by solver policy and benchmark gating.
 - `crates/oac/src/verification_solver.rs`: shared solver-attempt policy (`10s/30s` + optional large-obligation third attempt) and attempt-metadata formatting.
 - `crates/oac/src/verification_outcomes.rs`: baseline-vs-candidate outcome capture/comparison helpers used by strict transition gating.
@@ -59,6 +61,7 @@ Editor tooling in this repository:
 - `crates/oac/src/std/std_io.oa`: std-owned `Io.*` wrappers over `Clib.open/read/write/close` with explicit result enums.
 - `crates/oac/execution_tests/*.oa`: language behavior fixtures (positive + negative).
 - `crates/oac/bench/prove_baseline.json`: committed proving benchmark baseline used by `oac bench-prove`.
+- `target/oac/verification_cache/`: repo-local content-hash-keyed proof-summary cache populated by `oac build` / `oac test` when `--proof-cache` is not `off`.
 - `crates/oac/src/snapshots/*.snap`: canonical snapshots for tests.
 - `.github/workflows/ci.yml`: CI checks (`cargo check`, `cargo nextest`) in parallel jobs.
 - `.githooks/pre-commit`: local Git hook that formats staged Rust files with nightly `rustfmt`.

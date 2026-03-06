@@ -30,6 +30,7 @@ Act like a compiler engineer, not a text editor:
 - Treat diagnostic quality as a product contract: avoid internal debug dumps in user-facing messages, avoid duplicated Ariadne prefixes (`Error: error[...]`), and keep linker-stage diagnostics on `OAC-LINK-*`.
 - For proving/invariant performance-sensitive changes, run `oac bench-prove` and inspect delta/regression output against `crates/oac/bench/prove_baseline.json`.
 - For unknown-mitigation/verification-solver changes, run `oac bench-prove --strict-outcome-gate` and require zero forbidden transitions (baseline `sat`/`unsat` must not drift).
+- When touching proof-cache behavior, validate both trusted build/test reuse and live benchmark behavior: `build` / `test` default to `--proof-cache trust`, while `bench-prove` defaults to `--proof-cache strict` with read-only cache policy.
 
 ## Pre-Release Compatibility Posture
 
@@ -71,6 +72,7 @@ Act like a compiler engineer, not a text editor:
 - `cargo test --all-targets --all-features` (fallback when `cargo-nextest` is unavailable)
 - `cargo run -p oac -- bench-prove --suite quick --iterations 1` for quick proving-regression signal when touching verification/codegen paths.
 - `cargo run -p oac -- bench-prove --suite full --iterations 1 --strict-outcome-gate` when touching solver retry/unknown handling or SMT helper generation.
+- `cargo run -p oac -- build <fixture.oa> --proof-cache trust` twice (or targeted cache unit tests) when changing proof-summary cache keying, trust/strict policy, or verification-session orchestration.
 - Review snapshot diffs for unintended behavior changes.
 - Ensure snapshot hygiene gates pass (`*.snap.new` absent and execution snapshots aligned with fixtures).
 - Update docs in `agents/` and root `AGENTS.md` if any context changed.

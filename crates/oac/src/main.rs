@@ -20,6 +20,8 @@ mod struct_invariants;
 mod symbol_keys;
 mod test_framework;
 mod tokenizer;
+mod verification;
+mod verification_cache;
 mod verification_checker;
 mod verification_cycles;
 mod verification_outcomes;
@@ -85,6 +87,27 @@ impl CodegenOptions {
         }
         Ok(())
     }
+}
+
+pub(crate) fn default_verification_cache_root(current_dir: &Path) -> PathBuf {
+    current_dir
+        .join("target")
+        .join("oac")
+        .join("verification_cache")
+}
+
+pub(crate) fn verification_config_for_repo_cache(
+    current_dir: &Path,
+    profile: verification_profile::VerificationProfile,
+    cache_mode: verification_cache::VerificationCacheMode,
+    cache_write_policy: verification_cache::VerificationCacheWritePolicy,
+) -> verification_cache::VerificationConfig {
+    verification_cache::VerificationConfig::new(
+        profile,
+        cache_mode,
+        default_verification_cache_root(current_dir),
+        cache_write_policy,
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -327,6 +350,7 @@ pub(crate) fn parse_source_to_ast_with_artifacts(
     Ok((source, ast))
 }
 
+#[allow(dead_code)]
 pub(crate) fn compile_source_with_artifacts(
     source_path: &Path,
     target_dir: &Path,
@@ -340,11 +364,17 @@ pub(crate) fn compile_source_with_artifacts(
         codegen_options,
         executable_name,
         codes,
-        verification_profile::VerificationProfile::default(),
+        verification_cache::VerificationConfig::new(
+            verification_profile::VerificationProfile::default(),
+            verification_cache::VerificationCacheMode::Trust,
+            target_dir.join("verification_cache"),
+            verification_cache::VerificationCacheWritePolicy::PersistUnsat,
+        ),
         None,
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn compile_source_with_artifacts_with_profile(
     source_path: &Path,
     target_dir: &Path,
@@ -353,13 +383,36 @@ pub(crate) fn compile_source_with_artifacts_with_profile(
     codes: CompileSourceCodes<'_>,
     verification_profile: verification_profile::VerificationProfile,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    compile_source_with_artifacts_with_config(
+        source_path,
+        target_dir,
+        codegen_options,
+        executable_name,
+        codes,
+        verification_cache::VerificationConfig::new(
+            verification_profile,
+            verification_cache::VerificationCacheMode::Trust,
+            target_dir.join("verification_cache"),
+            verification_cache::VerificationCacheWritePolicy::PersistUnsat,
+        ),
+    )
+}
+
+pub(crate) fn compile_source_with_artifacts_with_config(
+    source_path: &Path,
+    target_dir: &Path,
+    codegen_options: CodegenOptions,
+    executable_name: &str,
+    codes: CompileSourceCodes<'_>,
+    verification_config: verification_cache::VerificationConfig,
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
     compile_source_with_artifacts_with_profile_and_reporter(
         source_path,
         target_dir,
         codegen_options,
         executable_name,
         codes,
-        verification_profile,
+        verification_config,
         None,
     )
 }
@@ -370,7 +423,7 @@ fn compile_source_with_artifacts_with_profile_and_reporter(
     codegen_options: CodegenOptions,
     executable_name: &str,
     codes: CompileSourceCodes<'_>,
-    verification_profile: verification_profile::VerificationProfile,
+    verification_config: verification_cache::VerificationConfig,
     reporter: Option<&mut cli_output::CliReporter>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
     codegen_options.validate()?;
@@ -400,7 +453,7 @@ fn compile_source_with_artifacts_with_profile_and_reporter(
         executable_name,
         Some(source_path),
         Some(&source),
-        verification_profile,
+        verification_config,
         reporter,
     )
 }
@@ -425,9 +478,17 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
         "target",
         codegen_options.target.as_deref().unwrap_or("host"),
     );
+    reporter.metadata("proof-cache", build.proof_cache.as_str());
     if let Some(qbe_arch) = codegen_options.qbe_arch.as_deref() {
         reporter.metadata("qbe-arch", qbe_arch);
     }
+
+    let verification_config = verification_config_for_repo_cache(
+        current_dir,
+        verification_profile::VerificationProfile::default(),
+        build.proof_cache,
+        verification_cache::VerificationCacheWritePolicy::PersistUnsat,
+    );
 
     let command_start = Instant::now();
     match compile_source_with_artifacts_with_profile_and_reporter(
@@ -451,7 +512,7 @@ fn compile(current_dir: &Path, build: Build) -> Result<(), CompilerDiagnosticBun
             serialize_ast_io_code: "OAC-IO-009",
             write_ast_io_code: "OAC-IO-010",
         },
-        verification_profile::VerificationProfile::default(),
+        verification_config,
         Some(&mut reporter),
     ) {
         Ok(executable_path) => {
@@ -510,9 +571,17 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
         "target",
         codegen_options.target.as_deref().unwrap_or("host"),
     );
+    reporter.metadata("proof-cache", test.proof_cache.as_str());
     if let Some(qbe_arch) = codegen_options.qbe_arch.as_deref() {
         reporter.metadata("qbe-arch", qbe_arch);
     }
+
+    let verification_config = verification_config_for_repo_cache(
+        current_dir,
+        verification_profile::VerificationProfile::default(),
+        test.proof_cache,
+        verification_cache::VerificationCacheWritePolicy::PersistUnsat,
+    );
 
     let command_start = Instant::now();
     let result = (|| {
@@ -571,7 +640,7 @@ fn run_tests(current_dir: &Path, test: Test) -> Result<(), CompilerDiagnosticBun
             "app",
             Some(source_path),
             Some(&source),
-            verification_profile::VerificationProfile::default(),
+            verification_config,
             Some(&mut reporter),
         )?;
 
@@ -650,7 +719,12 @@ pub(crate) fn compile_ast_to_executable(
         executable_name,
         source_path,
         source_text,
-        verification_profile::VerificationProfile::default(),
+        verification_cache::VerificationConfig::new(
+            verification_profile::VerificationProfile::default(),
+            verification_cache::VerificationCacheMode::Trust,
+            target_dir.join("verification_cache"),
+            verification_cache::VerificationCacheWritePolicy::PersistUnsat,
+        ),
         None,
     )
 }
@@ -665,6 +739,31 @@ pub(crate) fn compile_ast_to_executable_with_profile(
     source_text: Option<&str>,
     verification_profile: verification_profile::VerificationProfile,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
+    compile_ast_to_executable_with_config(
+        target_dir,
+        ast,
+        codegen_options,
+        executable_name,
+        source_path,
+        source_text,
+        verification_cache::VerificationConfig::new(
+            verification_profile,
+            verification_cache::VerificationCacheMode::Trust,
+            target_dir.join("verification_cache"),
+            verification_cache::VerificationCacheWritePolicy::PersistUnsat,
+        ),
+    )
+}
+
+pub(crate) fn compile_ast_to_executable_with_config(
+    target_dir: &Path,
+    ast: parser::Ast,
+    codegen_options: CodegenOptions,
+    executable_name: &str,
+    source_path: Option<&Path>,
+    source_text: Option<&str>,
+    verification_config: verification_cache::VerificationConfig,
+) -> Result<PathBuf, CompilerDiagnosticBundle> {
     compile_ast_to_executable_with_profile_and_reporter(
         target_dir,
         ast,
@@ -672,7 +771,7 @@ pub(crate) fn compile_ast_to_executable_with_profile(
         executable_name,
         source_path,
         source_text,
-        verification_profile,
+        verification_config,
         None,
     )
 }
@@ -684,7 +783,7 @@ fn compile_ast_to_executable_with_profile_and_reporter(
     executable_name: &str,
     source_path: Option<&Path>,
     source_text: Option<&str>,
-    verification_profile: verification_profile::VerificationProfile,
+    verification_config: verification_cache::VerificationConfig,
     reporter: Option<&mut cli_output::CliReporter>,
 ) -> Result<PathBuf, CompilerDiagnosticBundle> {
     codegen_options.validate()?;
@@ -715,61 +814,130 @@ fn compile_ast_to_executable_with_profile_and_reporter(
         Ok((ir, qbe_ir))
     })?;
 
+    let ordinary_verification = verification::prepare_ordinary_verification_session(
+        &ir,
+        &qbe_ir,
+        target_dir,
+        &verification_config,
+    )
+    .map_err(|err| match err {
+        verification::VerificationError::Prove(err) => stage_error_from_anyhow(
+            DiagnosticStage::Prove,
+            "OAC-PROVE-001",
+            "prove obligation verification failed",
+            err,
+            source_path,
+            source_text,
+        ),
+        verification::VerificationError::StructInvariant(err) => stage_error_from_anyhow(
+            DiagnosticStage::StructInvariant,
+            "OAC-INV-001",
+            "struct invariant verification failed",
+            err,
+            source_path,
+            source_text,
+        ),
+        verification::VerificationError::ModelInvariant(err) => stage_error_from_anyhow(
+            DiagnosticStage::ModelInvariant,
+            "OAC-MINV-001",
+            "model invariant verification failed",
+            err,
+            source_path,
+            source_text,
+        ),
+    })?;
+
     run_compiler_stage(reporter.as_deref_mut(), "check proofs", || {
-        prove::verify_prove_obligations_with_qbe_with_profile(
-            &ir,
-            &qbe_ir,
-            target_dir,
-            verification_profile,
-        )
-        .map_err(|err| {
-            stage_error_from_anyhow(
-                DiagnosticStage::Prove,
-                "OAC-PROVE-001",
-                "prove obligation verification failed",
-                err,
-                source_path,
-                source_text,
-            )
-        })
+        ordinary_verification
+            .verify_prove_stage(&verification_config)
+            .map_err(|err| match err {
+                verification::VerificationError::Prove(err) => stage_error_from_anyhow(
+                    DiagnosticStage::Prove,
+                    "OAC-PROVE-001",
+                    "prove obligation verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+                verification::VerificationError::StructInvariant(err) => stage_error_from_anyhow(
+                    DiagnosticStage::StructInvariant,
+                    "OAC-INV-001",
+                    "struct invariant verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+                verification::VerificationError::ModelInvariant(err) => stage_error_from_anyhow(
+                    DiagnosticStage::ModelInvariant,
+                    "OAC-MINV-001",
+                    "model invariant verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+            })
     })?;
 
     run_compiler_stage(reporter.as_deref_mut(), "check data rules", || {
-        struct_invariants::verify_struct_invariants_with_qbe_with_profile(
-            &ir,
-            &qbe_ir,
-            target_dir,
-            verification_profile,
-        )
-        .map_err(|err| {
-            stage_error_from_anyhow(
-                DiagnosticStage::StructInvariant,
-                "OAC-INV-001",
-                "struct invariant verification failed",
-                err,
-                source_path,
-                source_text,
-            )
-        })
+        ordinary_verification
+            .verify_struct_stage(&verification_config)
+            .map_err(|err| match err {
+                verification::VerificationError::Prove(err) => stage_error_from_anyhow(
+                    DiagnosticStage::Prove,
+                    "OAC-PROVE-001",
+                    "prove obligation verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+                verification::VerificationError::StructInvariant(err) => stage_error_from_anyhow(
+                    DiagnosticStage::StructInvariant,
+                    "OAC-INV-001",
+                    "struct invariant verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+                verification::VerificationError::ModelInvariant(err) => stage_error_from_anyhow(
+                    DiagnosticStage::ModelInvariant,
+                    "OAC-MINV-001",
+                    "model invariant verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+            })
     })?;
 
     run_compiler_stage(reporter.as_deref_mut(), "check global rules", || {
-        model_invariants::verify_model_invariants_with_qbe_with_profile(
-            &ir,
-            &qbe_ir,
-            target_dir,
-            verification_profile,
+        verification::verify_model_stage(&ir, &qbe_ir, target_dir, &verification_config).map_err(
+            |err| match err {
+                verification::VerificationError::Prove(err) => stage_error_from_anyhow(
+                    DiagnosticStage::Prove,
+                    "OAC-PROVE-001",
+                    "prove obligation verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+                verification::VerificationError::StructInvariant(err) => stage_error_from_anyhow(
+                    DiagnosticStage::StructInvariant,
+                    "OAC-INV-001",
+                    "struct invariant verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+                verification::VerificationError::ModelInvariant(err) => stage_error_from_anyhow(
+                    DiagnosticStage::ModelInvariant,
+                    "OAC-MINV-001",
+                    "model invariant verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
+            },
         )
-        .map_err(|err| {
-            stage_error_from_anyhow(
-                DiagnosticStage::ModelInvariant,
-                "OAC-MINV-001",
-                "model invariant verification failed",
-                err,
-                source_path,
-                source_text,
-            )
-        })
     })?;
 
     run_compiler_stage(reporter.as_deref_mut(), "check loops", || {
@@ -1162,6 +1330,8 @@ struct Build {
     qbe_arch: Option<String>,
     #[clap(long)]
     target: Option<String>,
+    #[clap(long = "proof-cache", value_enum, default_value_t = verification_cache::VerificationCacheMode::Trust)]
+    proof_cache: verification_cache::VerificationCacheMode,
     #[clap(long)]
     quiet: bool,
     #[clap(long)]
@@ -1191,6 +1361,8 @@ struct Test {
     qbe_arch: Option<String>,
     #[clap(long)]
     target: Option<String>,
+    #[clap(long = "proof-cache", value_enum, default_value_t = verification_cache::VerificationCacheMode::Trust)]
+    proof_cache: verification_cache::VerificationCacheMode,
     #[clap(long)]
     quiet: bool,
     #[clap(long)]
@@ -1243,6 +1415,7 @@ mod tests {
         reject_proven_non_terminating_main, resolve_linker_attempts_for_config, LinkerAttempt, Oac,
         OacSubcommand, RuntimeBackend,
     };
+    use crate::verification_cache::VerificationCacheMode;
 
     fn temp(name: &str) -> Value {
         Value::Temporary(name.to_string())
@@ -1379,6 +1552,7 @@ mod tests {
                 assert!(opts.output.is_none());
                 assert!(!opts.update_baseline);
                 assert!(!opts.strict_outcome_gate);
+                assert_eq!(opts.proof_cache, VerificationCacheMode::Strict);
             }
             _ => panic!("expected bench-prove subcommand"),
         }
@@ -1399,6 +1573,8 @@ mod tests {
             "custom-report.json",
             "--update-baseline",
             "--strict-outcome-gate",
+            "--proof-cache",
+            "off",
         ]);
         match parsed.subcmd {
             OacSubcommand::BenchProve(opts) => {
@@ -1414,6 +1590,7 @@ mod tests {
                 );
                 assert!(opts.update_baseline);
                 assert!(opts.strict_outcome_gate);
+                assert_eq!(opts.proof_cache, VerificationCacheMode::Off);
             }
             _ => panic!("expected bench-prove subcommand"),
         }
@@ -1561,6 +1738,7 @@ mod tests {
                 assert_eq!(build.backend, RuntimeBackend::Qbe);
                 assert!(build.qbe_arch.is_none());
                 assert!(build.target.is_none());
+                assert_eq!(build.proof_cache, VerificationCacheMode::Trust);
                 assert!(!build.quiet);
                 assert!(!build.no_color);
             }
@@ -1578,12 +1756,15 @@ mod tests {
             "llvm",
             "--target",
             "aarch64-linux-gnu",
+            "--proof-cache",
+            "strict",
         ]);
         match parsed.subcmd {
             OacSubcommand::Build(build) => {
                 assert_eq!(build.backend, RuntimeBackend::Llvm);
                 assert_eq!(build.target.as_deref(), Some("aarch64-linux-gnu"));
                 assert!(build.qbe_arch.is_none());
+                assert_eq!(build.proof_cache, VerificationCacheMode::Strict);
                 assert!(!build.quiet);
                 assert!(!build.no_color);
             }
@@ -1621,6 +1802,7 @@ mod tests {
                 assert_eq!(test.backend, RuntimeBackend::Qbe);
                 assert!(test.qbe_arch.is_none());
                 assert!(test.target.is_none());
+                assert_eq!(test.proof_cache, VerificationCacheMode::Trust);
                 assert!(!test.quiet);
                 assert!(!test.no_color);
             }
@@ -1638,12 +1820,15 @@ mod tests {
             "llvm",
             "--target",
             "aarch64-linux-gnu",
+            "--proof-cache",
+            "off",
         ]);
         match parsed.subcmd {
             OacSubcommand::Test(test) => {
                 assert_eq!(test.backend, RuntimeBackend::Llvm);
                 assert_eq!(test.target.as_deref(), Some("aarch64-linux-gnu"));
                 assert!(test.qbe_arch.is_none());
+                assert_eq!(test.proof_cache, VerificationCacheMode::Off);
                 assert!(!test.quiet);
                 assert!(!test.no_color);
             }

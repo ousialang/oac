@@ -9,6 +9,10 @@ use crate::invariant_metadata::{
 };
 use crate::ir::ResolvedProgram;
 use crate::qbe_backend::PROVE_MARKER_PREFIX;
+use crate::verification_cache::{
+    VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
+    VerificationSummaryInput,
+};
 use crate::verification_checker::{
     checker_module_with_reachable_callees, rewrite_returns_to_zero, sanitize_ident,
     should_assume_main_argc_non_negative, summarize_solver_output,
@@ -27,6 +31,28 @@ struct ProveSite {
     id: String,
     caller: String,
     marker_temp: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedProveSite {
+    site: ProveSite,
+    qbe_filename: String,
+    smt_filename: String,
+    smt: String,
+}
+
+impl PreparedProveSite {
+    pub(crate) fn caller(&self) -> &str {
+        &self.site.caller
+    }
+
+    pub(crate) fn summary_input(&self) -> VerificationSummaryInput {
+        VerificationSummaryInput {
+            kind: VerificationKind::Prove,
+            local_id: self.site.id.clone(),
+            smt: self.smt.clone(),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -49,41 +75,27 @@ pub fn verify_prove_obligations_with_qbe_with_profile(
     target_dir: &Path,
     profile: VerificationProfile,
 ) -> anyhow::Result<()> {
-    let invariant_by_struct = discover_struct_invariant_bindings(program)?;
-    let reachable = reachable_user_functions(program, "main")?;
-
-    let function_map = qbe_module
-        .functions
-        .iter()
-        .map(|function| (function.name.clone(), function.clone()))
-        .collect::<HashMap<_, _>>();
-
-    let sites = collect_prove_sites(&function_map, &reachable)?;
-    if sites.is_empty() {
-        return Ok(());
-    }
-
-    let reachable_names = reachable.iter().cloned().collect::<BTreeSet<_>>();
-    let arg_invariant_assumptions = build_function_arg_invariant_assumptions_for_names(
+    verify_prove_obligations_with_qbe_with_config(
         program,
-        &reachable_names,
-        &invariant_by_struct,
-    )?;
-    reject_recursion_cycles_with_arg_invariants(
-        program,
-        "main",
-        &reachable,
-        &arg_invariant_assumptions,
-        "prove verification",
-    )?;
-    solve_prove_sites(
-        program,
-        &invariant_by_struct,
-        &function_map,
-        &sites,
+        qbe_module,
         target_dir,
-        profile,
+        VerificationConfig::new(
+            profile,
+            VerificationCacheMode::Off,
+            target_dir.join("verification_cache"),
+            VerificationCacheWritePolicy::PersistUnsat,
+        ),
     )
+}
+
+pub(crate) fn verify_prove_obligations_with_qbe_with_config(
+    program: &ResolvedProgram,
+    qbe_module: &qbe::Module,
+    target_dir: &Path,
+    config: VerificationConfig,
+) -> anyhow::Result<()> {
+    let prepared = prepare_prove_obligations_with_config(program, qbe_module, target_dir, &config)?;
+    verify_prepared_prove_obligations(&prepared, &config, &HashSet::new())
 }
 
 fn collect_prove_sites(
@@ -127,14 +139,40 @@ fn collect_prove_sites(
     Ok(sites)
 }
 
-fn solve_prove_sites(
+pub(crate) fn prepare_prove_obligations_with_config(
     program: &ResolvedProgram,
-    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
-    function_map: &HashMap<String, qbe::Function>,
-    sites: &[ProveSite],
+    qbe_module: &qbe::Module,
     target_dir: &Path,
-    profile: VerificationProfile,
-) -> anyhow::Result<()> {
+    _config: &VerificationConfig,
+) -> anyhow::Result<Vec<PreparedProveSite>> {
+    let invariant_by_struct = discover_struct_invariant_bindings(program)?;
+    let reachable = reachable_user_functions(program, "main")?;
+
+    let function_map = qbe_module
+        .functions
+        .iter()
+        .map(|function| (function.name.clone(), function.clone()))
+        .collect::<HashMap<_, _>>();
+
+    let sites = collect_prove_sites(&function_map, &reachable)?;
+    if sites.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let reachable_names = reachable.iter().cloned().collect::<BTreeSet<_>>();
+    let arg_invariant_assumptions = build_function_arg_invariant_assumptions_for_names(
+        program,
+        &reachable_names,
+        &invariant_by_struct,
+    )?;
+    reject_recursion_cycles_with_arg_invariants(
+        program,
+        "main",
+        &reachable,
+        &arg_invariant_assumptions,
+        "prove verification",
+    )?;
+
     let verification_dir = target_dir.join("prove");
     std::fs::create_dir_all(&verification_dir).with_context(|| {
         format!(
@@ -143,10 +181,10 @@ fn solve_prove_sites(
         )
     })?;
 
-    let mut failures = Vec::new();
+    let mut prepared = Vec::new();
     for site in sites {
         let (checker_module, checker_function, assumptions) =
-            build_site_checker_module(program, invariant_by_struct, function_map, site)?;
+            build_site_checker_module(program, &invariant_by_struct, &function_map, &site)?;
         let checker_qbe = checker_module.to_string();
         let site_stem = format!("site_{}", sanitize_ident(&site.id));
         let qbe_filename = format!("{}.qbe", site_stem);
@@ -189,12 +227,46 @@ fn solve_prove_sites(
             )
         })?;
 
-        match solve_chc_with_policy(&smt, profile) {
+        prepared.push(PreparedProveSite {
+            site,
+            qbe_filename,
+            smt_filename,
+            smt,
+        });
+    }
+
+    Ok(prepared)
+}
+
+pub(crate) fn verify_prepared_prove_obligations(
+    prepared_sites: &[PreparedProveSite],
+    config: &VerificationConfig,
+    cached_roots: &HashSet<String>,
+) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+    for prepared in prepared_sites {
+        if config.cache_trust_enabled() && cached_roots.contains(prepared.caller()) {
+            record_outcome(VerificationOutcomeRecord {
+                kind: VerificationKind::Prove,
+                obligation_id: prepared.site.id.clone(),
+                caller: prepared.site.caller.clone(),
+                callee: None,
+                invariant_key: None,
+                outcome: VerificationOutcome::Unsat,
+                fixture: None,
+            });
+            continue;
+        }
+
+        let strict_cache_mismatch = config.cache_mode == VerificationCacheMode::Strict
+            && cached_roots.contains(prepared.caller());
+
+        match solve_chc_with_policy(&prepared.smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::Prove,
-                    obligation_id: site.id.clone(),
-                    caller: site.caller.clone(),
+                    obligation_id: prepared.site.id.clone(),
+                    caller: prepared.site.caller.clone(),
                     callee: None,
                     invariant_key: None,
                     outcome: verification_outcome_from_solver_result(run.final_run.result),
@@ -204,8 +276,8 @@ fn solve_prove_sites(
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Sat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::Prove,
-                    obligation_id: site.id.clone(),
-                    caller: site.caller.clone(),
+                    obligation_id: prepared.site.id.clone(),
+                    caller: prepared.site.caller.clone(),
                     callee: None,
                     invariant_key: None,
                     outcome: verification_outcome_from_solver_result(run.final_run.result),
@@ -215,19 +287,28 @@ fn solve_prove_sites(
                     summarize_solver_output(&run.final_run.stdout, &run.final_run.stderr)
                         .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                         .unwrap_or_default();
+                let cache_excerpt = if strict_cache_mismatch {
+                    ", cached_summary_revalidation=mismatch"
+                } else {
+                    ""
+                };
                 let mut failure = format!(
                     "{} (caller={}, qbe_artifact={}, smt_artifact={}",
-                    site.id, site.caller, qbe_filename, smt_filename
+                    prepared.site.id,
+                    prepared.site.caller,
+                    prepared.qbe_filename,
+                    prepared.smt_filename
                 );
                 failure.push_str(&solver_excerpt);
+                failure.push_str(cache_excerpt);
                 failure.push(')');
                 failures.push(failure);
             }
             Ok(run) => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::Prove,
-                    obligation_id: site.id.clone(),
-                    caller: site.caller.clone(),
+                    obligation_id: prepared.site.id.clone(),
+                    caller: prepared.site.caller.clone(),
                     callee: None,
                     invariant_key: None,
                     outcome: verification_outcome_from_solver_result(run.final_run.result),
@@ -238,20 +319,26 @@ fn solve_prove_sites(
                         .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                         .unwrap_or_default();
                 let attempts = format_attempts(&run.attempts);
+                let cache_excerpt = if strict_cache_mismatch {
+                    ", cached_summary_revalidation=mismatch"
+                } else {
+                    ""
+                };
                 return Err(anyhow::anyhow!(
-                    "solver returned unknown for prove obligation {} (caller={}, qbe_artifact={}, smt_artifact={}, attempts={}{}). verification is fail-closed until this obligation is proven unsat",
-                    site.id,
-                    site.caller,
-                    qbe_filename,
-                    smt_filename,
+                    "solver returned unknown for prove obligation {} (caller={}, qbe_artifact={}, smt_artifact={}, attempts={}{}{}). verification is fail-closed until this obligation is proven unsat",
+                    prepared.site.id,
+                    prepared.site.caller,
+                    prepared.qbe_filename,
+                    prepared.smt_filename,
                     attempts,
+                    cache_excerpt,
                     solver_excerpt
                 ));
             }
             Err(err) => {
                 return Err(anyhow::anyhow!(
                     "failed to solve prove obligation {}: {}\n{}",
-                    site.id,
+                    prepared.site.id,
                     err,
                     err.render_report_plain("prove-obligation")
                 ))

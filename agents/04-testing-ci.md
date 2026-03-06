@@ -67,6 +67,9 @@ cargo run -p oac -- bench-prove
 # Quick suite for local iteration
 cargo run -p oac -- bench-prove --suite quick --iterations 1
 
+# Benchmark runs default to --proof-cache strict (read-only); override only when explicitly testing cache policy.
+cargo run -p oac -- bench-prove --suite quick --iterations 1 --proof-cache strict
+
 # Recompute committed baseline (deterministic rewrite)
 cargo run -p oac -- bench-prove --update-baseline
 
@@ -78,6 +81,7 @@ Benchmark artifacts:
 - committed baseline: `crates/oac/bench/prove_baseline.json`
 - default report output: `target/oac/bench/prove/latest.json`
 - per-run isolated fixture artifacts: `target/oac/bench/runs/<fixture>/iter_<n>/`
+- repo-local proof summaries used by build/test live under `target/oac/verification_cache/`
 - strict outcome-gate artifacts: `target/oac/verification_outcomes/{baseline,candidate}.json` plus per-profile runs under `target/oac/verification_outcomes/runs/`
 
 ## Local Git Hooks
@@ -158,7 +162,10 @@ Key tests:
 - SAT invariant failures emitted by `struct_invariants.rs` include a compact control-flow witness summary (`cfg_path` + branch steps) and attempt to include concrete `program_input` data (`argc` witness for `main(argc, argv)` sites).
 - Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
-- `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags (including `--strict-outcome-gate`).
+- `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags (including `--strict-outcome-gate` and `--proof-cache`) plus `build` / `test` proof-cache defaults/overrides.
+- `crates/oac/src/verification_cache.rs` tests cover summary-hash stability, SMT-content invalidation, persisted-summary round-tripping, and cache policy flag behavior.
+- `crates/oac/src/verification.rs` tests cover combined ordinary-root cache behavior (trust-mode solver skips, strict revalidation mismatch failure, and non-`unsat` non-persistence).
+- `crates/oac/src/model_invariants.rs` tests cover model-invariant cache trust hits and strict mismatch handling.
 - `crates/oac/src/main.rs` tests now also cover runtime backend CLI/linker plumbing (`--backend`, `--qbe-arch`, `--target`, positional-arch removal, backend option validation) plus output controls (`--quiet`, `--no-color`) for both `build` and `test` subcommands.
 - `crates/oac/src/cli_output.rs` tests cover staged-row formatting/alignment, no-color ANSI suppression, quiet-mode silence, and failure-row rendering.
 - `crates/oac/src/llvm_backend.rs` tests cover direct resolved-IR compile smoke, struct copy-barrier/equality lowering (`calloc`/`memcpy`/`memcmp`), `assert` exit-code lowering (`242`), runtime-noop `prove` lowering, extern symbol mapping, and namespace-call mangling behavior.

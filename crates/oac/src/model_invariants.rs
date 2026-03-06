@@ -8,6 +8,10 @@ use crate::invariant_metadata::{
     InvariantBinding,
 };
 use crate::ir::{ModelInvariantDefinition, ResolvedProgram};
+use crate::verification_cache::{
+    VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
+    VerificationSummaryCandidate, VerificationSummaryInput, VerificationSummaryKind,
+};
 use crate::verification_checker::{
     checker_module_with_reachable_callees, sanitize_ident, summarize_solver_output,
 };
@@ -26,19 +30,44 @@ pub fn verify_model_invariants_with_qbe(
     qbe_module: &qbe::Module,
     target_dir: &Path,
 ) -> anyhow::Result<()> {
-    verify_model_invariants_with_qbe_with_profile(
+    verify_model_invariants_with_qbe_with_config(
         program,
         qbe_module,
         target_dir,
-        VerificationProfile::default(),
+        VerificationConfig::new(
+            VerificationProfile::default(),
+            VerificationCacheMode::Off,
+            target_dir.join("verification_cache"),
+            VerificationCacheWritePolicy::PersistUnsat,
+        ),
     )
 }
 
+#[allow(dead_code)]
 pub fn verify_model_invariants_with_qbe_with_profile(
     program: &ResolvedProgram,
     qbe_module: &qbe::Module,
     target_dir: &Path,
     profile: VerificationProfile,
+) -> anyhow::Result<()> {
+    verify_model_invariants_with_qbe_with_config(
+        program,
+        qbe_module,
+        target_dir,
+        VerificationConfig::new(
+            profile,
+            VerificationCacheMode::Off,
+            target_dir.join("verification_cache"),
+            VerificationCacheWritePolicy::PersistUnsat,
+        ),
+    )
+}
+
+pub(crate) fn verify_model_invariants_with_qbe_with_config(
+    program: &ResolvedProgram,
+    qbe_module: &qbe::Module,
+    target_dir: &Path,
+    config: VerificationConfig,
 ) -> anyhow::Result<()> {
     let mut model_invariants = program.model_invariants.clone();
     model_invariants.sort_by(|lhs, rhs| {
@@ -122,7 +151,34 @@ pub fn verify_model_invariants_with_qbe_with_profile(
             )
         })?;
 
-        match solve_chc_with_policy(&smt, profile) {
+        let summary = VerificationSummaryCandidate::from_inputs(
+            &invariant.function_name,
+            VerificationSummaryKind::ModelInvariantFunction,
+            &[VerificationSummaryInput {
+                kind: VerificationKind::ModelInvariant,
+                local_id: invariant.function_name.clone(),
+                smt: smt.clone(),
+            }],
+        );
+        let cached_summary_match = if config.cache_reads_enabled() {
+            summary.matches_persisted_unsat(&config.cache_root)?
+        } else {
+            false
+        };
+        if config.cache_trust_enabled() && cached_summary_match {
+            record_outcome(VerificationOutcomeRecord {
+                kind: VerificationKind::ModelInvariant,
+                obligation_id: invariant.function_name.clone(),
+                caller: invariant.function_name.clone(),
+                callee: None,
+                invariant_key: Some(invariant.key.clone()),
+                outcome: VerificationOutcome::Unsat,
+                fixture: None,
+            });
+            continue;
+        }
+
+        match solve_chc_with_policy(&smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::ModelInvariant,
@@ -133,6 +189,9 @@ pub fn verify_model_invariants_with_qbe_with_profile(
                     outcome: verification_outcome_from_solver_result(run.final_run.result),
                     fixture: None,
                 });
+                if !cached_summary_match && config.cache_writes_enabled() {
+                    summary.persist_unsat(&config.cache_root)?;
+                }
             }
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Sat => {
                 record_outcome(VerificationOutcomeRecord {
@@ -148,13 +207,20 @@ pub fn verify_model_invariants_with_qbe_with_profile(
                     summarize_solver_output(&run.final_run.stdout, &run.final_run.stderr)
                         .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                         .unwrap_or_default();
+                let cache_excerpt =
+                    if cached_summary_match && config.cache_mode == VerificationCacheMode::Strict {
+                        ", cached_summary_revalidation=mismatch"
+                    } else {
+                        ""
+                    };
                 failures.push(format!(
-                    "{} (function={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}{})",
+                    "{} (function={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}{}{})",
                     invariant.function_name,
                     invariant.function_name,
                     render_invariant_label(invariant),
                     qbe_filename,
                     smt_filename,
+                    cache_excerpt,
                     solver_excerpt
                 ));
             }
@@ -173,14 +239,21 @@ pub fn verify_model_invariants_with_qbe_with_profile(
                         .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                         .unwrap_or_default();
                 let attempts = format_attempts(&run.attempts);
+                let cache_excerpt =
+                    if cached_summary_match && config.cache_mode == VerificationCacheMode::Strict {
+                        ", cached_summary_revalidation=mismatch"
+                    } else {
+                        ""
+                    };
                 return Err(anyhow::anyhow!(
-                    "solver returned unknown for model invariant obligation {} (function={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}, attempts={}{}). verification is fail-closed until this obligation is proven unsat",
+                    "solver returned unknown for model invariant obligation {} (function={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}, attempts={}{}{}). verification is fail-closed until this obligation is proven unsat",
                     invariant.function_name,
                     invariant.function_name,
                     render_invariant_label(invariant),
                     qbe_filename,
                     smt_filename,
                     attempts,
+                    cache_excerpt,
                     solver_excerpt
                 ));
             }
@@ -430,9 +503,16 @@ fn fresh_unique_temp(base: &str, used: &mut HashSet<String>) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::fs;
 
-    use super::{verify_model_invariants_with_qbe, verify_model_invariants_with_qbe_with_profile};
+    use super::{
+        verify_model_invariants_with_qbe, verify_model_invariants_with_qbe_with_config,
+        verify_model_invariants_with_qbe_with_profile,
+    };
     use crate::ir::ResolvedProgram;
+    use crate::verification_cache::{
+        VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
+    };
     use crate::verification_profile::VerificationProfile;
     use crate::verification_solver::test_support;
     use crate::{ir, parser, qbe_backend, tokenizer};
@@ -456,6 +536,29 @@ mod tests {
         program
             .model_invariants
             .retain(|model| wanted.contains(model.display_name.as_str()));
+    }
+
+    fn config(root: &std::path::Path, mode: VerificationCacheMode) -> VerificationConfig {
+        VerificationConfig::new(
+            VerificationProfile::Candidate,
+            mode,
+            root.join("verification_cache"),
+            VerificationCacheWritePolicy::PersistUnsat,
+        )
+    }
+
+    fn model_cache_entry_count(cache_root: &std::path::Path, root_name: &str) -> usize {
+        let dir = cache_root
+            .join("model_invariant_function")
+            .join(crate::verification_checker::sanitize_ident(root_name));
+        if !dir.exists() {
+            return 0;
+        }
+        fs::read_dir(dir)
+            .expect("read model invariant cache dir")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .count()
     }
 
     #[test]
@@ -545,6 +648,104 @@ fun main() -> I32 {
                 let message = err.to_string();
                 assert!(message.contains("solver returned unknown for model invariant obligation"));
                 assert!(message.contains("attempts=[10s:unknown"));
+            },
+        );
+    }
+
+    #[test]
+    fn model_invariant_cache_trust_hit_skips_solver() {
+        let source = r#"
+invariant "pair is ordered" for (lhs: I32, rhs: I32) {
+	return lhs <= rhs
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#;
+        let mut program = resolve_program(source);
+        retain_model_invariants_by_display_name(&mut program, &["pair is ordered"]);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let config = config(tempdir.path(), VerificationCacheMode::Trust);
+        let function_name = program.model_invariants[0].function_name.clone();
+
+        test_support::with_mock_solver_runs(
+            vec![Ok(run(qbe_smt::SolverResult::Unsat, "unsat", ""))],
+            || {
+                verify_model_invariants_with_qbe_with_config(
+                    &program,
+                    &qbe_module,
+                    tempdir.path(),
+                    config.clone(),
+                )
+                .expect("first verification should populate the cache");
+            },
+        );
+        assert_eq!(
+            model_cache_entry_count(&config.cache_root, &function_name),
+            1
+        );
+
+        test_support::with_mock_solver_runs(vec![], || {
+            verify_model_invariants_with_qbe_with_config(
+                &program,
+                &qbe_module,
+                tempdir.path(),
+                config.clone(),
+            )
+            .expect("trusted cache hit should skip solver invocations");
+            assert!(
+                test_support::observed_timeouts().is_empty(),
+                "trusted model-invariant cache hit should not invoke the solver"
+            );
+        });
+    }
+
+    #[test]
+    fn model_invariant_strict_cache_mismatch_fails_closed() {
+        let source = r#"
+invariant "pair is ordered" for (lhs: I32, rhs: I32) {
+	return lhs <= rhs
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#;
+        let mut program = resolve_program(source);
+        retain_model_invariants_by_display_name(&mut program, &["pair is ordered"]);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let trust_config = config(tempdir.path(), VerificationCacheMode::Trust);
+
+        test_support::with_mock_solver_runs(
+            vec![Ok(run(qbe_smt::SolverResult::Unsat, "unsat", ""))],
+            || {
+                verify_model_invariants_with_qbe_with_config(
+                    &program,
+                    &qbe_module,
+                    tempdir.path(),
+                    trust_config.clone(),
+                )
+                .expect("first verification should populate the cache");
+            },
+        );
+
+        let strict_config = config(tempdir.path(), VerificationCacheMode::Strict);
+        test_support::with_mock_solver_runs(
+            vec![Ok(run(qbe_smt::SolverResult::Sat, "sat", ""))],
+            || {
+                let err = verify_model_invariants_with_qbe_with_config(
+                    &program,
+                    &qbe_module,
+                    tempdir.path(),
+                    strict_config.clone(),
+                )
+                .expect_err("strict cache mismatch must fail closed");
+                assert!(err
+                    .to_string()
+                    .contains("cached_summary_revalidation=mismatch"));
             },
         );
     }

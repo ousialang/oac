@@ -11,16 +11,17 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
    - CLI `build`/`test`/`bench-prove` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` and `main.rs::compile_source_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
 5. Resolve/type-check with `ir::resolve`.
 6. Lower to QBE with `qbe_backend::compile`.
-7. Verify `prove(...)` obligations with `prove::verify_prove_obligations_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
-8. Verify struct invariants with `struct_invariants::verify_struct_invariants_with_qbe` (SMT-based, fail-closed, consumes in-memory QBE module).
-9. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module).
-10. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
-11. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
+7. Prepare prove + struct-invariant checker artifacts, group them into ordinary-function summary candidates, and consult repo-local proof cache policy from `VerificationConfig` / `--proof-cache`.
+8. Verify `prove(...)` obligations with `prove::verify_prepared_prove_obligations` (SMT-based, fail-closed, trust mode skips solver only when the combined ordinary-function summary matches a cached `unsat` entry).
+9. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as prove checking); after both stages succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
+10. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe_with_config` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module, and uses one summary candidate per model-invariant checker root).
+11. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
+12. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
     - QBE runtime backend: emit `target/oac/ir.qbe`, run `qbe`, emit `target/oac/assembly.s`.
     - LLVM runtime backend: emit `target/oac/ir.ll`, run `clang -x ir -c`, emit `target/oac/object.o`.
-12. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
-13. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
-14. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
+13. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+14. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+15. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -34,6 +35,7 @@ Artifacts emitted during build:
 - `target/oac/struct_invariants/site_*.smt2` (when invariant obligations exist)
 - `target/oac/model_invariants/site_*.qbe` (generated checker programs, when model-invariant obligations exist)
 - `target/oac/model_invariants/site_*.smt2` (when model-invariant obligations exist)
+- `target/oac/verification_cache/{ordinary_function,model_invariant_function}/.../*.json` (repo-local content-hash-keyed `unsat` proof summaries when cache writes are enabled)
 - `target/oac/assembly.s`
 - `target/oac/object.o` (LLVM runtime backend)
 - `target/oac/app`
@@ -63,6 +65,7 @@ Artifacts emitted during test runs:
 - `target/oac/test/object.o` (LLVM runtime backend)
 - `target/oac/test/app`
 - prove/invariant debug artifacts under `target/oac/test/prove/`, `target/oac/test/struct_invariants/`, and `target/oac/test/model_invariants/` when obligations exist
+- shared repo-local proof summaries under `target/oac/verification_cache/` when `--proof-cache` is not `off`
 
 ## End-to-End Bench Flow
 
@@ -250,8 +253,9 @@ Important enforced invariants include:
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
 - `build`/`test` backend flags now follow: `oac build <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>] [--quiet] [--no-color]` and `oac test <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>] [--quiet] [--no-color]`.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
-- `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline] [--strict-outcome-gate]`).
+- `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline] [--strict-outcome-gate] [--proof-cache trust|strict|off]`).
 - `--strict-outcome-gate` runs baseline/candidate verification-outcome captures over the selected fixture corpus and fails on forbidden transitions (`sat/unsat` drift or obligation-key set drift), writing artifacts to `target/oac/verification_outcomes/`.
+- `--proof-cache` defaults to `strict` for `bench-prove`, and benchmark-run cache policy is read-only so quick/full suite timings remain live-solve measurements even when cache reads are enabled.
 - `lsp.rs` runs JSON-RPC over stdio, handles `initialize`/`shutdown`/`exit`, text document open/change/save/close notifications, and requests for definition/hover/document symbols/references/completion.
 - LSP import crawling for project-symbol indexing now reuses `flat_imports::validate_same_dir_oa_import(...)` so editor-side import acceptance matches compiler import semantics.
 - Symbol indexing includes `extern fun` declarations in document symbols.

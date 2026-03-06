@@ -10,6 +10,10 @@ use crate::invariant_metadata::{
 };
 use crate::ir::{ResolvedProgram, TypeDef};
 use crate::parser::Statement;
+use crate::verification_cache::{
+    VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
+    VerificationSummaryInput,
+};
 use crate::verification_checker::{
     checker_module_with_reachable_callees, rewrite_returns_to_zero, sanitize_ident,
     should_assume_main_argc_non_negative, summarize_solver_output,
@@ -29,11 +33,16 @@ pub fn verify_struct_invariants(
     target_dir: &Path,
 ) -> anyhow::Result<()> {
     let qbe_module = crate::qbe_backend::compile(program.clone());
-    verify_struct_invariants_with_qbe_with_profile(
+    verify_struct_invariants_with_qbe_with_config(
         program,
         &qbe_module,
         target_dir,
-        VerificationProfile::default(),
+        VerificationConfig::new(
+            VerificationProfile::default(),
+            VerificationCacheMode::Off,
+            target_dir.join("verification_cache"),
+            VerificationCacheWritePolicy::PersistUnsat,
+        ),
     )
 }
 
@@ -43,25 +52,86 @@ pub fn verify_struct_invariants_with_qbe(
     qbe_module: &qbe::Module,
     target_dir: &Path,
 ) -> anyhow::Result<()> {
-    verify_struct_invariants_with_qbe_with_profile(
+    verify_struct_invariants_with_qbe_with_config(
         program,
         qbe_module,
         target_dir,
-        VerificationProfile::default(),
+        VerificationConfig::new(
+            VerificationProfile::default(),
+            VerificationCacheMode::Off,
+            target_dir.join("verification_cache"),
+            VerificationCacheWritePolicy::PersistUnsat,
+        ),
     )
 }
 
+#[allow(dead_code)]
 pub fn verify_struct_invariants_with_qbe_with_profile(
     program: &ResolvedProgram,
     qbe_module: &qbe::Module,
     target_dir: &Path,
     profile: VerificationProfile,
 ) -> anyhow::Result<()> {
+    verify_struct_invariants_with_qbe_with_config(
+        program,
+        qbe_module,
+        target_dir,
+        VerificationConfig::new(
+            profile,
+            VerificationCacheMode::Off,
+            target_dir.join("verification_cache"),
+            VerificationCacheWritePolicy::PersistUnsat,
+        ),
+    )
+}
+
+pub(crate) fn verify_struct_invariants_with_qbe_with_config(
+    program: &ResolvedProgram,
+    qbe_module: &qbe::Module,
+    target_dir: &Path,
+    config: VerificationConfig,
+) -> anyhow::Result<()> {
+    let prepared =
+        prepare_struct_invariant_obligations_with_config(program, qbe_module, target_dir, &config)?;
+    verify_prepared_struct_invariant_obligations(&prepared, &config, &HashSet::new())
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedStructInvariantSite {
+    site: ObligationSite,
+    checker_function: qbe::Function,
+    checker_module: qbe::Module,
+    assumptions: qbe_smt::ModuleAssumptions,
+    qbe_filename: String,
+    smt_filename: String,
+    smt: String,
+}
+
+impl PreparedStructInvariantSite {
+    pub(crate) fn caller(&self) -> &str {
+        &self.site.caller
+    }
+
+    pub(crate) fn summary_input(&self) -> VerificationSummaryInput {
+        VerificationSummaryInput {
+            kind: VerificationKind::StructInvariant,
+            local_id: self.site.id.clone(),
+            smt: self.smt.clone(),
+        }
+    }
+}
+
+pub(crate) fn prepare_struct_invariant_obligations_with_config(
+    program: &ResolvedProgram,
+    qbe_module: &qbe::Module,
+    target_dir: &Path,
+    _config: &VerificationConfig,
+) -> anyhow::Result<Vec<PreparedStructInvariantSite>> {
     let invariant_by_struct = discover_invariants(program)?;
     let reachable = reachable_user_functions(program, "main")?;
     let sites = collect_obligation_sites(program, &reachable, &invariant_by_struct)?;
     if sites.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let reachable_names = reachable.iter().cloned().collect::<BTreeSet<_>>();
     let arg_invariant_assumptions = build_function_arg_invariant_assumptions_for_names(
@@ -76,14 +146,77 @@ pub fn verify_struct_invariants_with_qbe_with_profile(
         &arg_invariant_assumptions,
         "struct invariant verification",
     )?;
-    solve_obligations_qbe(
-        program,
-        &qbe_module,
-        &sites,
-        target_dir,
-        &invariant_by_struct,
-        profile,
-    )
+    let verification_dir = target_dir.join("struct_invariants");
+    std::fs::create_dir_all(&verification_dir).with_context(|| {
+        format!(
+            "failed to create struct invariant verification directory {}",
+            verification_dir.display()
+        )
+    })?;
+
+    let function_map = qbe_module
+        .functions
+        .iter()
+        .map(|function| (function.name.clone(), function.clone()))
+        .collect::<HashMap<_, _>>();
+
+    let mut prepared = Vec::new();
+    for site in sites {
+        let (checker_module, checker_function, assumptions) =
+            build_site_checker_module(program, &invariant_by_struct, &function_map, &site)?;
+        let checker_qbe = checker_module.to_string();
+        let site_stem = format!("site_{}", sanitize_ident(&site.id));
+        let qbe_filename = format!("{}.qbe", site_stem);
+        let smt_filename = format!("{}.smt2", site_stem);
+
+        let qbe_path = verification_dir.join(&qbe_filename);
+        std::fs::write(&qbe_path, &checker_qbe).with_context(|| {
+            format!("failed to write checker QBE program {}", qbe_path.display())
+        })?;
+
+        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            &checker_module,
+            "main",
+            &qbe_smt::EncodeOptions {
+                assume_main_argc_non_negative: should_assume_main_argc_non_negative(
+                    &site.caller,
+                    &checker_function,
+                ),
+                first_arg_i32_range: None,
+            },
+            &assumptions,
+        )
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "failed to encode checker QBE for {}: {}\n{}",
+                site.id,
+                err,
+                err.render_report_plain("invariant-checker")
+            )
+        })?;
+
+        let smt_path = verification_dir.join(&smt_filename);
+        std::fs::write(&smt_path, &smt)
+            .with_context(|| format!("failed to write SMT obligation {}", smt_path.display()))?;
+
+        prepared.push(PreparedStructInvariantSite {
+            site,
+            checker_function,
+            checker_module,
+            assumptions,
+            qbe_filename,
+            smt_filename,
+            smt,
+        });
+    }
+
+    Ok(prepared)
+}
+
+fn discover_invariants(
+    program: &ResolvedProgram,
+) -> anyhow::Result<HashMap<String, Vec<InvariantBinding>>> {
+    discover_struct_invariant_bindings(program)
 }
 
 #[derive(Clone, Debug)]
@@ -97,12 +230,6 @@ struct ObligationSite {
     invariant_fn: String,
     invariant_display_name: String,
     invariant_identifier: Option<String>,
-}
-
-fn discover_invariants(
-    program: &ResolvedProgram,
-) -> anyhow::Result<HashMap<String, Vec<InvariantBinding>>> {
-    discover_struct_invariant_bindings(program)
 }
 
 fn collect_obligation_sites(
@@ -230,76 +357,38 @@ fn collect_call_nodes_from_statement(
     );
 }
 
-fn solve_obligations_qbe(
-    program: &ResolvedProgram,
-    qbe_module: &qbe::Module,
-    sites: &[ObligationSite],
-    target_dir: &Path,
-    invariant_by_struct: &HashMap<String, Vec<InvariantBinding>>,
-    profile: VerificationProfile,
+pub(crate) fn verify_prepared_struct_invariant_obligations(
+    prepared_sites: &[PreparedStructInvariantSite],
+    config: &VerificationConfig,
+    cached_roots: &HashSet<String>,
 ) -> anyhow::Result<()> {
-    let verification_dir = target_dir.join("struct_invariants");
-    std::fs::create_dir_all(&verification_dir).with_context(|| {
-        format!(
-            "failed to create struct invariant verification directory {}",
-            verification_dir.display()
-        )
-    })?;
-
-    let function_map = qbe_module
-        .functions
-        .iter()
-        .map(|function| (function.name.clone(), function.clone()))
-        .collect::<HashMap<_, _>>();
-
     let mut failures = Vec::new();
 
-    for site in sites {
-        let (checker_module, checker_function, assumptions) =
-            build_site_checker_module(program, invariant_by_struct, &function_map, site)?;
-        let checker_qbe = checker_module.to_string();
-        let site_stem = format!("site_{}", sanitize_ident(&site.id));
-        let qbe_filename = format!("{}.qbe", site_stem);
-        let smt_filename = format!("{}.smt2", site_stem);
+    for prepared in prepared_sites {
+        if config.cache_trust_enabled() && cached_roots.contains(prepared.caller()) {
+            record_outcome(VerificationOutcomeRecord {
+                kind: VerificationKind::StructInvariant,
+                obligation_id: prepared.site.id.clone(),
+                caller: prepared.site.caller.clone(),
+                callee: Some(prepared.site.callee.clone()),
+                invariant_key: Some(prepared.site.invariant_key.clone()),
+                outcome: VerificationOutcome::Unsat,
+                fixture: None,
+            });
+            continue;
+        }
 
-        let qbe_path = verification_dir.join(&qbe_filename);
-        std::fs::write(&qbe_path, &checker_qbe).with_context(|| {
-            format!("failed to write checker QBE program {}", qbe_path.display())
-        })?;
+        let strict_cache_mismatch = config.cache_mode == VerificationCacheMode::Strict
+            && cached_roots.contains(prepared.caller());
 
-        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
-            &checker_module,
-            "main",
-            &qbe_smt::EncodeOptions {
-                assume_main_argc_non_negative: should_assume_main_argc_non_negative(
-                    &site.caller,
-                    &checker_function,
-                ),
-                first_arg_i32_range: None,
-            },
-            &assumptions,
-        )
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "failed to encode checker QBE for {}: {}\n{}",
-                site.id,
-                err,
-                err.render_report_plain("invariant-checker")
-            )
-        })?;
-
-        let smt_path = verification_dir.join(&smt_filename);
-        std::fs::write(&smt_path, &smt)
-            .with_context(|| format!("failed to write SMT obligation {}", smt_path.display()))?;
-
-        match solve_chc_with_policy(&smt, profile) {
+        match solve_chc_with_policy(&prepared.smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::StructInvariant,
-                    obligation_id: site.id.clone(),
-                    caller: site.caller.clone(),
-                    callee: Some(site.callee.clone()),
-                    invariant_key: Some(site.invariant_key.clone()),
+                    obligation_id: prepared.site.id.clone(),
+                    caller: prepared.site.caller.clone(),
+                    callee: Some(prepared.site.callee.clone()),
+                    invariant_key: Some(prepared.site.invariant_key.clone()),
                     outcome: verification_outcome_from_solver_result(run.final_run.result),
                     fixture: None,
                 });
@@ -307,53 +396,62 @@ fn solve_obligations_qbe(
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Sat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::StructInvariant,
-                    obligation_id: site.id.clone(),
-                    caller: site.caller.clone(),
-                    callee: Some(site.callee.clone()),
-                    invariant_key: Some(site.invariant_key.clone()),
+                    obligation_id: prepared.site.id.clone(),
+                    caller: prepared.site.caller.clone(),
+                    callee: Some(prepared.site.callee.clone()),
+                    invariant_key: Some(prepared.site.invariant_key.clone()),
                     outcome: verification_outcome_from_solver_result(run.final_run.result),
                     fixture: None,
                 });
-                let witness = sat_cfg_witness_summary(&checker_function)
+                let witness = sat_cfg_witness_summary(&prepared.checker_function)
                     .unwrap_or_else(|| "unavailable".to_string());
                 let solver_excerpt =
                     summarize_solver_output(&run.final_run.stdout, &run.final_run.stderr)
                         .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                         .unwrap_or_default();
                 let program_input = try_find_program_input_counterexample(
-                    site,
-                    &checker_function,
-                    &checker_module,
-                    &assumptions,
+                    &prepared.site,
+                    &prepared.checker_function,
+                    &prepared.checker_module,
+                    &prepared.assumptions,
                 )
                 .map(|input| format!(", program_input=\"{}\"", escape_diagnostic_value(&input)))
                 .unwrap_or_default();
-                let invariant_label = if let Some(identifier) = &site.invariant_identifier {
-                    format!("{} (id={})", site.invariant_display_name, identifier)
+                let invariant_label = if let Some(identifier) = &prepared.site.invariant_identifier
+                {
+                    format!(
+                        "{} (id={})",
+                        prepared.site.invariant_display_name, identifier
+                    )
                 } else {
-                    site.invariant_display_name.clone()
+                    prepared.site.invariant_display_name.clone()
+                };
+                let cache_excerpt = if strict_cache_mismatch {
+                    ", cached_summary_revalidation=mismatch"
+                } else {
+                    ""
                 };
                 failures.push(format!(
                     "{} (caller={}, callee={}, struct={}, invariant=\"{}\", witness={}, qbe_artifact={}, smt_artifact={}{}{})",
-                    site.id,
-                    site.caller,
-                    site.callee,
-                    site.struct_name,
+                    prepared.site.id,
+                    prepared.site.caller,
+                    prepared.site.callee,
+                    prepared.site.struct_name,
                     invariant_label,
                     witness,
-                    qbe_filename,
-                    smt_filename,
+                    prepared.qbe_filename,
+                    prepared.smt_filename,
                     program_input,
-                    solver_excerpt
+                    format!("{cache_excerpt}{solver_excerpt}")
                 ));
             }
             Ok(run) => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::StructInvariant,
-                    obligation_id: site.id.clone(),
-                    caller: site.caller.clone(),
-                    callee: Some(site.callee.clone()),
-                    invariant_key: Some(site.invariant_key.clone()),
+                    obligation_id: prepared.site.id.clone(),
+                    caller: prepared.site.caller.clone(),
+                    callee: Some(prepared.site.callee.clone()),
+                    invariant_key: Some(prepared.site.invariant_key.clone()),
                     outcome: verification_outcome_from_solver_result(run.final_run.result),
                     fixture: None,
                 });
@@ -362,28 +460,38 @@ fn solve_obligations_qbe(
                         .map(|excerpt| format!(", solver_excerpt={excerpt}"))
                         .unwrap_or_default();
                 let attempts = format_attempts(&run.attempts);
-                let invariant_label = if let Some(identifier) = &site.invariant_identifier {
-                    format!("{} (id={})", site.invariant_display_name, identifier)
+                let invariant_label = if let Some(identifier) = &prepared.site.invariant_identifier
+                {
+                    format!(
+                        "{} (id={})",
+                        prepared.site.invariant_display_name, identifier
+                    )
                 } else {
-                    site.invariant_display_name.clone()
+                    prepared.site.invariant_display_name.clone()
+                };
+                let cache_excerpt = if strict_cache_mismatch {
+                    ", cached_summary_revalidation=mismatch"
+                } else {
+                    ""
                 };
                 return Err(anyhow::anyhow!(
-                    "solver returned unknown for struct invariant obligation {} (caller={}, callee={}, struct={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}, attempts={}{}). verification is fail-closed until this obligation is proven unsat",
-                    site.id,
-                    site.caller,
-                    site.callee,
-                    site.struct_name,
+                    "solver returned unknown for struct invariant obligation {} (caller={}, callee={}, struct={}, invariant=\"{}\", qbe_artifact={}, smt_artifact={}, attempts={}{}{}). verification is fail-closed until this obligation is proven unsat",
+                    prepared.site.id,
+                    prepared.site.caller,
+                    prepared.site.callee,
+                    prepared.site.struct_name,
                     invariant_label,
-                    qbe_filename,
-                    smt_filename,
+                    prepared.qbe_filename,
+                    prepared.smt_filename,
                     attempts,
+                    cache_excerpt,
                     solver_excerpt
                 ));
             }
             Err(err) => {
                 return Err(anyhow::anyhow!(
                     "failed to solve struct invariant obligation {}: {}\n{}",
-                    site.id,
+                    prepared.site.id,
                     err,
                     err.render_report_plain("invariant-obligation")
                 ))

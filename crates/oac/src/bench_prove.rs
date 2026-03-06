@@ -7,13 +7,14 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticBundle, DiagnosticStage};
+use crate::verification_cache::{VerificationCacheMode, VerificationCacheWritePolicy};
 use crate::verification_outcomes::{
     begin_outcome_collection, end_outcome_collection, forbidden_transition_deltas,
     with_fixture_context,
 };
 use crate::verification_profile::VerificationProfile;
 use crate::{
-    compile_source_with_artifacts, compile_source_with_artifacts_with_profile, CodegenOptions,
+    compile_source_with_artifacts_with_config, verification_config_for_repo_cache, CodegenOptions,
     CompileSourceCodes, FrontendPipelineCodes,
 };
 
@@ -42,6 +43,8 @@ pub struct BenchProveOpts {
     pub update_baseline: bool,
     #[clap(long, default_value_t = false)]
     pub strict_outcome_gate: bool,
+    #[clap(long = "proof-cache", value_enum, default_value_t = VerificationCacheMode::Strict)]
+    pub proof_cache: VerificationCacheMode,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -234,7 +237,15 @@ pub(crate) fn run(
     current_dir: &Path,
     opts: BenchProveOpts,
 ) -> Result<(), CompilerDiagnosticBundle> {
-    let execution = run_with_runner(current_dir, &opts, run_fixture_iteration).map_err(|err| {
+    let proof_cache = opts.proof_cache;
+    let execution = run_with_runner(
+        current_dir,
+        &opts,
+        |dir, fixture, iteration_index, runs_root| {
+            run_fixture_iteration(dir, fixture, iteration_index, runs_root, proof_cache)
+        },
+    )
+    .map_err(|err| {
         CompilerDiagnosticBundle::single(
             CompilerDiagnostic::new(
                 "OAC-BENCH-001",
@@ -578,13 +589,18 @@ fn capture_verification_outcomes_for_profile(
                 .with_context(|| format!("failed to create {}", fixture_dir.display()))?;
 
             let _result = with_fixture_context(Some(fixture.id), || {
-                compile_source_with_artifacts_with_profile(
+                compile_source_with_artifacts_with_config(
                     &source_path,
                     &fixture_dir,
                     CodegenOptions::qbe_default(),
                     "app",
                     bench_compile_codes(),
-                    profile,
+                    verification_config_for_repo_cache(
+                        current_dir,
+                        profile,
+                        VerificationCacheMode::Strict,
+                        VerificationCacheWritePolicy::ReadOnly,
+                    ),
                 )
             });
         }
@@ -612,6 +628,7 @@ fn run_fixture_iteration(
     fixture: &FixtureSpec,
     iteration_index: usize,
     runs_root: &Path,
+    proof_cache: VerificationCacheMode,
 ) -> anyhow::Result<IterationSample> {
     let source_path = current_dir.join(fixture.source);
     let fixture_dir = runs_root
@@ -633,12 +650,18 @@ fn run_fixture_iteration(
     })?;
 
     let started = Instant::now();
-    let compile_result = compile_source_with_artifacts(
+    let compile_result = compile_source_with_artifacts_with_config(
         &source_path,
         &fixture_dir,
         CodegenOptions::qbe_default(),
         "app",
         bench_compile_codes(),
+        verification_config_for_repo_cache(
+            current_dir,
+            VerificationProfile::Candidate,
+            proof_cache,
+            VerificationCacheWritePolicy::ReadOnly,
+        ),
     );
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let outcome = match compile_result {
@@ -996,6 +1019,7 @@ mod tests {
         BenchProveOpts, BenchSuite, IterationOutcome, IterationSample, ProveBenchBaseline,
         RegressionThresholds,
     };
+    use crate::verification_cache::VerificationCacheMode;
 
     fn sample_success(elapsed_ms: u64) -> IterationSample {
         IterationSample {
@@ -1122,6 +1146,7 @@ mod tests {
             output: Some(output_path.clone()),
             update_baseline: false,
             strict_outcome_gate: false,
+            proof_cache: VerificationCacheMode::Strict,
         };
 
         let result = run_with_runner(dir.path(), &opts, |_current_dir, fixture, _iter, _root| {
@@ -1156,6 +1181,7 @@ mod tests {
             output: Some(output_path),
             update_baseline: true,
             strict_outcome_gate: false,
+            proof_cache: VerificationCacheMode::Strict,
         };
 
         run_with_runner(dir.path(), &opts, |_current_dir, fixture, _iter, _root| {
