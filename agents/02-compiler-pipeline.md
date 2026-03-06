@@ -9,7 +9,9 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 3. Parse with `parser::parse`.
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
    - CLI `build`/`test`/`bench-prove` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` and `main.rs::compile_source_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
-5. Resolve/type-check with `ir::resolve`.
+5. Execute comptime applies with `comptime::execute_comptime_applies`.
+   - The evaluator sees the already-flat-merged user/imported AST plus a preloaded stdlib comptime context from `crates/oac/src/std/std.oa`, so user `comptime apply` can call both imported user helpers and stdlib comptime helpers before `resolve()`.
+6. Resolve/type-check with `ir::resolve`.
    - After the initial function-body type check, resolve normalizes receiver method syntax (`value.helper(...)`) into ordinary calls (`TypeName__helper(value, ...)`) or enum-constructor postfix forms before ownership rewriting, purity checks, call indexing, and codegen.
    - The same normalization pass also rewrites non-builtin infix operators into ordinary calls to resolved operator-trait impls (`Addition`, `Subtraction`, `Multiplication`, `Division`, `Equality`, `Comparison`), while keeping compiler-owned primitive scalar operators as builtin `BinOp` nodes.
 6. Lower to QBE with `qbe_backend::compile`.
@@ -122,8 +124,11 @@ Operator precedence is explicitly encoded in parser.
 ## Semantic Resolution (`ir.rs`)
 
 `resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_comptime.oa`, `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
 - deterministic comptime evaluation, including checked `I32` arithmetic in `comptime.rs` (`+/-/*` overflow and `/` divide-by-zero or `MIN / -1` now produce deterministic comptime errors instead of Rust panics)
+- comptime semantic reflection builtins over `Type`, now covering both struct metadata (`is_struct`, `as_struct_opt`, `struct_field_count`, `struct_field_at`, `field_name`, `field_type`) and enum metadata (`is_enum`, `as_enum_opt`, `enum_variant_count`, `enum_variant_at`, `variant_name`, `variant_payload_type_opt`) together with existing semantic helpers (`type_name`, `resolve_type`, `expr_meta_opt`, `definition_location_opt`, `is_some`, `unwrap`, `concat`)
+- comptime `DeclSet` emission builtins for derived declarations, now including incremental enum construction (`declset_new`, `declset_add_empty_enum`, `declset_add_enum_tag_variant`, `declset_add_enum_payload_variant`) alongside existing derived-struct/invariant emitters
+- stdlib comptime helpers are visible during user apply execution because `execute_comptime_applies` preloads stdlib comptime functions/types into its evaluation world without mutating the user AST ahead of `resolve`
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
 - binary-operator resolution that first keeps compiler-owned primitive scalar behavior builtin, then falls back to resolved operator-trait impls for std/user types, with struct/tag-only-enum equality fallback and tagged-payload-enum equality rejection unless `Equality` is implemented
 - generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages, including recursive expansion of local generic-body specializations after parent type substitutions are applied.
@@ -178,6 +183,7 @@ Important enforced invariants include:
 - declaration-based stdlib invariants (for example `AsciiChar` range checks over wrapped `Char.code`) are synthesized and registered during resolve like user-declared invariants
 - consistent return types inside a function
 - `main` must be either `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`
+- semantic reflection/emission builtins remain comptime-only: runtime functions cannot call either the `DeclSet` emitters or any of the struct/enum/type metadata helpers
 - invariant declarations support one or more parameters in `for (...)` for both single and grouped syntax; empty parameter lists are parser errors.
 - arity-sensitive invariant semantics are enforced in resolve:
   - unary (`for (v: StructType)`) invariants remain struct invariants and synthesize `__struct__<TypeName>__invariant__<key>`
