@@ -14,7 +14,10 @@ enum String {
 
 invariant make_bytes_normalizes_len_and_keeps_ptr "String.make_bytes must keep ptr and normalize len" for (ptr: PtrInt, len: I32) {
 	b = String.make_bytes(ptr, len)
-	return b.ptr == ptr && b.len == String.normalize_len(len)
+	if len < 0 {
+		return b.ptr == ptr && b.len == 0
+	}
+	return b.ptr == ptr && b.len == len
 }
 
 invariant normalize_len_is_non_negative "normalize_len must never produce a negative value" for (x: I32, y: I32) {
@@ -31,7 +34,10 @@ namespace String {
 	}
 
 	fun make_bytes(ptr: PtrInt, len: I32) -> Bytes {
-		safe_len = String.normalize_len(len)
+		safe_len = len
+		if safe_len < 0 {
+			safe_len = 0
+		}
 
 		return Bytes struct {
 			ptr: ptr,
