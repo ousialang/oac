@@ -15,8 +15,8 @@ use crate::verification_cache::{
     VerificationSummaryInput,
 };
 use crate::verification_checker::{
-    checker_module_with_reachable_callees, rewrite_returns_to_zero, sanitize_ident,
-    should_assume_main_argc_non_negative, summarize_solver_output,
+    checker_module_with_reachable_callees, prune_function_to_target, rewrite_returns_to_zero,
+    sanitize_ident, should_assume_main_argc_non_negative, summarize_solver_output,
 };
 use crate::verification_cycles::{
     reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
@@ -819,10 +819,10 @@ fn inject_site_check_and_return(
     site: &ObligationSite,
 ) -> anyhow::Result<()> {
     let mut call_count = 0usize;
-    let mut found = false;
     let mut used_temps = collect_temps_in_function(function);
+    let mut target = None::<(usize, usize, qbe::Value, qbe::Type)>;
 
-    for block in &mut function.blocks {
+    for (block_index, block) in function.blocks.iter().enumerate() {
         for item_index in 0..block.items.len() {
             let call_info = match &block.items[item_index] {
                 qbe::BlockItem::Statement(qbe::Statement::Assign(
@@ -873,56 +873,53 @@ fn inject_site_check_and_return(
                         site.id
                     ));
                 };
-
-                let inv_temp = fresh_unique_temp("si_inv", &mut used_temps);
-                let bad_temp = fresh_unique_temp("si_bad", &mut used_temps);
-
-                let mut new_items = block.items[..=item_index].to_vec();
-                new_items.push(qbe::BlockItem::Statement(qbe::Statement::Assign(
-                    qbe::Value::Temporary(inv_temp.clone()),
-                    qbe::Type::Word,
-                    qbe::Instr::Call(
-                        site.invariant_fn.clone(),
-                        vec![(dest_ty.clone(), dest.clone())],
-                        None,
-                    ),
-                )));
-                new_items.push(qbe::BlockItem::Statement(qbe::Statement::Assign(
-                    qbe::Value::Temporary(bad_temp.clone()),
-                    qbe::Type::Word,
-                    qbe::Instr::Cmp(
-                        qbe::Type::Word,
-                        qbe::Cmp::Eq,
-                        qbe::Value::Temporary(inv_temp),
-                        qbe::Value::Const(0),
-                    ),
-                )));
-                new_items.push(qbe::BlockItem::Statement(qbe::Statement::Volatile(
-                    qbe::Instr::Ret(Some(qbe::Value::Temporary(bad_temp))),
-                )));
-                block.items = new_items;
-                found = true;
+                target = Some((block_index, item_index, dest, dest_ty));
                 break;
             }
 
             call_count += 1;
         }
 
-        if found {
+        if target.is_some() {
             break;
         }
     }
 
-    if found {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
+    let Some((target_block_index, target_item_index, dest, dest_ty)) = target else {
+        return Err(anyhow::anyhow!(
             "failed to locate QBE call for struct invariant site {} (callee={}, ordinal={})",
             site.id,
             site.callee,
             site.callee_call_ordinal
-        ))
-    }
+        ));
+    };
+
+    prune_function_to_target(function, target_block_index);
+
+    let inv_temp = fresh_unique_temp("si_inv", &mut used_temps);
+    let bad_temp = fresh_unique_temp("si_bad", &mut used_temps);
+    let block = &mut function.blocks[target_block_index];
+    let mut new_items = block.items[..=target_item_index].to_vec();
+    new_items.push(qbe::BlockItem::Statement(qbe::Statement::Assign(
+        qbe::Value::Temporary(inv_temp.clone()),
+        qbe::Type::Word,
+        qbe::Instr::Call(site.invariant_fn.clone(), vec![(dest_ty, dest)], None),
+    )));
+    new_items.push(qbe::BlockItem::Statement(qbe::Statement::Assign(
+        qbe::Value::Temporary(bad_temp.clone()),
+        qbe::Type::Word,
+        qbe::Instr::Cmp(
+            qbe::Type::Word,
+            qbe::Cmp::Eq,
+            qbe::Value::Temporary(inv_temp),
+            qbe::Value::Const(0),
+        ),
+    )));
+    new_items.push(qbe::BlockItem::Statement(qbe::Statement::Volatile(
+        qbe::Instr::Ret(Some(qbe::Value::Temporary(bad_temp))),
+    )));
+    block.items = new_items;
+    Ok(())
 }
 
 fn collect_temps_in_function(function: &qbe::Function) -> HashSet<String> {
@@ -1531,6 +1528,65 @@ fun main() -> I32 {
             &assumptions,
         )
         .expect("while-with-site checker should encode in qbe-native flow");
+    }
+
+    #[test]
+    fn struct_checker_prunes_callees_reachable_only_after_target_site() {
+        let program = resolve_program(
+            r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+fun live(v: I32) -> I32 {
+	return v + 1
+}
+
+fun dead(v: I32) -> I32 {
+	return v + 2
+}
+
+fun make_counter(v: I32) -> Counter {
+	return Counter struct { value: v, }
+}
+
+fun helper() -> I32 {
+	x = live(1)
+	c = make_counter(x)
+	y = dead(x)
+	return y
+}
+
+fun main() -> I32 {
+	return helper()
+}
+"#,
+        );
+
+        let (sites, function_map, invariants) =
+            site_function_map(&program).expect("build sites and qbe");
+        assert_eq!(sites.len(), 1);
+        let (checker_module, _checker, _assumptions) =
+            build_site_checker_module(&program, &invariants, &function_map, &sites[0])
+                .expect("build site checker");
+        let checker_names = checker_module
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            checker_names.contains(&"live"),
+            "live helper should be retained"
+        );
+        assert!(
+            !checker_names.contains(&"dead"),
+            "dead helper should be pruned from checker module"
+        );
     }
 
     #[test]

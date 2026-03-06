@@ -423,12 +423,12 @@ mod tests {
         .expect("encodes");
 
         assert!(smt.contains("(distinct (select regs (_ bv0 32)) (_ bv0 64))"));
-        assert!(smt.contains(
-            "(f0_pc_1 regs_next mem_next heap_next exit_next pred_next in_regs in_mem in_heap)"
-        ));
-        assert!(smt.contains(
-            "(f0_pc_2 regs_next mem_next heap_next exit_next pred_next in_regs in_mem in_heap)"
-        ));
+        assert!(
+            smt.contains("(f0_pc_1 regs_next mem_next heap_next exit_next in_regs in_mem in_heap)")
+        );
+        assert!(
+            smt.contains("(f0_pc_2 regs_next mem_next heap_next exit_next in_regs in_mem in_heap)")
+        );
     }
 
     #[test]
@@ -461,10 +461,10 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(f0_pc_2 regs mem heap exit pred in_regs in_mem in_heap)"));
-        assert!(smt.contains(
-            "(f0_pc_1 regs_next mem_next heap_next exit_next pred_next in_regs in_mem in_heap)"
-        ));
+        assert!(smt.contains("(f0_pc_2 regs mem heap exit in_regs in_mem in_heap)"));
+        assert!(
+            smt.contains("(f0_pc_1 regs_next mem_next heap_next exit_next in_regs in_mem in_heap)")
+        );
     }
 
     #[test]
@@ -1680,6 +1680,114 @@ mod tests {
 
         assert!(smt.contains("(or (= pred (_ bv1 32)) (= pred (_ bv2 32)))"));
         assert!(smt.contains("(ite (= pred (_ bv1 32))"));
+        assert!(smt.contains(
+            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+        ));
+    }
+
+    #[test]
+    fn omits_pred_from_pc_relations_when_function_has_no_phi() {
+        let function = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign("y", Type::Word, Instr::Add(temp("x"), Value::Const(1))),
+                    volatile(Instr::Ret(Some(temp("y")))),
+                ],
+            )],
+        );
+
+        let smt = encode_single_function(&function, &EncodeOptions::default()).expect("encodes");
+
+        assert!(smt.contains(
+            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
+        ));
+        assert!(!smt.contains(
+            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+        ));
+    }
+
+    #[test]
+    fn mixed_module_keeps_pred_only_for_phi_bearing_functions() {
+        let helper = Function {
+            linkage: Linkage::default(),
+            name: "helper".to_string(),
+            arguments: vec![(Type::Word, temp("cond"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![
+                block(
+                    "entry",
+                    vec![volatile(Instr::Jnz(
+                        temp("cond"),
+                        "left".to_string(),
+                        "right".to_string(),
+                    ))],
+                ),
+                block(
+                    "left",
+                    vec![
+                        assign("x_left", Type::Word, Instr::Copy(Value::Const(1))),
+                        volatile(Instr::Jmp("join".to_string())),
+                    ],
+                ),
+                block(
+                    "right",
+                    vec![
+                        assign("x_right", Type::Word, Instr::Copy(Value::Const(2))),
+                        volatile(Instr::Jmp("join".to_string())),
+                    ],
+                ),
+                block(
+                    "join",
+                    vec![
+                        assign(
+                            "x",
+                            Type::Word,
+                            Instr::Phi(
+                                "left".to_string(),
+                                temp("x_left"),
+                                "right".to_string(),
+                                temp("x_right"),
+                            ),
+                        ),
+                        volatile(Instr::Ret(Some(temp("x")))),
+                    ],
+                ),
+            ],
+        };
+        let main = make_main(
+            vec![(Type::Word, temp("a"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign(
+                        "r",
+                        Type::Word,
+                        Instr::Call("helper".to_string(), vec![(Type::Word, temp("a"))], None),
+                    ),
+                    volatile(Instr::Ret(Some(temp("r")))),
+                ],
+            )],
+        );
+
+        let smt = qbe_module_to_smt(
+            &module_with(vec![main, helper]),
+            "main",
+            &EncodeOptions::default(),
+        )
+        .expect("mixed module encodes");
+
+        assert!(smt.contains(
+            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+        ) || smt.contains(
+            "(declare-rel f1_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+        ));
+        assert!(smt.contains(
+            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
+        ) || smt.contains(
+            "(declare-rel f1_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
+        ));
     }
 
     #[test]

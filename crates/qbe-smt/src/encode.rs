@@ -34,18 +34,11 @@ pub(crate) fn encode_module(
             .get(function_name)
             .expect("function metadata exists");
         for pc in 0..function.flattened.statements.len() {
-            smt.push_str(&format!(
-                "(declare-rel {} ({} {} {} {} {} {} {} {}))\n",
-                module_pc_relation_name(function.id, pc),
-                REG_STATE_SORT,
-                MEM_STATE_SORT,
-                BV64_SORT,
-                BV64_SORT,
-                BV32_SORT,
-                REG_STATE_SORT,
-                MEM_STATE_SORT,
-                BV64_SORT
+            smt.push_str(&module_pc_relation_decl(
+                &module_pc_relation_name(function.id, pc),
+                function.uses_pred,
             ));
+            smt.push('\n');
         }
         smt.push_str(&format!(
             "(declare-rel {} ({} {} {} {} {} {}))\n",
@@ -267,7 +260,7 @@ pub(crate) fn encode_module(
                 "mem",
                 "heap",
                 "exit",
-                "pred",
+                function.pred_arg("pred"),
                 "in_regs",
                 "in_mem",
                 "in_heap",
@@ -318,16 +311,20 @@ pub(crate) fn encode_module(
                         &mut smt,
                         &from_rel,
                         &module_pc_relation_name(function.id, pc + 1),
+                        function.uses_pred,
                         phi_guard.clone(),
                         return_terms,
                         &call_transition,
-                        &pred_update_expr("pred", pc, pc + 1, pc_to_block_id),
+                        function
+                            .uses_pred
+                            .then(|| pred_update_expr("pred", pc, pc + 1, pc_to_block_id)),
                     );
                 } else {
                     emit_module_return_rule(
                         &mut smt,
                         &from_rel,
                         &module_ret_relation_name(function.id),
+                        function.uses_pred,
                         phi_guard.clone(),
                         return_terms,
                         &call_transition.exit_next,
@@ -350,6 +347,7 @@ pub(crate) fn encode_module(
                     &mut smt,
                     &from_rel,
                     &module_abort_relation_name(function.id),
+                    function.uses_pred,
                     phi_guard,
                     abort_terms,
                     "code_call",
@@ -405,10 +403,13 @@ pub(crate) fn encode_module(
                         &mut smt,
                         &from_rel,
                         &module_pc_relation_name(function.id, target_pc),
+                        function.uses_pred,
                         phi_guard,
                         Vec::new(),
                         &transition,
-                        &pred_from_block(pc, pc_to_block_id),
+                        function
+                            .uses_pred
+                            .then(|| pred_from_block(pc, pc_to_block_id)),
                     );
                 }
                 QbeStatement::Volatile(QbeInstr::Jnz(cond, if_true, if_false)) => {
@@ -431,25 +432,31 @@ pub(crate) fn encode_module(
                         &mut smt,
                         &from_rel,
                         &module_pc_relation_name(function.id, true_pc),
+                        function.uses_pred,
                         and_optional_guards(
                             phi_guard.clone(),
                             Some(format!("(distinct {} {})", cond_expr, bv_const_u64(0, 64))),
                         ),
                         Vec::new(),
                         &transition,
-                        &pred_from_block(pc, pc_to_block_id),
+                        function
+                            .uses_pred
+                            .then(|| pred_from_block(pc, pc_to_block_id)),
                     );
                     emit_module_transition_rule(
                         &mut smt,
                         &from_rel,
                         &module_pc_relation_name(function.id, false_pc),
+                        function.uses_pred,
                         and_optional_guards(
                             phi_guard,
                             Some(format!("(= {} {})", cond_expr, bv_const_u64(0, 64))),
                         ),
                         Vec::new(),
                         &transition,
-                        &pred_from_block(pc, pc_to_block_id),
+                        function
+                            .uses_pred
+                            .then(|| pred_from_block(pc, pc_to_block_id)),
                     );
                 }
                 QbeStatement::Volatile(QbeInstr::Ret(_))
@@ -458,6 +465,7 @@ pub(crate) fn encode_module(
                         &mut smt,
                         &from_rel,
                         &module_ret_relation_name(function.id),
+                        function.uses_pred,
                         phi_guard,
                         Vec::new(),
                         &transition.exit_next,
@@ -473,6 +481,7 @@ pub(crate) fn encode_module(
                         &mut smt,
                         &from_rel,
                         &module_abort_relation_name(function.id),
+                        function.uses_pred,
                         phi_guard,
                         Vec::new(),
                         &transition.exit_next,
@@ -486,16 +495,20 @@ pub(crate) fn encode_module(
                             &mut smt,
                             &from_rel,
                             &module_pc_relation_name(function.id, pc + 1),
+                            function.uses_pred,
                             phi_guard,
                             Vec::new(),
                             &transition,
-                            &pred_update_expr("pred", pc, pc + 1, pc_to_block_id),
+                            function
+                                .uses_pred
+                                .then(|| pred_update_expr("pred", pc, pc + 1, pc_to_block_id)),
                         );
                     } else {
                         emit_module_return_rule(
                             &mut smt,
                             &from_rel,
                             &module_ret_relation_name(function.id),
+                            function.uses_pred,
                             phi_guard,
                             Vec::new(),
                             &transition.exit_next,
@@ -550,8 +563,15 @@ struct EncodedFunction {
     name: String,
     args: Vec<FunctionArg>,
     flattened: FlattenedFunction,
+    uses_pred: bool,
     reg_list: Vec<String>,
     reg_slots: HashMap<String, u32>,
+}
+
+impl EncodedFunction {
+    fn pred_arg<'a>(&self, pred: &'a str) -> Option<&'a str> {
+        self.uses_pred.then_some(pred)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -780,6 +800,10 @@ fn build_module_encoding_context(
         if flattened.statements.is_empty() {
             return Err(QbeSmtError::EmptyFunction);
         }
+        let uses_pred = flattened
+            .statements
+            .iter()
+            .any(|statement| matches!(statement, QbeStatement::Assign(_, _, QbeInstr::Phi(..))));
 
         for (pc, statement) in flattened.statements.iter().enumerate() {
             validate_statement_supported(
@@ -829,6 +853,7 @@ fn build_module_encoding_context(
                 name: function_name.clone(),
                 args,
                 flattened,
+                uses_pred,
                 reg_list,
                 reg_slots,
             },
@@ -1322,6 +1347,18 @@ fn module_pc_relation_name(function_id: usize, pc: usize) -> String {
     format!("f{}_pc_{}", function_id, pc)
 }
 
+fn module_pc_relation_decl(relation: &str, uses_pred: bool) -> String {
+    if uses_pred {
+        format!(
+            "(declare-rel {relation} ({REG_STATE_SORT} {MEM_STATE_SORT} {BV64_SORT} {BV64_SORT} {BV32_SORT} {REG_STATE_SORT} {MEM_STATE_SORT} {BV64_SORT}))"
+        )
+    } else {
+        format!(
+            "(declare-rel {relation} ({REG_STATE_SORT} {MEM_STATE_SORT} {BV64_SORT} {BV64_SORT} {REG_STATE_SORT} {MEM_STATE_SORT} {BV64_SORT}))"
+        )
+    }
+}
+
 fn module_ret_relation_name(function_id: usize) -> String {
     format!("f{}_ret", function_id)
 }
@@ -1336,12 +1373,17 @@ fn module_pc_relation_app(
     mem: &str,
     heap: &str,
     exit: &str,
-    pred: &str,
+    pred: Option<&str>,
     in_regs: &str,
     in_mem: &str,
     in_heap: &str,
 ) -> String {
-    format!("({relation} {regs} {mem} {heap} {exit} {pred} {in_regs} {in_mem} {in_heap})")
+    match pred {
+        Some(pred) => {
+            format!("({relation} {regs} {mem} {heap} {exit} {pred} {in_regs} {in_mem} {in_heap})")
+        }
+        None => format!("({relation} {regs} {mem} {heap} {exit} {in_regs} {in_mem} {in_heap})"),
+    }
 }
 
 fn module_ret_relation_app(
@@ -1372,10 +1414,11 @@ fn emit_module_transition_rule(
     smt: &mut String,
     from_relation: &str,
     to_relation: &str,
+    uses_pred: bool,
     guard: Option<String>,
     mut extra_terms: Vec<String>,
     next: &TransitionExprs,
-    pred_next_expr: &str,
+    pred_next_expr: Option<String>,
 ) {
     let mut body_terms = vec![module_pc_relation_app(
         from_relation,
@@ -1383,7 +1426,7 @@ fn emit_module_transition_rule(
         "mem",
         "heap",
         "exit",
-        "pred",
+        uses_pred.then_some("pred"),
         "in_regs",
         "in_mem",
         "in_heap",
@@ -1396,7 +1439,9 @@ fn emit_module_transition_rule(
     body_terms.push(format!("(= mem_next {})", next.mem_next));
     body_terms.push(format!("(= heap_next {})", next.heap_next));
     body_terms.push(format!("(= exit_next {})", next.exit_next));
-    body_terms.push(format!("(= pred_next {pred_next_expr})"));
+    if let Some(pred_next_expr) = pred_next_expr {
+        body_terms.push(format!("(= pred_next {pred_next_expr})"));
+    }
 
     let body = and_terms(body_terms);
     let head = module_pc_relation_app(
@@ -1405,7 +1450,7 @@ fn emit_module_transition_rule(
         "mem_next",
         "heap_next",
         "exit_next",
-        "pred_next",
+        uses_pred.then_some("pred_next"),
         "in_regs",
         "in_mem",
         "in_heap",
@@ -1418,6 +1463,7 @@ fn emit_module_return_rule(
     smt: &mut String,
     from_relation: &str,
     to_relation: &str,
+    uses_pred: bool,
     guard: Option<String>,
     mut extra_terms: Vec<String>,
     ret_expr: &str,
@@ -1430,7 +1476,7 @@ fn emit_module_return_rule(
         "mem",
         "heap",
         "exit",
-        "pred",
+        uses_pred.then_some("pred"),
         "in_regs",
         "in_mem",
         "in_heap",
@@ -1467,6 +1513,7 @@ fn emit_module_abort_rule(
     smt: &mut String,
     from_relation: &str,
     to_relation: &str,
+    uses_pred: bool,
     guard: Option<String>,
     mut extra_terms: Vec<String>,
     code_expr: &str,
@@ -1479,7 +1526,7 @@ fn emit_module_abort_rule(
         "mem",
         "heap",
         "exit",
-        "pred",
+        uses_pred.then_some("pred"),
         "in_regs",
         "in_mem",
         "in_heap",

@@ -15,7 +15,7 @@ type QbeAssignName = String;
 type Variables = HashMap<String, (QbeAssignName, ir::TypeRef)>;
 pub(crate) const PROVE_MARKER_PREFIX: &str = ".oac_prove_site_";
 pub(crate) const INTEGER_SAFETY_MARKER_PREFIX: &str = ".oac_integer_site_";
-const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
+pub(crate) const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
 
 struct CodegenCtx {
     module: qbe::Module,

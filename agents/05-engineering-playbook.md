@@ -61,6 +61,7 @@ Act like a compiler engineer, not a text editor:
 - For runtime backend changes, inspect generated backend artifacts (`ir.qbe`/`assembly.s` or `ir.ll`/`object.o`) and keep linker path fail-closed.
 - Preserve runtime parity semantics across backends (for example struct copy barriers, struct bytewise equality, and LLVM runtime-noop lowering for `prove(...)`).
 - If integer-safety behavior changes, inspect emitted `.oac_integer_site_*` markers in QBE and the generated checker artifacts under `target/oac/integer_safety/`; regressions often come from unexpected marker reachability or from checker CFG branches that were not pruned tightly enough.
+- When touching checker synthesis or CHC schema shape, audit all three site-checker pipelines together (`prove`, integer-safety, struct invariants): target-reachability pruning, entry-function assert-fail rewriting, and per-function `pred` omission are shared proof-cost optimizations and should stay behaviorally aligned across those entrypoints.
 - Check interop assumptions with std `Clib.*` bindings in `crates/oac/src/std/std_clib.oa` (`namespace`-scoped `extern fun` declarations that resolve to `Clib__*` internal keys while preserving declared link symbols) and helper functions.
 
 ### Interop/bindings behavior change

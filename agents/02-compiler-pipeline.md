@@ -12,6 +12,8 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 5. Resolve/type-check with `ir::resolve`.
 6. Lower to QBE with `qbe_backend::compile`.
 7. Prepare prove + integer-safety + struct-invariant checker artifacts, group ordinary-root obligations into repo-local summary candidates, and consult proof-cache policy from `VerificationConfig` / `--proof-cache`.
+   - Prove, integer-safety, and struct-invariant site checkers first prune the cloned caller CFG to blocks that can still reach the targeted site before reachable-callee closure is computed.
+   - Assembled checker entry functions rewrite only compiler-generated assert-fail exits (`call $exit(w 242)` + `hlt`) to safe `ret 0` before CHC encoding; helper callees keep terminal assert exits so callers do not continue past impossible states, and other exits remain aborts.
 8. Verify `prove(...)` obligations with `prove::verify_prepared_prove_obligations` (SMT-based, fail-closed, trust mode skips solver only when the combined ordinary-function summary matches a cached `unsat` entry).
 9. Verify source-level integer arithmetic obligations with `integer_safety::verify_prepared_integer_safety_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable integer `+/-/*//` sites from `main` plus all struct/model-invariant roots).
 10. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as prove/int-safety checking); after all ordinary-root obligations succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
@@ -223,6 +225,7 @@ Important enforced invariants include:
 - `verification.rs` is the shared in-crate verification entrypoint; it runs ordinary-root prove obligations first, then ordinary-root integer-safety obligations, then struct invariants, then model invariants.
 - `qbe-smt` is used by prove, struct-invariant, and model-invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
 - `integer_safety.rs` reuses the same checker-module closure helpers as `prove.rs`: it collects marker sites reachable from `main` plus struct/model-invariant roots, clones the site’s caller into checker `main`, prunes CFG branches that cannot reach the target marker, injects a `ret bad` predicate after the marker, and groups resulting obligations into ordinary/model summary candidates for cache reuse.
+- `prove.rs` and `struct_invariants.rs` now use the same shared target-reachability pruning helper as `integer_safety.rs`, so cloned checker entries are trimmed to target-reaching blocks before `direct_user_callees(...)` computes reachable checker-module closure.
 - `qbe-smt` also owns CHC solver execution (`solve_chc_script`), so invariant/prove verification shares one encode+solve backend path.
 - `oac` routes prove/struct-invariant/model-invariant solver calls through `crates/oac/src/verification_solver.rs`, which preserves baseline two-step retries (`10s`, `30s`) and can add a candidate-only third attempt for large obligations that remain `unknown`.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
@@ -231,13 +234,13 @@ Important enforced invariants include:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - FP32/FP64 ALU/comparison ops (`add/sub/mul/div`, `eq/ne/lt/le/gt/ge/o/uo`) with IEEE semantics (`RNE`)
   - FP conversion ops: `exts` (FP32 -> FP64, `RNE`), `truncd` (FP64 -> FP32, `RTZ`), `stosi/stoui/dtosi/dtoui` (FP -> int, `RTZ`), and `swtof/uwtof/sltof/ultof` (int -> FP, `RNE`)
-  - `phi` merging via predecessor-tracking state in CHC (`pred`)
+  - `phi` merging via predecessor-tracking state in CHC (`pred`), emitted only for functions whose reachable blocks actually contain `phi`
   - `call` modeling for `malloc`, `free`, `calloc`, `realloc`, `memcpy`, `memmove`, `memcmp`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `open`, `read`, `write`, `close`, `exit(code)`, and variadic `printf` (for builtin `print` lowering)
   - `load*`/`store*` byte-addressed memory operations (including FP32 `loads`/`stores`)
   - `alloc4/alloc8/alloc16` heap-pointer modeling
   - control flow via Horn transition rules (`jnz`, `jmp`, `ret`, halt relation)
 - Register state is encoded as an SMT array and threaded through relation arguments.
-- Relation state also threads predecessor-block identity so branch-edge semantics for `phi` are explicit.
+- Relation state threads predecessor-block identity only for `phi`-bearing functions, so branch-edge semantics stay explicit where needed without widening every PC relation in the module.
 - Property surface is fixed: query whether halt with `exit == 1` is reachable (`(query bad)`).
 - Unsupported constructs are fail-closed hard errors (no havoc fallback path).
 - For modeled CLib memory operations, encoding uses bounded precise expansion (`limit = 16`) plus sound fallback branches (for example, unconstrained `mem_next` when bounds are exceeded).

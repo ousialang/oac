@@ -14,8 +14,8 @@ use crate::verification_cache::{
     VerificationSummaryInput,
 };
 use crate::verification_checker::{
-    checker_module_with_reachable_callees, rewrite_returns_to_zero, sanitize_ident,
-    should_assume_main_argc_non_negative, summarize_solver_output,
+    checker_module_with_reachable_callees, prune_function_to_target, rewrite_returns_to_zero,
+    sanitize_ident, should_assume_main_argc_non_negative, summarize_solver_output,
 };
 use crate::verification_cycles::{
     reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
@@ -400,10 +400,10 @@ fn inject_site_check_and_return(
     function: &mut qbe::Function,
     site: &ProveSite,
 ) -> anyhow::Result<()> {
-    let mut found = false;
     let bad_temp = format!("{}_bad", site.marker_temp);
+    let mut target = None;
 
-    for block in &mut function.blocks {
+    for (block_index, block) in function.blocks.iter().enumerate() {
         for item_index in 0..block.items.len() {
             let qbe::BlockItem::Statement(qbe::Statement::Assign(
                 qbe::Value::Temporary(dest),
@@ -416,39 +416,41 @@ fn inject_site_check_and_return(
             if dest != &site.marker_temp {
                 continue;
             }
-
-            let mut new_items = block.items[..=item_index].to_vec();
-            new_items.push(qbe::BlockItem::Statement(qbe::Statement::Assign(
-                qbe::Value::Temporary(bad_temp.clone()),
-                qbe::Type::Word,
-                qbe::Instr::Cmp(
-                    qbe::Type::Word,
-                    qbe::Cmp::Eq,
-                    qbe::Value::Temporary(site.marker_temp.clone()),
-                    qbe::Value::Const(0),
-                ),
-            )));
-            new_items.push(qbe::BlockItem::Statement(qbe::Statement::Volatile(
-                qbe::Instr::Ret(Some(qbe::Value::Temporary(bad_temp.clone()))),
-            )));
-            block.items = new_items;
-            found = true;
+            target = Some((block_index, item_index));
             break;
         }
-        if found {
+        if target.is_some() {
             break;
         }
     }
 
-    if found {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
+    let Some((target_block_index, target_item_index)) = target else {
+        return Err(anyhow::anyhow!(
             "failed to locate prove marker {} for site {}",
             site.marker_temp,
             site.id
-        ))
-    }
+        ));
+    };
+
+    prune_function_to_target(function, target_block_index);
+
+    let block = &mut function.blocks[target_block_index];
+    let mut new_items = block.items[..=target_item_index].to_vec();
+    new_items.push(qbe::BlockItem::Statement(qbe::Statement::Assign(
+        qbe::Value::Temporary(bad_temp.clone()),
+        qbe::Type::Word,
+        qbe::Instr::Cmp(
+            qbe::Type::Word,
+            qbe::Cmp::Eq,
+            qbe::Value::Temporary(site.marker_temp.clone()),
+            qbe::Value::Const(0),
+        ),
+    )));
+    new_items.push(qbe::BlockItem::Statement(qbe::Statement::Volatile(
+        qbe::Instr::Ret(Some(qbe::Value::Temporary(bad_temp))),
+    )));
+    block.items = new_items;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -761,6 +763,66 @@ fun main() -> I32 {
         let tempdir = tempfile::tempdir().expect("tempdir");
         verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
             .expect("FP64 prove obligations should verify");
+    }
+
+    #[test]
+    fn prove_checker_prunes_callees_reachable_only_after_target_site() {
+        let source = r#"
+fun live(v: I32) -> I32 {
+	return v + 1
+}
+
+fun dead(v: I32) -> I32 {
+	return v + 2
+}
+
+fun helper() -> I32 {
+	x = live(1)
+	prove(x == x)
+	y = dead(x)
+	return y
+}
+
+fun main() -> I32 {
+	return helper()
+}
+"#;
+
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let invariant_by_struct =
+            super::discover_struct_invariant_bindings(&program).expect("discover invariants");
+        let function_map = qbe_module
+            .functions
+            .iter()
+            .map(|function| (function.name.clone(), function.clone()))
+            .collect::<HashMap<_, _>>();
+        let reachable =
+            reachable_user_functions(&program, "main").expect("collect reachable functions");
+        let sites = super::collect_prove_sites(&function_map, &reachable).expect("collect sites");
+        assert_eq!(sites.len(), 1, "expected one prove site");
+
+        let (checker_module, _checker, _assumptions) = super::build_site_checker_module(
+            &program,
+            &invariant_by_struct,
+            &function_map,
+            &sites[0],
+        )
+        .expect("build checker module");
+        let checker_names = checker_module
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            checker_names.contains(&"live"),
+            "live helper should be retained"
+        );
+        assert!(
+            !checker_names.contains(&"dead"),
+            "dead helper should be pruned from checker module"
+        );
     }
 
     #[test]

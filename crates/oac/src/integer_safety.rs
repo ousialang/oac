@@ -14,8 +14,8 @@ use crate::verification_cache::{
     VerificationSummaryCandidate, VerificationSummaryInput, VerificationSummaryKind,
 };
 use crate::verification_checker::{
-    checker_module_with_reachable_callees, rewrite_returns_to_zero, sanitize_ident,
-    should_assume_main_argc_non_negative, summarize_solver_output,
+    checker_module_with_reachable_callees, prune_function_to_target, rewrite_returns_to_zero,
+    sanitize_ident, should_assume_main_argc_non_negative, summarize_solver_output,
 };
 use crate::verification_cycles::{
     reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
@@ -748,196 +748,6 @@ fn inject_site_check_and_return(
     Ok(())
 }
 
-fn prune_function_to_target(function: &mut qbe::Function, target_block_index: usize) {
-    let keep = blocks_that_can_reach_target(function, target_block_index);
-    let mut used_labels = collect_labels_in_function(function);
-    let mut prune_label = None::<String>;
-
-    for block_index in 0..function.blocks.len() {
-        if !keep.contains(&block_index) || block_index == target_block_index {
-            continue;
-        }
-
-        let successors = block_successors(function, block_index);
-        let fallthrough = block_index + 1;
-        let terminator_index = find_terminator_index(&function.blocks[block_index]);
-
-        match terminator_index {
-            Some(term_index) => {
-                let block = &mut function.blocks[block_index];
-                let qbe::BlockItem::Statement(qbe::Statement::Volatile(instr)) =
-                    &mut block.items[term_index]
-                else {
-                    continue;
-                };
-                match instr {
-                    qbe::Instr::Jmp(_label) => {
-                        let keep_jump = successors
-                            .first()
-                            .copied()
-                            .map(|successor| keep.contains(&successor))
-                            .unwrap_or(false);
-                        if !keep_jump {
-                            *instr = qbe::Instr::Ret(Some(qbe::Value::Const(0)));
-                        }
-                    }
-                    qbe::Instr::Jnz(_, then_label, else_label) => {
-                        let then_kept = successors
-                            .first()
-                            .copied()
-                            .map(|successor| keep.contains(&successor))
-                            .unwrap_or(false);
-                        let else_kept = successors
-                            .get(1)
-                            .copied()
-                            .map(|successor| keep.contains(&successor))
-                            .unwrap_or(false);
-                        match (then_kept, else_kept) {
-                            (true, true) => {}
-                            (false, false) => {
-                                *instr = qbe::Instr::Ret(Some(qbe::Value::Const(0)));
-                            }
-                            (true, false) => {
-                                let label = prune_label.get_or_insert_with(|| {
-                                    fresh_unique_label("integer_prune", &mut used_labels)
-                                });
-                                *else_label = label.clone();
-                            }
-                            (false, true) => {
-                                let label = prune_label.get_or_insert_with(|| {
-                                    fresh_unique_label("integer_prune", &mut used_labels)
-                                });
-                                *then_label = label.clone();
-                            }
-                        }
-                    }
-                    qbe::Instr::Ret(_) | qbe::Instr::Hlt => {}
-                    _ => {}
-                }
-            }
-            None => {
-                let block_count = function.blocks.len();
-                let block = &mut function.blocks[block_index];
-                let falls_to_target = successors
-                    .first()
-                    .copied()
-                    .map(|successor| keep.contains(&successor))
-                    .unwrap_or(false);
-                if fallthrough >= block_count || !falls_to_target {
-                    block
-                        .items
-                        .push(qbe::BlockItem::Statement(qbe::Statement::Volatile(
-                            qbe::Instr::Ret(Some(qbe::Value::Const(0))),
-                        )));
-                }
-            }
-        }
-    }
-
-    if let Some(label) = prune_label {
-        function.blocks.push(qbe::Block {
-            label,
-            items: vec![qbe::BlockItem::Statement(qbe::Statement::Volatile(
-                qbe::Instr::Ret(Some(qbe::Value::Const(0))),
-            ))],
-        });
-    }
-}
-
-fn blocks_that_can_reach_target(
-    function: &qbe::Function,
-    target_block_index: usize,
-) -> HashSet<usize> {
-    let mut predecessors = vec![Vec::<usize>::new(); function.blocks.len()];
-    for block_index in 0..function.blocks.len() {
-        for successor in block_successors(function, block_index) {
-            predecessors[successor].push(block_index);
-        }
-    }
-
-    let mut keep = HashSet::<usize>::new();
-    let mut queue = vec![target_block_index];
-    while let Some(block_index) = queue.pop() {
-        if !keep.insert(block_index) {
-            continue;
-        }
-        queue.extend(predecessors[block_index].iter().copied());
-    }
-    keep
-}
-
-fn block_successors(function: &qbe::Function, block_index: usize) -> Vec<usize> {
-    let mut label_to_index = HashMap::<String, usize>::new();
-    for (index, block) in function.blocks.iter().enumerate() {
-        label_to_index.insert(block.label.clone(), index);
-    }
-
-    if let Some(term_index) = find_terminator_index(&function.blocks[block_index]) {
-        let qbe::BlockItem::Statement(qbe::Statement::Volatile(instr)) =
-            &function.blocks[block_index].items[term_index]
-        else {
-            return Vec::new();
-        };
-        match instr {
-            qbe::Instr::Jmp(label) => label_to_index.get(label).copied().into_iter().collect(),
-            qbe::Instr::Jnz(_, then_label, else_label) => {
-                let mut out = Vec::new();
-                if let Some(index) = label_to_index.get(then_label) {
-                    out.push(*index);
-                }
-                if let Some(index) = label_to_index.get(else_label) {
-                    out.push(*index);
-                }
-                out
-            }
-            qbe::Instr::Ret(_) | qbe::Instr::Hlt => Vec::new(),
-            _ => Vec::new(),
-        }
-    } else if block_index + 1 < function.blocks.len() {
-        vec![block_index + 1]
-    } else {
-        Vec::new()
-    }
-}
-
-fn find_terminator_index(block: &qbe::Block) -> Option<usize> {
-    block.items.iter().rposition(|item| {
-        matches!(
-            item,
-            qbe::BlockItem::Statement(qbe::Statement::Volatile(
-                qbe::Instr::Ret(_)
-                    | qbe::Instr::Jmp(_)
-                    | qbe::Instr::Jnz(_, _, _)
-                    | qbe::Instr::Hlt
-            ))
-        )
-    })
-}
-
-fn collect_labels_in_function(function: &qbe::Function) -> HashSet<String> {
-    function
-        .blocks
-        .iter()
-        .map(|block| block.label.clone())
-        .collect()
-}
-
-fn fresh_unique_label(base: &str, used: &mut HashSet<String>) -> String {
-    if !used.contains(base) {
-        used.insert(base.to_string());
-        return base.to_string();
-    }
-    let mut index = 0usize;
-    loop {
-        let candidate = format!("{}_{}", base, index);
-        if !used.contains(&candidate) {
-            used.insert(candidate.clone());
-            return candidate;
-        }
-        index += 1;
-    }
-}
-
 fn emit_bad_predicate(
     items: &mut Vec<qbe::BlockItem>,
     used_temps: &mut HashSet<String>,
@@ -1468,12 +1278,18 @@ fn fresh_unique_temp(base: &str, used: &mut HashSet<String>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
 
-    use super::prepare_integer_safety_obligations_with_config;
+    use super::{
+        build_site_checker_module, collect_integer_sites, collect_verification_roots,
+        prepare_integer_safety_obligations_with_config,
+    };
+    use crate::invariant_metadata::discover_struct_invariant_bindings;
     use crate::verification_cache::{
         VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
     };
+    use crate::verification_cycles::reachable_user_functions;
     use crate::verification_profile::VerificationProfile;
     use crate::{ir, parser, qbe_backend, tokenizer};
 
@@ -1557,5 +1373,67 @@ fun main() -> I32 {
         let qbe_text = fs::read_to_string(&qbe_path).expect("read checker qbe");
         assert!(qbe_text.contains("ret %"));
         assert!(!qbe_text.contains("call $exit"));
+    }
+
+    #[test]
+    fn shared_pruning_drops_integer_callees_reachable_only_after_target_site() {
+        let mut program = resolve_program(
+            r#"
+fun live(v: I32) -> I32 {
+	return v + 1
+}
+
+fun dead(v: I32) -> I32 {
+	return v + 2
+}
+
+fun main() -> I32 {
+	x = live(1)
+	y = x + 3
+	z = dead(y)
+	return z
+}
+"#,
+        );
+        program.model_invariants.clear();
+        program.struct_invariants.clear();
+        let qbe_module = qbe_backend::compile(program.clone());
+        let function_map = qbe_module
+            .functions
+            .iter()
+            .map(|function| (function.name.clone(), function.clone()))
+            .collect::<HashMap<_, _>>();
+        let invariant_by_struct =
+            discover_struct_invariant_bindings(&program).expect("discover invariants");
+        let roots = collect_verification_roots(&program, &invariant_by_struct);
+        let root = roots
+            .into_iter()
+            .find(|root| root.function_name == "main")
+            .expect("main verification root");
+        let reachable =
+            reachable_user_functions(&program, &root.function_name).expect("reachable functions");
+        let sites = collect_integer_sites(&function_map, &reachable, &root).expect("collect sites");
+        let site = sites
+            .iter()
+            .find(|site| site.caller == "main")
+            .expect("main integer site");
+
+        let (checker_module, _checker, _assumptions) =
+            build_site_checker_module(&program, &invariant_by_struct, &function_map, site)
+                .expect("build checker module");
+        let checker_names = checker_module
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            checker_names.contains(&"live"),
+            "live helper should be retained"
+        );
+        assert!(
+            !checker_names.contains(&"dead"),
+            "dead helper should be pruned from checker module"
+        );
     }
 }
