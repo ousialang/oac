@@ -262,6 +262,7 @@ Important enforced invariants include:
 ## LSP Path
 
 - `main.rs` also exposes `test` subcommand (`oac test <file.oa>`) for lowered test-declaration execution.
+- `main.rs` also exposes `fmt` subcommand (`oac fmt <file.oa>`) for in-place source formatting via `crates/oac/src/formatter.rs`.
 - `build`/`test` backend flags now follow: `oac build <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>] [--quiet] [--no-color]` and `oac test <file.oa> --backend <qbe|llvm> [--qbe-arch <arch>] [--target <triple>] [--quiet] [--no-color]`.
 - `main.rs` also exposes `lsp` subcommand (`oac lsp`).
 - `main.rs` also exposes `bench-prove` subcommand (`oac bench-prove --suite <full|quick> --iterations <N> [--baseline <path>] [--output <path>] [--update-baseline] [--strict-outcome-gate] [--proof-cache trust|strict|off]`).

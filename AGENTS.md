@@ -102,6 +102,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Source-level integer arithmetic on `U8`, `I32`, `I64`, and `PtrInt` is now fail-closed at compile time: every reachable `+`, `-`, `*`, and `/` site in runtime code plus struct/model-invariant bodies must be proven overflow/underflow-safe during `check proofs`, and comptime `I32` evaluation now uses checked arithmetic with deterministic overflow/divide-by-zero diagnostics.
 - Generic-specialized helper functions can be called with namespaced syntax (`Alias.helper(...)`), which lowers to generated mangled symbols like `Alias__helper`.
 - The CLI now includes an `lsp` subcommand (`oac lsp`) that runs a stdio JSON-RPC language server with diagnostics.
+- The CLI now also includes `oac fmt <file.oa>`, which applies the comment-safe formatter in place and fails closed on invalid input.
 - Runtime codegen now supports two backends selected by flags on `oac build` / `oac test`: `--backend qbe|llvm` (default `qbe`), optional `--qbe-arch` (QBE-only), optional `--target` (shared linker/clang target triple override), and output controls `--quiet` / `--no-color`.
 - Positional `arch` on `oac build` / `oac test` was removed; backend/target configuration is now flag-based.
 - QBE remains mandatory as the verification source of truth: prove obligations, struct-invariant obligations, and loop non-termination classification always run on in-memory QBE output, regardless of runtime backend.

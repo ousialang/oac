@@ -172,6 +172,9 @@ fn run(oac: Oac) -> Result<(), CompilerDiagnosticBundle> {
             })?;
             run_tests(&current_dir, test)?;
         }
+        OacSubcommand::Fmt(fmt) => {
+            format_source_file(&fmt)?;
+        }
         OacSubcommand::Lsp(_) => {
             lsp::run().map_err(|err| {
                 CompilerDiagnosticBundle::from_anyhow(
@@ -255,6 +258,60 @@ fn process_riscv_smt(
             println!("{}", smt_expression);
         }
     }
+    Ok(())
+}
+
+fn format_source_file(fmt: &Fmt) -> Result<(), CompilerDiagnosticBundle> {
+    let source_path = Path::new(&fmt.source);
+    let source = std::fs::read_to_string(source_path).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-026",
+            format!("failed to read format source {}", source_path.display()),
+            err,
+        )
+    })?;
+
+    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
+        CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
+            "OAC-TOKENIZE-004",
+            &source,
+            Some(source_path),
+            &err,
+        ))
+    })?;
+    parser::parse(tokens).map_err(|err| {
+        stage_error_from_anyhow(
+            DiagnosticStage::Parse,
+            "OAC-PARSE-004",
+            "failed to parse format source",
+            err,
+            Some(source_path),
+            Some(&source),
+        )
+    })?;
+
+    let Some(formatted) = formatter::format_document(&source) else {
+        let diagnostic = CompilerDiagnostic::new(
+            "OAC-FMT-001",
+            DiagnosticStage::Internal,
+            "formatter failed to produce valid output",
+        )
+        .with_note(format!("source: {}", source_path.display()));
+        return Err(CompilerDiagnosticBundle::single(diagnostic));
+    };
+
+    if formatted == source {
+        return Ok(());
+    }
+
+    std::fs::write(source_path, formatted).map_err(|err| {
+        io_stage_error(
+            "OAC-IO-027",
+            format!("failed to write formatted source {}", source_path.display()),
+            err,
+        )
+    })?;
+
     Ok(())
 }
 
@@ -1318,6 +1375,7 @@ struct Oac {
 enum OacSubcommand {
     Build(Build),
     Test(Test),
+    Fmt(Fmt),
     Lsp(LspOpts),
     RiscvSmt(RiscvSmtOpts),
     BenchProve(bench_prove::BenchProveOpts),
@@ -1385,6 +1443,12 @@ impl Test {
     }
 }
 
+#[derive(clap::Parser)]
+#[clap(name = "fmt", about = "Format an Ousia source file in place.")]
+struct Fmt {
+    source: String,
+}
+
 #[derive(clap::Parser, Debug)]
 #[clap(name = "lsp", about = "Run the Ousia Language Server over stdio.")]
 struct LspOpts {}
@@ -1410,12 +1474,15 @@ struct RiscvSmtOpts {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use clap::Parser;
     use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
+    use tempfile::tempdir;
 
     use super::{
-        reject_proven_non_terminating_main, resolve_linker_attempts_for_config, LinkerAttempt, Oac,
-        OacSubcommand, RuntimeBackend,
+        format_source_file, reject_proven_non_terminating_main, resolve_linker_attempts_for_config,
+        Fmt, LinkerAttempt, Oac, OacSubcommand, RuntimeBackend,
     };
     use crate::verification_cache::VerificationCacheMode;
 
@@ -1857,6 +1924,53 @@ mod tests {
             parsed.is_err(),
             "positional arch argument should be rejected"
         );
+    }
+
+    #[test]
+    fn fmt_cli_parses_source_argument() {
+        let parsed = Oac::parse_from(["oac", "fmt", "main.oa"]);
+        match parsed.subcmd {
+            OacSubcommand::Fmt(fmt) => {
+                assert_eq!(fmt.source, "main.oa");
+            }
+            _ => panic!("expected fmt subcommand"),
+        }
+    }
+
+    #[test]
+    fn fmt_rewrites_file_in_place() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("main.oa");
+        fs::write(
+            &path,
+            "struct Foo {x:I32,}\nfun main() -> I32 {\n\treturn 0\n}\n",
+        )
+        .expect("write source");
+
+        format_source_file(&Fmt {
+            source: path.display().to_string(),
+        })
+        .expect("format file");
+
+        let formatted = fs::read_to_string(&path).expect("read formatted source");
+        assert_eq!(
+            formatted,
+            "struct Foo {\n\tx: I32,\n}\n\nfun main() -> I32 {\n\treturn 0\n}\n"
+        );
+    }
+
+    #[test]
+    fn fmt_rejects_invalid_source() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("invalid.oa");
+        fs::write(&path, "fun main() -> I32 {\n\t$\n}\n").expect("write invalid source");
+
+        let err = format_source_file(&Fmt {
+            source: path.display().to_string(),
+        })
+        .expect_err("invalid source should fail");
+        let rendered = err.render_plain();
+        assert!(rendered.contains("OAC-TOKENIZE-004"));
     }
 
     #[test]

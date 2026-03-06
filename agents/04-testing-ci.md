@@ -69,6 +69,13 @@ The helper runs dependency install (`npm ci` when `package-lock.json` is present
 When debugging extension startup, verify the server command is exactly `oac lsp` (no extra `--stdio` argument).
 In this repo's `.vscode/settings.json`, the extension is intentionally pointed at `cargo run -q -p oac -- lsp` so editor behavior tracks the current workspace source instead of any separately installed `oac` binary on `PATH`.
 
+Formatter CLI:
+
+```bash
+oac fmt path/to/file.oa
+cargo run -p oac -- fmt path/to/file.oa
+```
+
 Proving benchmark suite (report-only regression tracking):
 
 ```bash
@@ -183,6 +190,7 @@ Key tests:
 - Struct-invariant obligation IDs and checker artifact names now include invariant-key suffixes (for example `main#1#0#stable_envelope` and `site_main_1_0_stable_envelope.{qbe,smt2}`); older unsuffixed snapshot text should be treated as stale.
 - `crates/oac/src/main.rs` tests cover build-time rejection when `main` contains a loop proven non-terminating by QBE loop classification.
 - `crates/oac/src/main.rs` tests include CLI parsing coverage for `bench-prove` defaults and explicit flags (including `--strict-outcome-gate` and `--proof-cache`) plus `build` / `test` proof-cache defaults/overrides.
+- `crates/oac/src/main.rs` also includes CLI parsing and in-place rewrite coverage for `oac fmt`, plus invalid-source rejection.
 - `crates/oac/src/verification_cache.rs` tests cover summary-hash stability, SMT-content invalidation, persisted-summary round-tripping, and cache policy flag behavior.
 - `crates/oac/src/verification.rs` tests cover combined ordinary-root cache behavior (trust-mode solver skips, strict revalidation mismatch failure, and non-`unsat` non-persistence).
 - `crates/oac/src/model_invariants.rs` tests cover model-invariant cache trust hits and strict mismatch handling.
