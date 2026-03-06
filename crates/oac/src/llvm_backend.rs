@@ -1355,6 +1355,9 @@ impl<'m, 'p> FunctionEmitter<'m, 'p> {
                 }
             }
             parser::Expression::Call(name, args) => self.compile_named_call(name, args),
+            parser::Expression::MethodCall { .. } => {
+                bail!("method calls must be normalized before LLVM codegen")
+            }
             parser::Expression::PostfixCall { callee, args } => {
                 self.compile_postfix_call(callee, args)
             }

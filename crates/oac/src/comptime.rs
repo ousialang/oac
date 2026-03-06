@@ -504,6 +504,9 @@ fn evaluate_expression(
                 .collect::<anyhow::Result<Vec<_>>>()?;
             evaluate_call(name, evaluated_args, path, world, call_stack)
         }
+        Expression::MethodCall { .. } => Err(anyhow::anyhow!(
+            "method calls are unsupported in comptime evaluator v1"
+        )),
         Expression::PostfixCall { .. } => Err(anyhow::anyhow!(
             "postfix calls are unsupported in comptime evaluator v1"
         )),

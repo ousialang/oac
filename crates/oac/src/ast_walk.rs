@@ -243,6 +243,26 @@ fn walk_expression(
                 );
             }
         }
+        Expression::MethodCall {
+            receiver,
+            method: _,
+            args,
+        } => {
+            walk_expression(
+                receiver,
+                &join_path(expression_path, "method.receiver", style),
+                style,
+                on_expression,
+            );
+            for (index, arg) in args.iter().enumerate() {
+                walk_expression(
+                    arg,
+                    &join_path(expression_path, &format!("method.arg.{index}"), style),
+                    style,
+                    on_expression,
+                );
+            }
+        }
         Expression::PostfixCall { callee, args } => {
             walk_expression(
                 callee,
@@ -321,6 +341,7 @@ pub(crate) fn walk_statement_calls(
                     on_call(expression_path, &namespaced_call);
                 }
             }
+            Expression::MethodCall { .. } => {}
             _ => {}
         },
     );

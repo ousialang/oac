@@ -456,6 +456,344 @@ impl OwnershipState {
 }
 
 impl ResolvedProgram {
+    fn normalize_method_calls(&mut self) -> anyhow::Result<()> {
+        let function_names = self
+            .function_definitions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for function_name in function_names {
+            let (sig, body) = {
+                let definition =
+                    self.function_definitions
+                        .get(&function_name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("missing function definition {}", function_name)
+                        })?;
+                (definition.sig.clone(), definition.body.clone())
+            };
+            let normalized_body =
+                self.normalize_method_calls_in_body(&body, &sig.parameters, false)?;
+            let definition = self
+                .function_definitions
+                .get_mut(&function_name)
+                .ok_or_else(|| anyhow::anyhow!("missing function definition {}", function_name))?;
+            definition.body = normalized_body;
+        }
+
+        let comptime_function_names = self
+            .comptime_function_definitions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for function_name in comptime_function_names {
+            let (sig, body) = {
+                let definition = self
+                    .comptime_function_definitions
+                    .get(&function_name)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("missing comptime function definition {}", function_name)
+                    })?;
+                (definition.sig.clone(), definition.body.clone())
+            };
+            let normalized_body =
+                self.normalize_method_calls_in_body(&body, &sig.parameters, true)?;
+            let definition = self
+                .comptime_function_definitions
+                .get_mut(&function_name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("missing comptime function definition {}", function_name)
+                })?;
+            definition.body = normalized_body;
+        }
+
+        Ok(())
+    }
+
+    fn normalize_method_calls_in_body(
+        &self,
+        body: &[parser::Statement],
+        parameters: &[FunctionParameter],
+        include_type_names: bool,
+    ) -> anyhow::Result<Vec<parser::Statement>> {
+        let mut var_types = HashMap::new();
+        for parameter in parameters {
+            var_types.insert(parameter.name.clone(), parameter.ty.clone());
+        }
+        if include_type_names {
+            for type_name in self.type_definitions.keys() {
+                var_types.insert(type_name.clone(), "Type".to_string());
+            }
+        }
+
+        body.iter()
+            .map(|statement| self.normalize_method_calls_in_statement(statement, &mut var_types))
+            .collect()
+    }
+
+    fn normalize_method_calls_in_statement(
+        &self,
+        statement: &parser::Statement,
+        var_types: &mut HashMap<String, TypeRef>,
+    ) -> anyhow::Result<parser::Statement> {
+        match statement {
+            parser::Statement::StructDef { .. } => Ok(statement.clone()),
+            parser::Statement::Match { subject, arms } => {
+                let normalized_subject =
+                    self.normalize_method_calls_in_expression(subject, var_types)?;
+                let subject_type = self.expression_type(&normalized_subject, var_types)?;
+                let enum_def = match self.type_definitions.get(&subject_type) {
+                    Some(TypeDef::Enum(enum_def)) => enum_def,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "match subject must be an enum, got {:?}",
+                            subject_type
+                        ))
+                    }
+                };
+
+                let mut normalized_arms = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    let (variant_name, binder) = match &arm.pattern {
+                        parser::MatchPattern::Variant {
+                            type_name: _,
+                            variant_name,
+                            binder,
+                        } => (variant_name, binder),
+                    };
+                    let variant = enum_def
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name == *variant_name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unknown variant {} for enum {}",
+                                variant_name,
+                                enum_def.name
+                            )
+                        })?;
+
+                    let mut scoped_var_types = var_types.clone();
+                    if let (Some(payload_ty), Some(binder_name)) = (&variant.payload_ty, binder) {
+                        scoped_var_types.insert(binder_name.clone(), payload_ty.clone());
+                    }
+
+                    let normalized_body = arm
+                        .body
+                        .iter()
+                        .map(|statement| {
+                            self.normalize_method_calls_in_statement(
+                                statement,
+                                &mut scoped_var_types,
+                            )
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    normalized_arms.push(parser::MatchArm {
+                        pattern: arm.pattern.clone(),
+                        body: normalized_body,
+                    });
+                }
+
+                Ok(parser::Statement::Match {
+                    subject: normalized_subject,
+                    arms: normalized_arms,
+                })
+            }
+            parser::Statement::Conditional {
+                condition,
+                body,
+                else_body,
+            } => {
+                let normalized_condition =
+                    self.normalize_method_calls_in_expression(condition, var_types)?;
+                let normalized_body = body
+                    .iter()
+                    .map(|statement| self.normalize_method_calls_in_statement(statement, var_types))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let normalized_else_body = else_body
+                    .as_ref()
+                    .map(|else_body| {
+                        else_body
+                            .iter()
+                            .map(|statement| {
+                                self.normalize_method_calls_in_statement(statement, var_types)
+                            })
+                            .collect::<anyhow::Result<Vec<_>>>()
+                    })
+                    .transpose()?;
+
+                Ok(parser::Statement::Conditional {
+                    condition: normalized_condition,
+                    body: normalized_body,
+                    else_body: normalized_else_body,
+                })
+            }
+            parser::Statement::Assign { variable, value } => {
+                let normalized_value =
+                    self.normalize_method_calls_in_expression(value, var_types)?;
+                let variable_type = self.expression_type(&normalized_value, var_types)?;
+                if variable_type == "Void" {
+                    return Err(anyhow::anyhow!(
+                        "cannot assign expression of type Void to variable {}",
+                        variable
+                    ));
+                }
+                var_types.insert(variable.clone(), variable_type);
+                Ok(parser::Statement::Assign {
+                    variable: variable.clone(),
+                    value: normalized_value,
+                })
+            }
+            parser::Statement::Return { expr } => Ok(parser::Statement::Return {
+                expr: self.normalize_method_calls_in_expression(expr, var_types)?,
+            }),
+            parser::Statement::Expression { expr } => Ok(parser::Statement::Expression {
+                expr: self.normalize_method_calls_in_expression(expr, var_types)?,
+            }),
+            parser::Statement::Prove { condition } => Ok(parser::Statement::Prove {
+                condition: self.normalize_method_calls_in_expression(condition, var_types)?,
+            }),
+            parser::Statement::Assert { condition } => Ok(parser::Statement::Assert {
+                condition: self.normalize_method_calls_in_expression(condition, var_types)?,
+            }),
+            parser::Statement::While { condition, body } => {
+                let normalized_condition =
+                    self.normalize_method_calls_in_expression(condition, var_types)?;
+                let normalized_body = body
+                    .iter()
+                    .map(|statement| self.normalize_method_calls_in_statement(statement, var_types))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                Ok(parser::Statement::While {
+                    condition: normalized_condition,
+                    body: normalized_body,
+                })
+            }
+        }
+    }
+
+    fn normalize_method_calls_in_expression(
+        &self,
+        expression: &Expression,
+        var_types: &HashMap<String, TypeRef>,
+    ) -> anyhow::Result<Expression> {
+        match expression {
+            Expression::Match { subject, arms } => {
+                let normalized_subject =
+                    self.normalize_method_calls_in_expression(subject, var_types)?;
+                let subject_type = self.expression_type(&normalized_subject, var_types)?;
+                let enum_def = match self.type_definitions.get(&subject_type) {
+                    Some(TypeDef::Enum(enum_def)) => enum_def,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "match subject must be an enum, got {:?}",
+                            subject_type
+                        ))
+                    }
+                };
+
+                let mut normalized_arms = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    let (variant_name, binder) = match &arm.pattern {
+                        parser::MatchPattern::Variant {
+                            type_name: _,
+                            variant_name,
+                            binder,
+                        } => (variant_name, binder),
+                    };
+                    let variant = enum_def
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name == *variant_name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "unknown variant {} for enum {}",
+                                variant_name,
+                                enum_def.name
+                            )
+                        })?;
+
+                    let mut scoped_var_types = var_types.clone();
+                    if let (Some(payload_ty), Some(binder_name)) = (&variant.payload_ty, binder) {
+                        scoped_var_types.insert(binder_name.clone(), payload_ty.clone());
+                    }
+
+                    normalized_arms.push(parser::MatchExprArm {
+                        pattern: arm.pattern.clone(),
+                        value: self
+                            .normalize_method_calls_in_expression(&arm.value, &scoped_var_types)?,
+                    });
+                }
+
+                Ok(Expression::Match {
+                    subject: Box::new(normalized_subject),
+                    arms: normalized_arms,
+                })
+            }
+            Expression::Literal(_) | Expression::Variable(_) | Expression::FieldAccess { .. } => {
+                Ok(expression.clone())
+            }
+            Expression::Call(name, args) => Ok(Expression::Call(
+                name.clone(),
+                args.iter()
+                    .map(|arg| self.normalize_method_calls_in_expression(arg, var_types))
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            )),
+            Expression::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
+                let normalized_receiver =
+                    self.normalize_method_calls_in_expression(receiver, var_types)?;
+                let normalized_args = args
+                    .iter()
+                    .map(|arg| self.normalize_method_calls_in_expression(arg, var_types))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                normalize_method_call_expression(
+                    &normalized_receiver,
+                    method,
+                    &normalized_args,
+                    var_types,
+                    &self.function_sigs,
+                    &self.type_definitions,
+                    &self.trait_method_signatures,
+                    &self.trait_impl_methods,
+                )
+            }
+            Expression::PostfixCall { callee, args } => Ok(Expression::PostfixCall {
+                callee: Box::new(self.normalize_method_calls_in_expression(callee, var_types)?),
+                args: args
+                    .iter()
+                    .map(|arg| self.normalize_method_calls_in_expression(arg, var_types))
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            }),
+            Expression::BinOp(op, left, right) => Ok(Expression::BinOp(
+                *op,
+                Box::new(self.normalize_method_calls_in_expression(left, var_types)?),
+                Box::new(self.normalize_method_calls_in_expression(right, var_types)?),
+            )),
+            Expression::UnaryOp(op, expr) => Ok(Expression::UnaryOp(
+                *op,
+                Box::new(self.normalize_method_calls_in_expression(expr, var_types)?),
+            )),
+            Expression::StructValue {
+                struct_name,
+                field_values,
+            } => Ok(Expression::StructValue {
+                struct_name: struct_name.clone(),
+                field_values: field_values
+                    .iter()
+                    .map(|(field_name, value)| {
+                        Ok((
+                            field_name.clone(),
+                            self.normalize_method_calls_in_expression(value, var_types)?,
+                        ))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            }),
+        }
+    }
+
     fn has_copy_impl_for_type(&self, ty: &str) -> bool {
         let impl_key = trait_impl_method_key("Copy", normalize_numeric_alias(ty), "copy");
         self.trait_impl_methods.contains_key(&impl_key)
@@ -531,6 +869,25 @@ impl ResolvedProgram {
             }
             Expression::Call(_, arguments) => {
                 for argument in arguments {
+                    let _ = self.ownership_analyze_expression(argument, state)?;
+                }
+            }
+            Expression::MethodCall {
+                receiver,
+                method: _,
+                args,
+            } => {
+                match receiver.as_ref() {
+                    Expression::Variable(name) => {
+                        if state.locals.contains_key(name) {
+                            self.ownership_consume_local(name, state)?;
+                        }
+                    }
+                    other => {
+                        let _ = self.ownership_analyze_expression(other, state)?;
+                    }
+                }
+                for argument in args {
                     let _ = self.ownership_analyze_expression(argument, state)?;
                 }
             }
@@ -1712,6 +2069,10 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     for func_def in program.function_definitions.values() {
         program.type_check(func_def)?;
     }
+    program.normalize_method_calls()?;
+    for func_def in program.function_definitions.values() {
+        program.type_check(func_def)?;
+    }
     program.apply_ownership_model(&ownership_target_functions)?;
     for func_def in program.function_definitions.values() {
         program.type_check(func_def)?;
@@ -2344,6 +2705,143 @@ fn replace_self_type(ty: &str, concrete_self: &str) -> String {
     rewrite_type_ref(ty, &substitutions, &HashMap::new())
 }
 
+fn normalize_method_call_expression(
+    receiver: &Expression,
+    method: &str,
+    args: &[Expression],
+    var_types: &HashMap<String, TypeRef>,
+    fns: &HashMap<String, FunctionSignature>,
+    type_definitions: &HashMap<String, TypeDef>,
+    trait_method_signatures: &HashMap<String, TraitMethodSignature>,
+    trait_impl_methods: &HashMap<String, String>,
+) -> anyhow::Result<Expression> {
+    if let Expression::Variable(receiver_name) = receiver {
+        if let Some(TypeDef::Enum(enum_def)) = type_definitions.get(receiver_name) {
+            if enum_def
+                .variants
+                .iter()
+                .any(|variant| variant.name == method)
+            {
+                return Ok(Expression::PostfixCall {
+                    callee: Box::new(Expression::FieldAccess {
+                        struct_variable: receiver_name.clone(),
+                        field: method.to_string(),
+                    }),
+                    args: args.to_vec(),
+                });
+            }
+
+            let namespaced_call = parser::qualify_namespace_function_name(receiver_name, method);
+            if fns.contains_key(&namespaced_call) {
+                return Ok(Expression::Call(namespaced_call, args.to_vec()));
+            }
+
+            return Err(anyhow::anyhow!(
+                "variant {} not found in enum {}",
+                method,
+                receiver_name
+            ));
+        }
+
+        if let Some(trait_method) =
+            trait_method_signatures.get(&trait_method_key(receiver_name, method))
+        {
+            if args.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "trait call {}.{} requires at least one argument for Self",
+                    receiver_name,
+                    method
+                ));
+            }
+            if args.len() != trait_method.parameter_types.len() {
+                return Err(anyhow::anyhow!(
+                    "trait call {}.{} expects {} arguments, got {}",
+                    receiver_name,
+                    method,
+                    trait_method.parameter_types.len(),
+                    args.len()
+                ));
+            }
+            let self_type = get_expression_type(
+                &args[0],
+                var_types,
+                fns,
+                type_definitions,
+                trait_method_signatures,
+                trait_impl_methods,
+            )?;
+            for (index, (argument, param_ty)) in args
+                .iter()
+                .zip(trait_method.parameter_types.iter())
+                .enumerate()
+            {
+                let argument_type = get_expression_type(
+                    argument,
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                let expected_type = replace_self_type(param_ty, &self_type);
+                if normalize_numeric_alias(&argument_type)
+                    != normalize_numeric_alias(&expected_type)
+                {
+                    return Err(anyhow::anyhow!(
+                        "trait call {}.{} argument {} mismatch: expected {}, got {}",
+                        receiver_name,
+                        method,
+                        index,
+                        expected_type,
+                        argument_type
+                    ));
+                }
+            }
+
+            let impl_key = trait_impl_method_key(receiver_name, &self_type, method);
+            let target_function = trait_impl_methods.get(&impl_key).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "missing impl {} for {} required by trait call {}.{}",
+                    receiver_name,
+                    self_type,
+                    receiver_name,
+                    method
+                )
+            })?;
+
+            return Ok(Expression::Call(target_function.clone(), args.to_vec()));
+        }
+
+        let namespaced_call = parser::qualify_namespace_function_name(receiver_name, method);
+        if fns.contains_key(&namespaced_call) {
+            return Ok(Expression::Call(namespaced_call, args.to_vec()));
+        }
+    }
+
+    let receiver_type = get_expression_type(
+        receiver,
+        var_types,
+        fns,
+        type_definitions,
+        trait_method_signatures,
+        trait_impl_methods,
+    )?;
+    let namespaced_call = parser::qualify_namespace_function_name(&receiver_type, method);
+    if !fns.contains_key(&namespaced_call) {
+        return Err(anyhow::anyhow!(
+            "method {}.{} not found for receiver type {}",
+            receiver_type,
+            method,
+            receiver_type
+        ));
+    }
+
+    let mut call_args = Vec::with_capacity(args.len() + 1);
+    call_args.push(receiver.clone());
+    call_args.extend(args.iter().cloned());
+    Ok(Expression::Call(namespaced_call, call_args))
+}
+
 fn validate_special_trait_shape(trait_decl: &parser::TraitDecl) -> anyhow::Result<()> {
     if trait_decl.name == "Copy" {
         if trait_decl.methods.len() != 1 {
@@ -2699,6 +3197,42 @@ fn rewrite_expression(
                     .collect(),
             )
         }
+        Expression::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expression::MethodCall {
+            receiver: Box::new(match receiver.as_ref() {
+                Expression::Variable(name)
+                    if local_type_name_map.contains_key(name)
+                        || type_substitution_map.contains_key(name) =>
+                {
+                    Expression::Variable(rewrite_identifier(
+                        name,
+                        type_substitution_map,
+                        local_type_name_map,
+                    ))
+                }
+                _ => rewrite_expression(
+                    receiver,
+                    type_substitution_map,
+                    local_type_name_map,
+                    local_function_name_map,
+                ),
+            }),
+            method: method.clone(),
+            args: args
+                .iter()
+                .map(|arg| {
+                    rewrite_expression(
+                        arg,
+                        type_substitution_map,
+                        local_type_name_map,
+                        local_function_name_map,
+                    )
+                })
+                .collect(),
+        },
         Expression::PostfixCall { callee, args } => Expression::PostfixCall {
             callee: Box::new(rewrite_expression(
                 callee,
@@ -3470,6 +4004,30 @@ pub(crate) fn get_expression_type(
                 }
                 Ok(enum_def.name.clone())
             }
+        }
+        Expression::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
+            let normalized = normalize_method_call_expression(
+                receiver,
+                method,
+                args,
+                var_types,
+                fns,
+                type_definitions,
+                trait_method_signatures,
+                trait_impl_methods,
+            )?;
+            get_expression_type(
+                &normalized,
+                var_types,
+                fns,
+                type_definitions,
+                trait_method_signatures,
+                trait_impl_methods,
+            )
         }
         Expression::PostfixCall { callee, args } => match callee.as_ref() {
             Expression::FieldAccess {
@@ -4250,6 +4808,9 @@ fn format_unsupported_call_target_message(callee: &Expression) -> String {
             "unsupported call target {}(...): expected a declared function call",
             name
         ),
+        Expression::MethodCall { .. } => {
+            "unsupported method call target: expected method calls to be normalized".to_string()
+        }
         _ => format!(
             "unsupported call target expression of kind {}: expected a function-style call target",
             expression_kind(callee)
@@ -4262,6 +4823,7 @@ fn expression_kind(expr: &Expression) -> &'static str {
         Expression::Variable(_) => "variable",
         Expression::Literal(_) => "literal",
         Expression::Call(_, _) => "call",
+        Expression::MethodCall { .. } => "method-call",
         Expression::PostfixCall { .. } => "postfix-call",
         Expression::BinOp(_, _, _) => "binary-op",
         Expression::UnaryOp(_, _) => "unary-op",
@@ -5464,10 +6026,77 @@ fun main() -> I32 {
         assert!(resolved
             .function_definitions
             .contains_key("Option__is_some"));
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Return { expr } = &main.body[1] else {
+            panic!("expected normalized return expression");
+        };
+        let parser::Expression::Call(function_name, args) = expr else {
+            panic!("expected normalized direct call");
+        };
+        assert_eq!(function_name, "Option__is_some");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(args[0], parser::Expression::Variable(_)));
     }
 
     #[test]
-    fn resolve_reports_user_facing_message_for_unsupported_call_target() {
+    fn resolve_accepts_method_calls_on_value_and_temporary_receivers() {
+        let source = r#"
+struct Option {
+	value: I32,
+}
+
+namespace Option {
+	fun is_some(v: Option) -> I32 {
+		return v.value
+	}
+}
+
+fun make_option() -> Option {
+	return Option struct { value: 11 }
+}
+
+fun main() -> I32 {
+	v = Option struct { value: 7 }
+	x = v.is_some()
+	return make_option().is_some()
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+
+        let parser::Statement::Assign { value, .. } = &main.body[1] else {
+            panic!("expected normalized assignment");
+        };
+        let parser::Expression::Call(function_name, args) = value else {
+            panic!("expected normalized method call");
+        };
+        assert_eq!(function_name, "Option__is_some");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(args[0], parser::Expression::Variable(_)));
+
+        let parser::Statement::Return { expr } = &main.body[2] else {
+            panic!("expected return statement");
+        };
+        let parser::Expression::Call(function_name, args) = expr else {
+            panic!("expected normalized method call on temporary receiver");
+        };
+        assert_eq!(function_name, "Option__is_some");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(args[0], parser::Expression::Call(_, _)));
+    }
+
+    #[test]
+    fn resolve_reports_user_facing_message_for_missing_method() {
         let source = r#"
 struct Option {
 	value: I32,
@@ -5485,12 +6114,39 @@ fun main() -> I32 {
         let err = resolve(ast).expect_err("resolve should fail");
         let message = err.to_string();
         assert!(
-            message.contains("unsupported call target v.missing(...)"),
+            message.contains("method Option.missing not found for receiver type Option"),
             "unexpected error: {message}"
         );
+    }
+
+    #[test]
+    fn resolve_does_not_treat_receiver_method_sugar_as_trait_dispatch() {
+        let source = r#"
+trait MyReceiverHash {
+	fun hash(v: Self) -> I32
+}
+
+impl MyReceiverHash for I32 {
+	fun hash(v: I32) -> I32 {
+		return v
+	}
+}
+
+fun main() -> I32 {
+	v = 7
+	return v.hash()
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let err =
+            resolve(ast).expect_err("receiver method sugar should not dispatch through traits");
+        let message = err.to_string();
         assert!(
-            !message.contains("FieldAccess {"),
-            "error should not leak debug AST formatting: {message}"
+            message.contains("method I32.hash not found for receiver type I32"),
+            "unexpected error: {message}"
         );
     }
 
@@ -5522,6 +6178,93 @@ fun main() -> I32 {
         assert!(resolved
             .function_definitions
             .contains_key("IntIdentity__value"));
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Return { expr } = &main.body[0] else {
+            panic!("expected normalized return");
+        };
+        let parser::Expression::Call(function_name, args) = expr else {
+            panic!("expected normalized namespaced call");
+        };
+        assert_eq!(function_name, "IntIdentity__value");
+        assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn resolve_accepts_method_calls_on_generic_specialized_receivers() {
+        let source = r#"
+generic Wrapper[T] {
+	struct Wrapper {
+		value: T,
+	}
+
+	fun get(v: Wrapper) -> T {
+		return v.value
+	}
+}
+
+specialize IntWrapper = Wrapper[I32]
+
+fun main() -> I32 {
+	w = IntWrapper struct { value: 7 }
+	return w.get()
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Return { expr } = &main.body[1] else {
+            panic!("expected normalized return");
+        };
+        let parser::Expression::Call(function_name, args) = expr else {
+            panic!("expected normalized method call on generic specialization");
+        };
+        assert_eq!(function_name, "IntWrapper__get");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(args[0], parser::Expression::Variable(_)));
+    }
+
+    #[test]
+    fn resolve_accepts_method_calls_on_std_string_helpers() {
+        let source = r#"
+impl Copy for String {
+	fun copy(v: String) -> String {
+		return v
+	}
+}
+
+fun main() -> I32 {
+	s = "alpha-beta"
+	s.starts_with("alpha")
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+        let main = resolved
+            .function_definitions
+            .get("main")
+            .expect("missing main definition");
+        let parser::Statement::Expression { expr } = &main.body[1] else {
+            panic!("expected normalized expression statement");
+        };
+        let parser::Expression::Call(function_name, args) = expr else {
+            panic!("expected normalized std string method call");
+        };
+        assert_eq!(function_name, "String__starts_with");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(args[0], parser::Expression::Variable(_)));
     }
 
     #[test]

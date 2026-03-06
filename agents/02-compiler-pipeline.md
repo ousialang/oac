@@ -10,6 +10,7 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
    - CLI `build`/`test`/`bench-prove` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` and `main.rs::compile_source_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
 5. Resolve/type-check with `ir::resolve`.
+   - After the initial function-body type check, resolve normalizes receiver method syntax (`value.helper(...)`) into ordinary calls (`TypeName__helper(value, ...)`) or enum-constructor postfix forms before ownership rewriting, purity checks, call indexing, and codegen.
 6. Lower to QBE with `qbe_backend::compile`.
 7. Prepare prove + integer-safety + struct-invariant checker artifacts, group ordinary-root obligations into repo-local summary candidates, and consult proof-cache policy from `VerificationConfig` / `--proof-cache`.
    - Prove, integer-safety, and struct-invariant site checkers first prune the cloned caller CFG to blocks that can still reach the targeted site before reachable-callee closure is computed.
@@ -110,7 +111,7 @@ Core AST includes:
 - Top-level namespaces (`namespace Name { ... }`) support `fun` and `extern fun`; declarations are flattened to mangled internal function keys (`Name__fn`).
 - External declarations (`extern fun name(...) -> Type`) are signature-only AST nodes and may appear at top-level or inside namespace blocks.
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
-- Expressions: literals, vars, calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`Name.fn(args)` parses as postfix call and resolves either as enum constructor or namespace call)
+- Expressions: literals, vars, calls, method calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`receiver.fn(args)` parses as a method call; resolve preserves `Name.fn(args)` as static namespace/trait/enum syntax and rewrites value receivers to ordinary calls)
 - Char literals are parsed from single quotes (for example `'x'`, `'\n'`) and lowered to a namespaced constructor call (`Char.from_code(<i32>)`).
 - Legacy `template` / `instantiate` are hard-cut parser errors with migration hints to `generic` / `specialize`.
 
@@ -138,6 +139,7 @@ Important enforced invariants include:
 - `prove(...)` and `assert(...)` are statement-only; expression usage is rejected
 - user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
 - namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
+- receiver method calls (`value.fn(args)`) are resolved through the receiver's concrete type (`TypeName__fn(value, args...)`) and normalized into ordinary `Call(...)` nodes before ownership/codegen
 - namespace call lowering is also used for generic-specialized helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
 - trait calls are v1 namespaced calls (`Trait.method(value, ...)`) that type-check against trait signatures and resolve to concrete impl function names (`Trait__Type__method`)
 - trait coherence is enforced globally: duplicate `impl Trait for Type` is rejected, and missing impls for generic bounds are rejected at specialization time

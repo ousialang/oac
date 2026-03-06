@@ -39,6 +39,7 @@ Observed in parser/IR implementation:
 - Generic inline bounds (`generic Map[K: Hash + Eq, V] { ... }`).
 - Flat same-directory imports with no namespace: `import "helper.oa"` merges imported declarations into the same global scope.
 - Top-level namespaces for helper/interop declarations: `namespace TypeName { fun helper(...) -> ... { ... } }` and `namespace TypeName { extern fun symbol(...) -> ... }`, callable as `TypeName.helper(...)`.
+- Call-only receiver method sugar is supported for namespace helpers: `value.helper(args...)` resolves through the receiver's concrete type and rewrites to `TypeName.helper(value, args...)`.
 - External function declarations are signature-only (`extern fun name(args...) -> Type`, no body) and may appear at top-level or inside namespace blocks.
 - Char literals with single quotes are supported (`'x'`, escape forms like `'\n'`) and lower to std `Char` values.
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
@@ -80,6 +81,8 @@ Observed in parser/IR implementation:
 - Assignment statements cannot bind variables to `Void`-typed expressions.
 - `Void`-return calls are statement-only (cannot be used as expression values).
 - Namespace calls are syntactic sugar for internal function names using `Namespace__function` lowering, while preserving existing enum constructor call syntax `Enum.Variant(...)`.
+- Receiver method calls are call-only sugar: `value.helper(args...)` lowers through the receiver's resolved type namespace and prepends the receiver as argument 0; bare-identifier syntax `TypeName.helper(...)` remains the existing static namespace/trait/enum surface.
+- Plain field access rules are unchanged: non-variable field access is still rejected, so `(expr).field` is invalid even though `(expr).helper(...)` is accepted.
 - Namespace call lowering also applies to generic-specialized helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
 - Traits are static-only in v1: method calls use `Trait.method(value, ...)` and are resolved to concrete impl symbols (`Trait__Type__method`) before backend lowering.
 - Trait method signatures must take `Self` as the first parameter type in v1.

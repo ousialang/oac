@@ -1,0 +1,8 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: snapshot_content
+snapshot_kind: text
+---
+8
+15
+23

@@ -119,6 +119,7 @@ Key tests:
 - `crates/oac/src/parser.rs` tests assert generic bracket syntax parsing (including multi-parameter inline bounds), nested generic type arguments, local generic-body specialization parsing (`specialize LocalAlias = Name[...]`), trait/impl parsing, hard-cut legacy `template`/`instantiate` rejection with migration hints, invariant declaration syntax for both single and grouped forms (`invariant [id]? "label" for (...)` and `invariant for (...) { ... }`, including inside generics), multi-parameter invariant parsing, mandatory display labels, and optional identifiers.
 - `crates/oac/src/parser.rs` also includes top-level test declaration parsing coverage (`test "..." { ... }`).
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
+- `crates/oac/src/parser.rs` also covers receiver method syntax (`value.helper(...)`) including temporary receivers, chained calls, and the regression that non-variable field access without call syntax still fails.
 - `crates/oac/src/parser.rs` also covers top-level `extern fun` parsing plus namespace-scoped extern parsing (`namespace Name { extern fun ... }`) including internal-name mangling and preserved extern symbol names.
 - `crates/oac/src/parser.rs` includes an AST snapshot regression (`parser_float_literals_ast`) for mixed FP32/FP64 literal parsing.
 - `crates/oac/src/parser.rs` also includes a regression for FP32 literal parsing (`Literal::Float32`).
@@ -133,6 +134,7 @@ Key tests:
 - `crates/oac/src/ir.rs` also validates accepted `main` signatures (`main()`, `main(argc: I32, argv: I64)`, and `main(argc: I32, argv: PtrInt)`).
 - `crates/oac/src/ir.rs` includes alias coverage for `PtrInt` behaving as `I64` in function calls/equality and type-definition mapping.
 - `crates/oac/src/ir.rs` also validates namespace call resolution/type-checking by lowering to mangled function names (`TypeName__helper`).
+- `crates/oac/src/ir.rs` also validates receiver method-call normalization for local values, temporary receivers, generic-specialized receiver types, std `String` helpers, and missing-method diagnostics.
 - `crates/oac/src/ir.rs` also validates trait-system behavior: duplicate impl rejection, impl signature mismatch rejection, missing bound impl failures at specialization, and trait-call dispatch/type-check through concrete impl symbols.
 - `crates/oac/src/ir.rs` also validates ownership/lifecycle constraints: `Copy`/`Drop` trait-shape enforcement, move diagnostics (`use of moved value ...`, `cannot move from uninitialized value ...`), acceptance of repeated reads for `Copy` types, accepted statement calls to `Void` externs, and rejection of `Void` parameters.
 - `crates/oac/src/ir.rs` also validates v2 extern ABI restrictions by rejecting struct parameters/returns in `extern fun` signatures with diagnostics that direct users to `PtrInt` wrappers.
@@ -222,6 +224,7 @@ Key tests:
   - `integer_u8_add_overflow_fail.oa`
 - Execution fixtures also include namespace call coverage:
   - `namespace_basic.oa`
+  - `method_call_sugar.oa` (positive runtime coverage for receiver method syntax on locals, temporaries, chained receivers, and field-access receivers)
 - Execution fixtures also include large-string length regression coverage:
   - `string_len_large.oa`
 - Execution fixtures now include trait-bounded generic hash table coverage:

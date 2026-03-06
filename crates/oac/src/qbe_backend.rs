@@ -2258,6 +2258,9 @@ fn compile_expr(
         parser::Expression::Call(name, args) => {
             compile_named_call(ctx, func, name, args, variables)
         }
+        parser::Expression::MethodCall { .. } => {
+            panic!("method calls must be normalized before QBE codegen")
+        }
         parser::Expression::BinOp(op, left, right) => {
             let id = new_id(&["bin_op"]);
             let (left_var, left_ty) = compile_expr(ctx, func, left, variables);

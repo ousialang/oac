@@ -200,6 +200,11 @@ pub enum Expression {
     Literal(Literal),
     Variable(String),
     Call(String, Vec<Expression>),
+    MethodCall {
+        receiver: Box<Expression>,
+        method: String,
+        args: Vec<Expression>,
+    },
     PostfixCall {
         callee: Box<Expression>,
         args: Vec<Expression>,
@@ -1704,7 +1709,7 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
     loop {
         match tokens.get(0) {
             Some(TokenData::Symbols(s)) if s == "." => {
-                trace!("Parsing field access {:?}", lhs);
+                trace!("Parsing field access or method call {:?}", lhs);
                 tokens.remove(0); // Consume '.'
                 let field_token = if tokens.is_empty() {
                     return Err(anyhow::anyhow!(
@@ -1714,6 +1719,21 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
                     tokens.remove(0)
                 };
                 let field_name = expect_identifier(field_token)?;
+                if matches!(
+                    tokens.get(0),
+                    Some(TokenData::Parenthesis {
+                        opening: '(',
+                        is_opening: true
+                    })
+                ) {
+                    let args = parse_call_args(tokens)?;
+                    lhs = Expression::MethodCall {
+                        receiver: Box::new(lhs),
+                        method: field_name,
+                        args,
+                    };
+                    continue;
+                }
                 let struct_variable = match lhs {
                     Expression::Variable(s) => s,
                     other => {
@@ -2775,19 +2795,89 @@ fun main() -> I32 {
         let super::Statement::Expression { expr } = &main.body[1] else {
             panic!("expected namespaced call expression");
         };
-        let super::Expression::PostfixCall { callee, args } = expr else {
-            panic!("expected postfix call for namespaced call");
-        };
-        let super::Expression::FieldAccess {
-            struct_variable,
-            field,
-        } = callee.as_ref()
+        let super::Expression::MethodCall {
+            receiver,
+            method,
+            args,
+        } = expr
         else {
-            panic!("expected field-access callee in namespaced call");
+            panic!("expected method call for namespaced call syntax");
         };
-        assert_eq!(struct_variable, "Option");
-        assert_eq!(field, "is_some");
+        let super::Expression::Variable(receiver_name) = receiver.as_ref() else {
+            panic!("expected variable receiver in namespaced call syntax");
+        };
+        assert_eq!(receiver_name, "Option");
+        assert_eq!(method, "is_some");
         assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn parses_method_call_on_temporary_receiver() {
+        let source = r#"
+struct Counter {
+	value: I32,
+}
+
+fun make_counter() -> Counter {
+	return Counter struct { value: 7 }
+}
+
+fun main() -> I32 {
+	return (make_counter()).next()
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+
+        let main = &ast.top_level_functions[1];
+        let super::Statement::Return { expr } = &main.body[0] else {
+            panic!("expected return statement");
+        };
+        let super::Expression::MethodCall {
+            receiver,
+            method,
+            args,
+        } = expr
+        else {
+            panic!("expected method call");
+        };
+        assert!(matches!(receiver.as_ref(), super::Expression::Call(_, _)));
+        assert_eq!(method, "next");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn parses_chained_method_calls() {
+        let source = r#"
+fun main() -> I32 {
+	return start().step().finish()
+}
+        "#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+
+        let main = &ast.top_level_functions[0];
+        let super::Statement::Return { expr } = &main.body[0] else {
+            panic!("expected return statement");
+        };
+        let super::Expression::MethodCall {
+            receiver,
+            method,
+            args,
+        } = expr
+        else {
+            panic!("expected outer method call");
+        };
+        assert_eq!(method, "finish");
+        assert!(args.is_empty());
+        assert!(matches!(
+            receiver.as_ref(),
+            super::Expression::MethodCall { .. }
+        ));
     }
 
     #[test]

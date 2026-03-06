@@ -54,6 +54,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Top-level imports are flat and same-directory only: `import "helpers.oa"`. Imported declarations are merged into one global scope.
 - Same-directory import validation now lives in `crates/oac/src/flat_imports.rs` as shared helper `validate_same_dir_oa_import(...)` and is reused by both compiler import resolution and LSP project symbol/import traversal.
 - Namespaces are top-level and declaration-only: `namespace TypeName { fun helper(...) -> ... { ... } }` and `namespace TypeName { extern fun symbol(...) -> ... }`. Namespace calls use `TypeName.helper(...)` syntax and lower to internal lookup names using `TypeName__helper`.
+- Call-only receiver method sugar is also supported: `value.helper(args...)` resolves through the receiver's concrete type namespace and rewrites to `TypeName.helper(value, args...)` before ownership/codegen. Plain field access remains variable-only, so `(expr).field` is still rejected while `(expr).helper(...)` is allowed.
 - External declarations use `extern fun name(args...) -> Type` (no body). In v1 they may appear at top level and inside `namespace` blocks (no bodies, no `comptime`).
 - In v2 ABI, `extern fun` signatures cannot use struct parameter or return types; C interop boundaries that move struct-like payloads must use manual `PtrInt` wrapper signatures.
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.

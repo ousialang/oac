@@ -1,0 +1,37 @@
+struct Pair {
+	left: I32,
+	right: I32,
+}
+
+impl Copy for Pair {
+	fun copy(v: Pair) -> Pair {
+		return v
+	}
+}
+
+struct Holder {
+	pair: Pair,
+}
+
+namespace Pair {
+	fun flip(v: Pair) -> Pair {
+		return Pair struct {
+			left: v.right,
+			right: v.left,
+		}
+	}
+
+	fun show_left(v: Pair) -> I32 {
+		return v.left
+	}
+}
+
+fun main() -> I32 {
+	p = Pair struct { left: 5, right: 8 }
+	print(p.flip().show_left())
+	print((Pair struct { left: 10, right: 15 }).flip().show_left())
+	holder = Holder struct { pair: Pair struct { left: 20, right: 23 } }
+	print(holder.pair.flip().show_left())
+
+	return 0
+}
