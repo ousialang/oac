@@ -9,7 +9,7 @@ use url::Url;
 use crate::diagnostics::{
     diagnostic_from_anyhow, diagnostic_from_tokenizer_error, CompilerDiagnostic, DiagnosticStage,
 };
-use crate::{flat_imports, ir, parser, tokenizer};
+use crate::{flat_imports, formatter, ir, parser, tokenizer};
 
 #[derive(Debug)]
 struct DocumentState {
@@ -41,6 +41,13 @@ struct LspDiagnostic {
     severity: u32,
     source: String,
     message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct LspTextEdit {
+    range: LspRange,
+    #[serde(rename = "newText")]
+    new_text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +125,27 @@ fn write_lsp_message(writer: &mut impl Write, payload: &Value) -> anyhow::Result
     Ok(())
 }
 
+fn server_capabilities() -> Value {
+    json!({
+        "textDocumentSync": {
+            "openClose": true,
+            "change": 1,
+            "save": {
+                "includeText": true
+            }
+        },
+        "definitionProvider": true,
+        "hoverProvider": true,
+        "documentSymbolProvider": true,
+        "referencesProvider": true,
+        "documentFormattingProvider": true,
+        "completionProvider": {
+            "resolveProvider": false,
+            "triggerCharacters": ["."]
+        }
+    })
+}
+
 fn handle_lsp_message(
     message: &Value,
     documents: &mut HashMap<String, DocumentState>,
@@ -138,23 +166,7 @@ fn handle_lsp_message(
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": {
-                    "capabilities": {
-                        "textDocumentSync": {
-                            "openClose": true,
-                            "change": 1,
-                            "save": {
-                                "includeText": true
-                            }
-                        },
-                        "definitionProvider": true,
-                        "hoverProvider": true,
-                        "documentSymbolProvider": true,
-                        "referencesProvider": true,
-                        "completionProvider": {
-                            "resolveProvider": false,
-                            "triggerCharacters": ["."]
-                        }
-                    },
+                    "capabilities": server_capabilities(),
                     "serverInfo": {
                         "name": "oac",
                         "version": env!("CARGO_PKG_VERSION")
@@ -323,6 +335,19 @@ fn handle_lsp_message(
                 .and_then(Value::as_u64);
             let result = if let (Some(uri), Some(line), Some(character)) = (uri, line, character) {
                 completion_response(uri, line as u32, character as u32, documents)
+            } else {
+                Value::Array(vec![])
+            };
+            let response = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result
+            });
+            write_lsp_message(writer, &response)?;
+        }
+        "textDocument/formatting" => {
+            let result = if let Some(uri) = json_str(&params, "/textDocument/uri") {
+                formatting_response(uri, documents)
             } else {
                 Value::Array(vec![])
             };
@@ -753,6 +778,35 @@ fn completion_response(
     Value::Array(items)
 }
 
+fn formatting_response(uri: &str, documents: &HashMap<String, DocumentState>) -> Value {
+    let Some(text) = text_for_uri(uri, documents) else {
+        return Value::Array(vec![]);
+    };
+    let Some(formatted) = formatter::format_document(&text) else {
+        return Value::Array(vec![]);
+    };
+
+    if formatted == text {
+        return Value::Array(vec![]);
+    }
+
+    let edit = LspTextEdit {
+        range: full_document_range(&text),
+        new_text: formatted,
+    };
+    json!([edit])
+}
+
+fn full_document_range(text: &str) -> LspRange {
+    LspRange {
+        start: LspPosition {
+            line: 0,
+            character: 0,
+        },
+        end: byte_offset_to_lsp_position(text, text.len()),
+    }
+}
+
 fn symbols_for_project(
     uri: &str,
     documents: &HashMap<String, DocumentState>,
@@ -1093,7 +1147,7 @@ mod tests {
 
     use super::{
         analyze_document, completion_response, definition_response, document_symbol_response,
-        references_response, uri_to_path, DocumentState,
+        formatting_response, references_response, server_capabilities, uri_to_path, DocumentState,
     };
 
     #[test]
@@ -1250,6 +1304,79 @@ fun main() -> I32 {
         assert!(
             items.iter().any(|item| item["label"] == "alpha"),
             "expected alpha completion, got {items:?}"
+        );
+    }
+
+    #[test]
+    fn initialize_advertises_document_formatting() {
+        let capabilities = server_capabilities();
+        assert_eq!(
+            capabilities["documentFormattingProvider"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn formatting_returns_full_document_edit_for_unformatted_source() {
+        let mut docs = HashMap::new();
+        let uri = "file:///tmp/formatting.oa".to_string();
+        docs.insert(
+            uri.clone(),
+            DocumentState {
+                text: "struct Foo {x:I32,}\nfun main() -> I32 {\n\treturn 0\n}\n".to_string(),
+                version: Some(1),
+            },
+        );
+
+        let result = formatting_response(&uri, &docs);
+        let edits = result.as_array().expect("formatting edits array");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0]["range"]["start"]["line"].as_u64(), Some(0));
+        let new_text = edits[0]["newText"].as_str().expect("formatted text");
+        assert!(new_text.contains("struct Foo {\n\tx: I32,\n}\n"));
+    }
+
+    #[test]
+    fn formatting_returns_no_edits_for_already_formatted_source() {
+        let mut docs = HashMap::new();
+        let uri = "file:///tmp/already_formatted.oa".to_string();
+        docs.insert(
+            uri.clone(),
+            DocumentState {
+                text: "fun main() -> I32 {\n\treturn 0\n}\n".to_string(),
+                version: Some(1),
+            },
+        );
+
+        let result = formatting_response(&uri, &docs);
+        assert!(
+            result
+                .as_array()
+                .expect("formatting edits array")
+                .is_empty(),
+            "expected no edits, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn formatting_returns_no_edits_for_invalid_source() {
+        let mut docs = HashMap::new();
+        let uri = "file:///tmp/invalid_formatting.oa".to_string();
+        docs.insert(
+            uri.clone(),
+            DocumentState {
+                text: "fun main() -> I32 {\n\t$\n}\n".to_string(),
+                version: Some(1),
+            },
+        );
+
+        let result = formatting_response(&uri, &docs);
+        assert!(
+            result
+                .as_array()
+                .expect("formatting edits array")
+                .is_empty(),
+            "expected no edits, got {result:?}"
         );
     }
 }

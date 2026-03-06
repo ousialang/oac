@@ -6,7 +6,8 @@ This extension adds language support for Ousia (`.oa`) files in VS Code and conn
 
 - Language registration for `.oa`
 - Basic syntax highlighting
-- LSP-backed diagnostics, definitions, hover, references, document symbols, and completion via `oac lsp`
+- LSP-backed diagnostics, definitions, hover, references, document symbols, completion, and whole-document formatting via `oac lsp`
+- Extension manifest advertises both `Programming Languages` and `Formatters` categories for VS Code discovery/filtering
 - `Ousia: Restart Language Server` command
 
 ## Prerequisites
@@ -33,6 +34,20 @@ Then in VS Code:
 1. Open `tools/vscode-ousia`
 2. Press `F5` to launch an Extension Development Host
 3. Open any `.oa` file to activate the extension
+
+## Build And Install Locally
+
+From the repository root:
+
+```bash
+./install-vscode-extension.sh
+```
+
+If your VS Code CLI is not `code`, override it:
+
+```bash
+CODE_BIN=code-insiders ./install-vscode-extension.sh
+```
 
 ## Package
 

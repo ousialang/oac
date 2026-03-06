@@ -397,7 +397,14 @@ fn parse_builtin_assertion_statement(tokens: &mut Vec<TokenData>) -> anyhow::Res
     }
 }
 
+fn consume_newlines(tokens: &mut Vec<TokenData>) {
+    while tokens.first() == Some(&TokenData::Newline) {
+        tokens.remove(0);
+    }
+}
+
 fn parse_braced_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Statement>> {
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -557,6 +564,7 @@ fn parse_match_pattern(tokens: &mut Vec<TokenData>) -> anyhow::Result<MatchPatte
 
 fn parse_match_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
     let subject = parse_expression(tokens, 0)?;
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -598,6 +606,7 @@ fn parse_match_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statemen
 
 fn parse_match_expression(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
     let subject = parse_expression(tokens, 0)?;
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -732,6 +741,7 @@ fn parse_parameter_list(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Param
 }
 
 fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Statement>> {
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -785,6 +795,7 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Struc
         _ => return Err(anyhow::anyhow!("expected struct name")),
     };
 
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -867,6 +878,7 @@ fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef
         _ => return Err(anyhow::anyhow!("expected enum name")),
     };
 
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1048,6 +1060,7 @@ fn parse_namespace_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Ve
         }
     };
 
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1302,6 +1315,7 @@ fn parse_grouped_struct_invariant_declarations(
         !parameters.is_empty(),
         "invariant requires at least one parameter"
     );
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1567,6 +1581,7 @@ fn parse_struct_value(
         None => return Err(anyhow::anyhow!("unexpected end of file in struct literal")),
     }
 
+    consume_newlines(tokens);
     match tokens.first() {
         Some(TokenData::Parenthesis {
             opening: '{',
@@ -1802,6 +1817,7 @@ fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Gene
 
     let params = parse_generic_params(tokens)?;
 
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1970,6 +1986,7 @@ fn parse_trait_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TraitD
         TokenData::Word(name) => name,
         token => return Err(anyhow::anyhow!("expected trait name, got {:?}", token)),
     };
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -2027,6 +2044,7 @@ fn parse_impl_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<ImplDec
         "expected 'for' after trait name in impl declaration"
     );
     let for_type = parse_type_reference(tokens)?;
+    consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -2198,6 +2216,34 @@ fun id(v: Pair[Option[I32], Result[I32, Bool]]) -> Pair[Option[I32], Result[I32,
             holder.struct_fields[0].ty,
             "Pair[Option[I32],Result[I32,Bool]]"
         );
+    }
+
+    #[test]
+    fn parses_enum_declaration_with_newlines_before_opening_brace() {
+        let source = r#"
+enum JsonKind
+
+		{
+	Object,
+	Array,
+	String,
+	Number,
+	Bool,
+	Null,
+	Invalid,
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize enum brace-gap source");
+        let ast = parse(tokens).expect("parse enum brace-gap source");
+        let super::TypeDefDecl::Enum(enum_def) = &ast.type_definitions[0] else {
+            panic!("expected enum");
+        };
+        assert_eq!(enum_def.name, "JsonKind");
+        assert_eq!(enum_def.variants.len(), 7);
+        assert_eq!(enum_def.variants[0].name, "Object");
+        assert_eq!(enum_def.variants[6].name, "Invalid");
     }
 
     #[test]

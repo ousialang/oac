@@ -1,0 +1,17 @@
+---
+source: crates/oac/src/formatter.rs
+expression: formatted
+snapshot_kind: text
+---
+struct Foo {
+	x: I32,
+	y: I32,
+}
+
+fun main() -> I32 {
+	if true {
+		return 1
+	} else {
+		return 0
+	}
+}

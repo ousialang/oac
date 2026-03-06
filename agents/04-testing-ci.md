@@ -56,7 +56,18 @@ npm run build
 npm run lint
 ```
 
+Repo-root package-and-install helper:
+
+```bash
+./install-vscode-extension.sh
+# Override the VS Code CLI binary when needed.
+CODE_BIN=code-insiders ./install-vscode-extension.sh
+```
+
+The helper runs dependency install (`npm ci` when `package-lock.json` is present, otherwise `npm install`), `npm run build`, `npx --yes @vscode/vsce package`, and `code --install-extension ... --force`.
+
 When debugging extension startup, verify the server command is exactly `oac lsp` (no extra `--stdio` argument).
+In this repo's `.vscode/settings.json`, the extension is intentionally pointed at `cargo run -q -p oac -- lsp` so editor behavior tracks the current workspace source instead of any separately installed `oac` binary on `PATH`.
 
 Proving benchmark suite (report-only regression tracking):
 
@@ -113,10 +124,14 @@ Key tests:
 - `crates/oac/src/tokenizer.rs` test loads `crates/oac/tokenizer_tests/*`.
 - `crates/oac/tokenizer_tests/float_literals.oa` snapshots tokenization for mixed float literals (`1.25`, `2.5f64`) via `tokenizer::tests::tokenize_files`.
 - `crates/oac/tokenizer_tests/char_literals.oa` snapshots tokenization for char literals (including escapes) via `tokenizer::tests::tokenize_files`.
+- `crates/oac/src/formatter.rs` now snapshot-tests formatter output from readable source fixtures in `crates/oac/formatter_tests/*.oa`.
+- Formatter snapshot fixtures also cover brace-gap normalization before declaration and block bodies (for example `enum Name` followed by stray blank lines/indentation before `{`).
+- `crates/oac/formatter_invalid_tests/*.oa` cover fail-closed formatter rejection for invalid buffers.
 - `crates/oac/src/tokenizer.rs` also has a unit regression for FP32 decimal tokenization (`TokenData::Float`).
 - `crates/oac/src/tokenizer.rs` also covers `f64` suffix tokenization (`Float` token followed by `Word(\"f64\")`).
 - `crates/oac/src/tokenizer.rs` includes EOF word-lexing regressions to prevent LSP crash loops on partial files (`tokenizes_identifier_at_eof_without_panicking`, `tokenizes_underscore_identifier_at_eof_without_panicking`).
 - `crates/oac/src/parser.rs` tests assert generic bracket syntax parsing (including multi-parameter inline bounds), nested generic type arguments, local generic-body specialization parsing (`specialize LocalAlias = Name[...]`), trait/impl parsing, hard-cut legacy `template`/`instantiate` rejection with migration hints, invariant declaration syntax for both single and grouped forms (`invariant [id]? "label" for (...)` and `invariant for (...) { ... }`, including inside generics), multi-parameter invariant parsing, mandatory display labels, and optional identifiers.
+- `crates/oac/src/parser.rs` also includes a regression that declaration headers tolerate stray newlines before opening braces (for example `enum JsonKind` followed by blank lines/indentation before `{`).
 - `crates/oac/src/parser.rs` also includes top-level test declaration parsing coverage (`test "..." { ... }`).
 - `crates/oac/src/parser.rs` tests also cover namespace declaration parsing and namespaced call syntax (`TypeName.helper(...)`).
 - `crates/oac/src/parser.rs` also covers receiver method syntax (`value.helper(...)`) including temporary receivers, chained calls, and the regression that non-variable field access without call syntax still fails.
@@ -156,7 +171,8 @@ Key tests:
 - `crates/qbe-smt/src/encode.rs` includes solver-backed equivalence tests that compare legacy vs refactored bounded helper builders (`bounded_copy/set/havoc/strcpy/memcmp/strlen/strcmp`) under symbolic inputs for representative limits.
 - `crates/oac/src/diagnostics.rs` tests cover tokenizer span conversion, plain (no ANSI) report rendering, and no-span fallback rendering.
 - `crates/oac/src/diagnostics.rs` tests also enforce diagnostic headline quality for Ariadne plain reports (no duplicated `Error: error[...]` prefixing) and message/cause dedup behavior in `diagnostic_from_anyhow`.
-- `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, and file-URI handling.
+- `crates/oac/src/formatter.rs` tests cover comment-safe token/newline formatting, including top-level blank lines, block indentation, struct literals, match formatting, and preserved inline/standalone `//` comments.
+- `crates/oac/src/lsp.rs` tests cover diagnostics, definition/references lookup (including across flat imports), hover (including namespaced function calls), completion, document symbols, whole-document formatting capability/edits, and file-URI handling.
 - `crates/oac/src/invariant_metadata.rs` tests cover multi-binding discovery per struct and argument-assumption cross-product expansion when parameter types carry multiple invariants.
 - `crates/oac/src/struct_invariants.rs` tests cover invariant discovery/validation for declaration-based invariants, grouped invariant declarations, legacy function-name compatibility, generic concrete-name support, obligation-site scoping, deterministic call-site ordinals, per-`(call-site, invariant)` obligation expansion, argument-invariant checker preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), unknown fail-closed diagnostics with attempt ladders, and module-level QBE-native checker synthesis/CHC encoding behavior (including modeled `memcpy` encoding, modeled string/io CLib calls in checker encoding, and fail-closed unknown external calls).
 - `crates/oac/src/prove.rs` verifies compile-time `prove(...)` obligations over QBE-native checker synthesis and CHC solving, including multi-invariant argument preconditions, recursion-cycle policy (call-only cycles allowed, cycles with arg-invariant edges rejected fail-closed), no-op behavior when no prove sites exist, shared target-reachability pruning that drops post-site-only callees, unknown fail-closed diagnostics with attempt ladders, and checker-encoding coverage for modeled string/io CLib calls.

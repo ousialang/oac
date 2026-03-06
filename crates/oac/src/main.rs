@@ -6,6 +6,7 @@ mod codegen_runtime;
 mod comptime;
 mod diagnostics;
 mod flat_imports;
+mod formatter;
 mod integer_safety;
 mod invariant_metadata;
 mod ir;

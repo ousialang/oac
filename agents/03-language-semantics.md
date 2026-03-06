@@ -44,6 +44,7 @@ Observed in parser/IR implementation:
 - Char literals with single quotes are supported (`'x'`, escape forms like `'\n'`) and lower to std `Char` values.
 - Identifier lexing uses `[A-Za-z_][A-Za-z0-9_]*` and allows EOF-terminated identifiers (no trailing delimiter required).
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
+- Leading newlines before opening braces in braced declaration/block headers are treated as whitespace (`enum Name` newline `{`, `trait Name` newline `{`, `if cond` newline `{`, and similar forms remain valid).
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
 - Runtime pointer-memory builtins: `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, `store_u8(addr: PtrInt, value: U8) -> Void`, `store_i32(addr: PtrInt, value: I32) -> Void`, `store_i64(addr: PtrInt, value: I64) -> Void`, and `store_bool(addr: PtrInt, value: Bool) -> Void`.
 - Top-level test declarations: `test "Name" { ... }`.

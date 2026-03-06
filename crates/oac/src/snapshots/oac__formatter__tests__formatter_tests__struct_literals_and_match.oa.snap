@@ -1,0 +1,28 @@
+---
+source: crates/oac/src/formatter.rs
+expression: formatted
+snapshot_kind: text
+---
+enum OptionI32 {
+	None,
+	Some(I32),
+}
+
+fun main() -> I32 {
+	v = OptionI32.Some(1)
+	return match v {
+		OptionI32.None => Foo struct {
+			left: 0,
+			right: 0,
+		},
+		OptionI32.Some(x) => Foo struct {
+			left: x,
+			right: x + 1,
+		},
+	}
+}
+
+struct Foo {
+	left: I32,
+	right: I32,
+}

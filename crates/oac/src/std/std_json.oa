@@ -182,7 +182,7 @@ namespace Json {
 					return Json.parse_fail()
 				}
 				esc = char_at(s, i + 1)
-				if !Json.is_json_escape(esc) {
+				if ! Json.is_json_escape(esc) {
 					return Json.parse_fail()
 				}
 
@@ -190,16 +190,16 @@ namespace Json {
 					if i + 5 >= n {
 						return Json.parse_fail()
 					}
-					if !Json.char_is_hex_digit(char_at(s, i + 2)) {
+					if ! Json.char_is_hex_digit(char_at(s, i + 2)) {
 						return Json.parse_fail()
 					}
-					if !Json.char_is_hex_digit(char_at(s, i + 3)) {
+					if ! Json.char_is_hex_digit(char_at(s, i + 3)) {
 						return Json.parse_fail()
 					}
-					if !Json.char_is_hex_digit(char_at(s, i + 4)) {
+					if ! Json.char_is_hex_digit(char_at(s, i + 4)) {
 						return Json.parse_fail()
 					}
-					if !Json.char_is_hex_digit(char_at(s, i + 5)) {
+					if ! Json.char_is_hex_digit(char_at(s, i + 5)) {
 						return Json.parse_fail()
 					}
 					i = i + 6
@@ -235,7 +235,7 @@ namespace Json {
 		if char_at(s, i) == 48 {
 			i = i + 1
 		} else {
-			if !Json.char_is_digit(char_at(s, i)) {
+			if ! Json.char_is_digit(char_at(s, i)) {
 				return Json.parse_fail()
 			}
 			i = Json.consume_digits(s, i)

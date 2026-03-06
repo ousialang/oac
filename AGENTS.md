@@ -41,6 +41,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Fall back to `cargo test` only when `cargo-nextest` is unavailable or when parity with CI behavior must be verified explicitly.
 - Tracked Git hooks live under `.githooks/`; enable them locally with `git config core.hooksPath .githooks`.
 - The local `pre-commit` hook formats staged Rust files with nightly `rustfmt` (using `rustfmt.toml` with nightly import-sorting options), and the local `pre-push` hook is intentionally a no-op (no automatic test execution).
+- Repo root `install-vscode-extension.sh` is the canonical helper for packaging `tools/vscode-ousia` into a `.vsix` and installing it through the VS Code CLI (`CODE_BIN` can override the `code` executable).
 
 ## Current Syntax Notes
 
@@ -59,6 +60,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - External declarations use `extern fun name(args...) -> Type` (no body). In v1 they may appear at top level and inside `namespace` blocks (no bodies, no `comptime`).
 - In v2 ABI, `extern fun` signatures cannot use struct parameter or return types; C interop boundaries that move struct-like payloads must use manual `PtrInt` wrapper signatures.
 - Struct field lists allow optional trailing commas in both type declarations and struct literals.
+- Parser brace handling is newline-tolerant for braced declaration/block headers, so constructs like `enum Name` newline `{` and `if cond` newline `{` remain valid and format back to same-line braces.
 - Ownership is move-only by default: reading a non-`Copy` value moves it, and subsequent reads fail (`use of moved value ...` / `cannot move from uninitialized value ...` diagnostics).
 - `Copy` controls implicit cloning: when a concrete type implements `Copy`, read sites lower through static dispatch to the concrete `Copy.copy(...)` impl; the canonical trait shape is `copy(v: Ref[Self]) -> Self`, and the backend synthesizes a temporary `Ref` wrapper at read sites for ref-style impls (legacy by-value impl params are still accepted for now).
 - `Drop` controls deterministic destruction: the resolver inserts `Drop.drop(value)` calls at reassignment overwrite points and lexical scope exits (reverse declaration order), skipping moved/uninitialized bindings.
@@ -106,7 +108,7 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - Runtime artifact outputs are backend-specific: QBE emits `target/oac/ir.qbe` + `target/oac/assembly.s`; LLVM emits `target/oac/ir.ll` + `target/oac/object.o`.
 - LLVM runtime lowering now compiles directly from `ir::ResolvedProgram` in `crates/oac/src/llvm_backend.rs` (no production IR->QBE->LLVM path and no `compile_with_qbe` runtime coupling).
 - In the LLVM runtime backend, `prove(...)` remains verification-only and lowers as runtime no-op codegen.
-- The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, and `textDocument/completion`.
+- The LSP currently handles text sync plus `textDocument/definition`, `textDocument/hover`, `textDocument/documentSymbol`, `textDocument/references`, `textDocument/completion`, and whole-document `textDocument/formatting`.
 - Compiler diagnostics are centralized in `crates/oac/src/diagnostics.rs` and rendered with Ariadne for both CLI output and `oac lsp` diagnostic conversion.
 - `oac build` / `oac test` stage failures are now mapped to stable diagnostic codes (for example `OAC-PARSE-001`, `OAC-RESOLVE-001`, `OAC-INV-001`, `OAC-MINV-001`, `OAC-LINK-001`, `OAC-LINK-002`) and emitted as Ariadne reports; execution fixture compilation-error snapshots therefore reflect Ariadne plain-report text.
 - `oac build` and `oac test` now emit a compact staged progress UI to `stderr` by default with user-facing stage labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`; plus `collect tests`/`run tests` for test flows), aligned durations, and low-noise ASCII status prefixes (`...`, `ok`, `!!`).
@@ -114,7 +116,11 @@ This repository contains the Ousia compiler workspace (`crates/*`) plus editor t
 - `--no-color` disables ANSI color for both staged progress rows and Ariadne diagnostic rendering for that build/test invocation.
 - `oac build`, `oac test`, and `oac bench-prove` now accept `--proof-cache trust|strict|off`; build/test default to `trust`, while `bench-prove` defaults to `strict`.
 - A VS Code extension scaffold now lives in `tools/vscode-ousia/`; it launches `oac lsp` and is configured via `ousia.server.path`, `ousia.server.args`, and `ousia.trace.server`.
+- The VS Code extension manifest is categorized under both `Programming Languages` and `Formatters` so formatter-filtered extension discovery includes Ousia.
+- Repo root `install-vscode-extension.sh` installs the VS Code extension end-to-end by running dependency install, TypeScript build, `@vscode/vsce package`, and `code --install-extension ... --force`.
 - The VS Code extension must launch `oac lsp` without appending `--stdio`; `ousia.server.args` are sanitized to ignore `--stdio`.
+- Repo workspace settings in `.vscode/settings.json` point the VS Code extension at `cargo run -q -p oac -- lsp`, set `ousia-lang.ousia-vscode` as the default formatter for `[ousia]` files, and enable format-on-save for that language.
+- Formatter snapshot inputs now live under `crates/oac/formatter_tests/*.oa`, with invalid formatter fixtures under `crates/oac/formatter_invalid_tests/*.oa`; formatted output snapshots are stored in `crates/oac/src/snapshots/`.
 - Top-level tests use declaration syntax: `test "Name" { ... }`.
 - The CLI now includes `oac test <file.oa>`: it lowers `test` declarations into generated helper functions plus a generated `main`, compiles under `target/oac/test/`, and executes tests fail-fast (assert failures exit with `242`).
 - The CLI now also includes `oac bench-prove`: end-to-end proving benchmark runner over curated execution fixtures with suites `full` (default) and `quick`, configurable iterations, optional baseline/report path overrides, deterministic `--update-baseline` rewriting, and optional `--strict-outcome-gate` baseline-vs-candidate verification outcome checks.

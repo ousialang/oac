@@ -1,0 +1,7 @@
+// leading comment
+fun main() -> I32 {
+	x=1// inline
+
+	// keep me
+	return x
+}

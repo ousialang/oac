@@ -50,7 +50,8 @@ generic Mut[T] {
 	}
 
 	fun add_bytes(m: Mut, delta: PtrInt) -> Mut {
-		return from_ptr(m.ptr + delta)
+		return  from_ptr(m.ptr + delta)
+
 	}
 }
 

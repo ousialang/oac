@@ -1,0 +1,11 @@
+enum JsonKind
+
+		{
+	Object,
+	Array,
+	String,
+	Number,
+	Bool,
+	Null,
+	Invalid,
+}

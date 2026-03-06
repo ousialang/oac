@@ -1,0 +1,14 @@
+---
+source: crates/oac/src/formatter.rs
+expression: formatted
+snapshot_kind: text
+---
+enum JsonKind {
+	Object,
+	Array,
+	String,
+	Number,
+	Bool,
+	Null,
+	Invalid,
+}

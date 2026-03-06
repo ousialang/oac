@@ -12,6 +12,7 @@ The active compiler workspace is:
 
 Editor tooling in this repository:
 - `tools/vscode-ousia` (VS Code extension client for `oac lsp`)
+- `install-vscode-extension.sh` (repo-root helper that packages and installs the VS Code extension `.vsix`)
 
 ## High-Value Paths
 
@@ -22,6 +23,9 @@ Editor tooling in this repository:
 - `crates/oac/src/runtime_layout.rs`: shared runtime byte-layout helpers/constants used by both QBE and LLVM backends.
 - `crates/oac/src/bench_prove.rs`: proving benchmark suite (`oac bench-prove`) with baseline/report handling.
 - `crates/oac/src/diagnostics.rs`: shared compiler diagnostic model and Ariadne rendering used by CLI and LSP.
+- `crates/oac/src/formatter.rs`: comment-safe token/newline-based source formatter used by `oac lsp` whole-document formatting.
+- `crates/oac/formatter_tests/*.oa`: readable formatter input fixtures whose formatted output is snapshot-tested through `formatter.rs`.
+- `crates/oac/formatter_invalid_tests/*.oa`: invalid formatter fixtures that assert fail-closed `None` results.
 - `crates/oac/src/flat_imports.rs`: shared flat import resolver used by both user source and stdlib loading.
 - `crates/oac/src/ast_walk.rs`: shared AST traversal helpers (expression-path indexing + call walking) reused across resolve and verification passes.
 - `crates/oac/src/verification_checker.rs`: shared prove/invariant checker assembly helpers for QBE+CHC verification.
@@ -31,10 +35,12 @@ Editor tooling in this repository:
 - `crates/oac/src/verification_solver.rs`: shared solver-attempt policy (`10s/30s` + optional large-obligation third attempt) and attempt-metadata formatting.
 - `crates/oac/src/verification_outcomes.rs`: baseline-vs-candidate outcome capture/comparison helpers used by strict transition gating.
 - `crates/oac/src/symbol_keys.rs`: shared trait symbol key/mangling helpers used by resolve + codegen.
-- `crates/oac/src/lsp.rs`: stdio LSP server loop (`oac lsp`) and diagnostics publishing.
+- `crates/oac/src/lsp.rs`: stdio LSP server loop (`oac lsp`), diagnostics publishing, and whole-document formatting responses.
 - `tools/vscode-ousia/src/extension.ts`: VS Code client activation and `oac lsp` process launch.
-- `tools/vscode-ousia/package.json`: extension manifest, language registration, and server settings.
+- `tools/vscode-ousia/package.json`: extension manifest, language registration, VS Code discovery categories, and server settings.
 - `tools/vscode-ousia/README.md`: extension runtime expectations (notably `oac lsp` launch semantics and settings behavior).
+- `install-vscode-extension.sh`: local helper that runs dependency install, extension build, `.vsix` packaging, and VS Code CLI installation for `tools/vscode-ousia`.
+- `.vscode/settings.json`: repo-local VS Code workspace defaults, including launching `oac lsp` through `cargo run -q -p oac --`, Ousia format-on-save, and default formatter selection.
 - `crates/oac/src/tokenizer.rs`: eager tokenizer and syntax error model.
 - `crates/oac/src/parser.rs`: AST definitions and parser.
 - `crates/oac/src/test_framework.rs`: isolated lowering for `test "..." { ... }` declarations into runnable generated functions/main used by `oac test`.
@@ -72,7 +78,7 @@ Editor tooling in this repository:
 
 - `stdlib/` and `examples/`: Ousia sample/library programs.
 - `docs/`: language notes/spec drafts (some are historical/incomplete).
-- `tools/vscode-ousia/`: editor integration package for local development and packaging (`.vsix`).
+- `tools/vscode-ousia/`: editor integration package for local development and packaging (`.vsix`), with repo-root install flow via `install-vscode-extension.sh`.
 - `tools/vscode-ousia/`: VS Code extension workspace and packaging assets.
 
 ## Source of Truth Order (When Docs Disagree)

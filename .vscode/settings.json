@@ -1,0 +1,8 @@
+{
+  "ousia.server.path": "cargo",
+  "ousia.server.args": ["run", "-q", "-p", "oac", "--"],
+  "[ousia]": {
+    "editor.defaultFormatter": "ousia-lang.ousia-vscode",
+    "editor.formatOnSave": true
+  }
+}

@@ -1,0 +1,24 @@
+trait Eq{fun equals(lhs:I32,rhs:I32)->Bool}
+impl Eq for I32{
+fun equals(lhs:I32,rhs:I32)->Bool {
+return lhs==rhs
+}
+}
+namespace Math{
+fun add(x:I32,y:I32)->I32 {
+return x+y
+}
+}
+generic Box[T]{
+struct Item {value:T,}
+fun make(value:T)->Item {
+return Item struct {value:value,}
+}
+}
+invariant stable "stable" for (v:Foo){
+return v.value>=0
+}
+test "works" {
+assert(true)
+}
+struct Foo {value:I32,}

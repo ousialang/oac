@@ -1,0 +1,12 @@
+---
+source: crates/oac/src/formatter.rs
+expression: formatted
+snapshot_kind: text
+---
+// leading comment
+fun main() -> I32 {
+	x = 1 // inline
+
+	// keep me
+	return x
+}
