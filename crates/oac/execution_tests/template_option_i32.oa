@@ -10,14 +10,14 @@ fun main() -> I32 {
 	a = OptionI32.Some(7)
 	b = OptionI32.None
 
-	if OptionI32.is_some(a) {
-		print(OptionI32.unwrap_or(a, 0))
+	if a.is_some() {
+		print(a.unwrap_or(0))
 	}
 
-	if OptionI32.is_some(b) {
+	if b.is_some() {
 		print(1)
 	} else {
-		print(OptionI32.unwrap_or(b, 9))
+		print(b.unwrap_or(9))
 	}
 
 	return 0

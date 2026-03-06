@@ -48,7 +48,7 @@ fun print_pop(v: IntVec__PopResult) -> I32 {
 		}
 		IntVec__PopResult.Value(payload) => {
 			print(payload.value)
-			print(IntVec.len(payload.vec))
+			print(payload.vec.len())
 			return 0
 		}
 	}
@@ -56,32 +56,32 @@ fun print_pop(v: IntVec__PopResult) -> I32 {
 
 fun main() -> I32 {
 	vec = IntVec.new()
-	print(IntVec.len(vec))
-	print(IntVec.capacity(vec))
+	print(vec.len())
+	print(vec.capacity())
 
-	vec = IntVec.reserve(vec, 3)
-	print(IntVec.capacity(vec))
+	vec = vec.reserve(3)
+	print(vec.capacity())
 
-	vec = IntVec.push(vec, 10)
-	vec = IntVec.push(vec, 20)
-	vec = IntVec.push(vec, 30)
-	print(IntVec.len(vec))
-	print(IntVec.capacity(vec))
-	print_lookup(IntVec.get(vec, 0))
-	print_lookup(IntVec.get(vec, 1))
-	print_lookup(IntVec.get(vec, 2))
-	print_lookup(IntVec.get(vec, 9))
+	vec = vec.push(10)
+	vec = vec.push(20)
+	vec = vec.push(30)
+	print(vec.len())
+	print(vec.capacity())
+	print_lookup(vec.get(0))
+	print_lookup(vec.get(1))
+	print_lookup(vec.get(2))
+	print_lookup(vec.get(9))
 
-	updated = IntVec.set(vec, 1, 99)
+	updated = vec.set(1, 99)
 	vec = updated.vec
 	print_bool(updated.updated)
-	print_lookup(IntVec.get(vec, 1))
+	print_lookup(vec.get(1))
 
-	miss_update = IntVec.set(vec, 9, 50)
+	miss_update = vec.set(9, 50)
 	print_bool(miss_update.updated)
 
-	print_pop(IntVec.pop(vec))
-	match IntVec.pop(vec) {
+	print_pop(vec.pop())
+	match vec.pop() {
 		IntVec__PopResult.Empty => {
 			vec = vec
 		}
@@ -89,10 +89,10 @@ fun main() -> I32 {
 			vec = payload.vec
 		}
 	}
-	print(IntVec.len(vec))
+	print(vec.len())
 
-	vec = IntVec.clear(vec)
-	print(IntVec.len(vec))
-	print(IntVec.capacity(vec))
+	vec = vec.clear()
+	print(vec.len())
+	print(vec.capacity())
 	return 0
 }

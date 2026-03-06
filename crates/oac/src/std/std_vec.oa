@@ -116,7 +116,7 @@ generic Vec[T] {
 	}
 
 	fun push(vec: Vec, value: T) -> Vec {
-		resized = Vec.reserve(vec, 1)
+		resized = vec.reserve(1)
 		node = Node struct {
 			value: value,
 			next: resized.items,
@@ -236,35 +236,35 @@ generic Vec[T] {
 
 test "A vec MUST start empty" {
 	vec = Vec.new()
-	assert(Vec.len(vec) == 0)
-	assert(Vec.capacity(vec) == 0)
+	assert(vec.len() == 0)
+	assert(vec.capacity() == 0)
 }
 
 test "A vec push/pop MUST keep stack order" {
 	vec = Vec.new()
-	vec = Vec.push(vec, 1)
-	vec = Vec.push(vec, 2)
-	vec = Vec.push(vec, 3)
-	assert(Vec.len(vec) == 3)
+	vec = vec.push(1)
+	vec = vec.push(2)
+	vec = vec.push(3)
+	assert(vec.len() == 3)
 
-	match Vec.pop(vec) {
+	match vec.pop() {
 		Vec__PopResult.Empty => {
 			assert(false)
 		}
 		Vec__PopResult.Value(v) => {
 			assert(v.value == 3)
-			assert(Vec.len(v.vec) == 2)
+			assert(v.vec.len() == 2)
 		}
 	}
 }
 
 test "A vec get/set MUST index insertion order" {
 	vec = Vec.with_capacity(2)
-	vec = Vec.push(vec, 10)
-	vec = Vec.push(vec, 20)
-	vec = Vec.push(vec, 30)
+	vec = vec.push(10)
+	vec = vec.push(20)
+	vec = vec.push(30)
 
-	match Vec.get(vec, 0) {
+	match vec.get(0) {
 		Vec__Lookup.Missing => {
 			assert(false)
 		}
@@ -272,7 +272,7 @@ test "A vec get/set MUST index insertion order" {
 			assert(v == 10)
 		}
 	}
-	match Vec.get(vec, 2) {
+	match vec.get(2) {
 		Vec__Lookup.Missing => {
 			assert(false)
 		}
@@ -281,9 +281,9 @@ test "A vec get/set MUST index insertion order" {
 		}
 	}
 
-	updated = Vec.set(vec, 1, 99)
+	updated = vec.set(1, 99)
 	assert(updated.updated)
-	match Vec.get(updated.vec, 1) {
+	match updated.vec.get(1) {
 		Vec__Lookup.Missing => {
 			assert(false)
 		}
@@ -295,12 +295,12 @@ test "A vec get/set MUST index insertion order" {
 
 test "A vec reserve/clear MUST preserve capacity policy" {
 	vec = Vec.new()
-	vec = Vec.reserve(vec, 5)
-	assert(Vec.capacity(vec) >= 5)
+	vec = vec.reserve(5)
+	assert(vec.capacity() >= 5)
 
-	vec = Vec.push(vec, 1)
-	vec = Vec.push(vec, 2)
-	cleared = Vec.clear(vec)
-	assert(Vec.len(cleared) == 0)
-	assert(Vec.capacity(cleared) == Vec.capacity(vec))
+	vec = vec.push(1)
+	vec = vec.push(2)
+	cleared = vec.clear()
+	assert(cleared.len() == 0)
+	assert(cleared.capacity() == vec.capacity())
 }

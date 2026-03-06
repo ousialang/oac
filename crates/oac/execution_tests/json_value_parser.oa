@@ -87,7 +87,7 @@ fun print_string_lookup(lookup: JsonStringLookup, expected: String) -> I32 {
 		}
 		JsonStringLookup.Found(text) => {
 			print(1)
-			if String.equals(text, expected) {
+			if text.equals(expected) {
 				print(1)
 			} else {
 				print(0)

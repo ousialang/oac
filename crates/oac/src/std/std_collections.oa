@@ -44,7 +44,7 @@ generic LinkedList[T] {
 	}
 
 	fun make_node(value: T, next: LinkedList) -> Node {
-		next_len = len(next)
+		next_len = next.len()
 		if next_len < 0 {
 			next_len = 0
 		}
@@ -64,7 +64,7 @@ generic LinkedList[T] {
 	}
 
 	fun is_empty(list: LinkedList) -> Bool {
-		return len(list) == 0
+		return list.len() == 0
 	}
 
 	fun front(list: LinkedList) -> FrontOption {
@@ -97,27 +97,27 @@ generic LinkedList[T] {
 	}
 
 	fun head_or(list: LinkedList, fallback: T) -> T {
-		return match front(list) {
+		return match list.front() {
 			FrontOption.None => fallback
 			FrontOption.Some(value) => value
 		}
 	}
 
 	fun tail_or(list: LinkedList, fallback: LinkedList) -> LinkedList {
-		return match tail(list) {
+		return match list.tail() {
 			TailOption.None => fallback
 			TailOption.Some(next) => next
 		}
 	}
 
 	fun length(list: LinkedList) -> I32 {
-		return len(list)
+		return list.len()
 	}
 
 	fun reverse(list: LinkedList) -> LinkedList {
 		cursor = list
 		out = empty()
-		while !is_empty(cursor) {
+		while !cursor.is_empty() {
 			match cursor {
 				LinkedList.Empty => {
 					return out
@@ -133,9 +133,9 @@ generic LinkedList[T] {
 	}
 
 	fun append(left: LinkedList, right: LinkedList) -> LinkedList {
-		cursor = reverse(left)
+		cursor = left.reverse()
 		out = right
-		while !is_empty(cursor) {
+		while !cursor.is_empty() {
 			match cursor {
 				LinkedList.Empty => {
 					return out
@@ -158,10 +158,10 @@ generic LinkedList[T] {
 		cursor = list
 		remaining = count
 		out_rev = empty()
-		while remaining > 0 && !is_empty(cursor) {
+		while remaining > 0 && !cursor.is_empty() {
 			match cursor {
 				LinkedList.Empty => {
-					return reverse(out_rev)
+					return out_rev.reverse()
 				}
 				LinkedList.Cons(node) => {
 					out_rev = push_front(node.value, out_rev)
@@ -171,7 +171,7 @@ generic LinkedList[T] {
 			}
 		}
 
-		return reverse(out_rev)
+		return out_rev.reverse()
 	}
 
 	fun drop(list: LinkedList, count: I32) -> LinkedList {
@@ -181,7 +181,7 @@ generic LinkedList[T] {
 
 		cursor = list
 		remaining = count
-		while remaining > 0 && !is_empty(cursor) {
+		while remaining > 0 && !cursor.is_empty() {
 			match cursor {
 				LinkedList.Empty => {
 					return empty()
@@ -203,7 +203,7 @@ generic LinkedList[T] {
 
 		cursor = list
 		i = 0
-		while !is_empty(cursor) {
+		while !cursor.is_empty() {
 			match cursor {
 				LinkedList.Empty => {
 					return FrontOption.None
@@ -223,7 +223,7 @@ generic LinkedList[T] {
 	}
 
 	fun at_or(list: LinkedList, index: I32, fallback: T) -> T {
-		return match at(list, index) {
+		return match list.at(index) {
 			FrontOption.None => fallback
 			FrontOption.Some(value) => value
 		}
@@ -524,7 +524,7 @@ generic HashTable[K: Hash + Eq, V] {
 			len: 0,
 			resize_threshold: HashTable.threshold_for_capacity(cap),
 		}
-		return HashTable.assert_metadata(table)
+		return table.assert_metadata()
 	}
 
 	fun set_no_resize(table: HashTable, key: K, value: V) -> SetResult {
@@ -545,7 +545,7 @@ generic HashTable[K: Hash + Eq, V] {
 			len: next_len,
 			resize_threshold: table.resize_threshold,
 		}
-		next_table = HashTable.assert_metadata(next_table_raw)
+		next_table = next_table_raw.assert_metadata()
 		return SetResult struct {
 			table: next_table,
 			inserted_new: bucket_result.inserted_new,
@@ -569,7 +569,7 @@ generic HashTable[K: Hash + Eq, V] {
 				}
 				Bucket.Node(node) => {
 					entry = node.entry
-					set_result = HashTable.set_no_resize(out, entry.key, entry.value)
+					set_result = out.set_no_resize(entry.key, entry.value)
 					out = set_result.table
 					cursor = node.next
 				}
@@ -582,11 +582,11 @@ generic HashTable[K: Hash + Eq, V] {
 		if count <= 1 {
 			match src {
 				Buckets.Leaf(bucket) => {
-					return HashTable.insert_bucket_entries(dst, bucket)
+					return dst.insert_bucket_entries(bucket)
 				}
 				Buckets.Branch(node) => {
-					left = HashTable.insert_all_buckets(dst, node.left, 1)
-					return HashTable.insert_all_buckets(left, node.right, 1)
+					left = dst.insert_all_buckets(node.left, 1)
+					return left.insert_all_buckets(node.right, 1)
 				}
 			}
 		}
@@ -594,11 +594,11 @@ generic HashTable[K: Hash + Eq, V] {
 		half = count / 2
 		match src {
 			Buckets.Leaf(bucket) => {
-				return HashTable.insert_bucket_entries(dst, bucket)
+				return dst.insert_bucket_entries(bucket)
 			}
 			Buckets.Branch(node) => {
-				left = HashTable.insert_all_buckets(dst, node.left, half)
-				return HashTable.insert_all_buckets(left, node.right, half)
+				left = dst.insert_all_buckets(node.left, half)
+				return left.insert_all_buckets(node.right, half)
 			}
 		}
 	}
@@ -606,26 +606,26 @@ generic HashTable[K: Hash + Eq, V] {
 	fun rehash(table: HashTable, new_bucket_count: I32) -> HashTable {
 		cap = HashTable.next_power_of_two(new_bucket_count)
 		out = HashTable.with_capacity(cap)
-		out = HashTable.insert_all_buckets(out, table.buckets, table.bucket_count)
-		return HashTable.assert_metadata(out)
+		out = out.insert_all_buckets(table.buckets, table.bucket_count)
+		return out.assert_metadata()
 	}
 
 	fun maybe_resize_before_insert(table: HashTable) -> HashTable {
-		table = HashTable.assert_metadata(table)
+		table = table.assert_metadata()
 		if table.len >= table.resize_threshold {
 			bucket_count = table.bucket_count
 			if bucket_count > 536870912 {
-				return HashTable.rehash(table, 1073741824)
+				return table.rehash(1073741824)
 			}
 			assert(bucket_count <= 536870912)
-			return HashTable.rehash(table, bucket_count + bucket_count)
+			return table.rehash(bucket_count + bucket_count)
 		}
-		return HashTable.assert_metadata(table)
+		return table.assert_metadata()
 	}
 
 	fun set(table: HashTable, key: K, value: V) -> SetResult {
-		resized = HashTable.maybe_resize_before_insert(table)
-		return HashTable.set_no_resize(resized, key, value)
+		resized = table.maybe_resize_before_insert()
+		return resized.set_no_resize(key, value)
 	}
 
 	fun get(table: HashTable, key: K) -> Lookup {
@@ -656,7 +656,7 @@ generic HashTable[K: Hash + Eq, V] {
 			len: next_len,
 			resize_threshold: table.resize_threshold,
 		}
-		next_table = HashTable.assert_metadata(next_table_raw)
+		next_table = next_table_raw.assert_metadata()
 		return RemoveResult struct {
 			table: next_table,
 			removed: bucket_result.removed,
@@ -671,11 +671,11 @@ generic HashTable[K: Hash + Eq, V] {
 			len: 0,
 			resize_threshold: table.resize_threshold,
 		}
-		return HashTable.assert_metadata(cleared)
+		return cleared.assert_metadata()
 	}
 
 	fun contains_key(table: HashTable, key: K) -> Bool {
-		return match HashTable.get(table, key) {
+		return match table.get(key) {
 			Lookup.Missing => false
 			Lookup.Found(_value) => true
 		}
@@ -692,15 +692,15 @@ generic HashTable[K: Hash + Eq, V] {
 
 test "A hashtable MUST have len 0 when created" {
 	table = HashTable.new()
-	assert(HashTable.len(table) == 0)
+	assert(table.len() == 0)
 }
 
 test "A hashtable insert/get MUST work" {
-	r = HashTable.set(HashTable.new(), 10, 99)
+	r = HashTable.new().set(10, 99)
 	table = r.table
 	assert(r.inserted_new)
-	assert(HashTable.len(table) == 1)
-	match HashTable.get(table, 10) {
+	assert(table.len() == 1)
+	match table.get(10) {
 		HashTable__Lookup.Missing => {
 			assert(false)
 		}
@@ -711,13 +711,13 @@ test "A hashtable insert/get MUST work" {
 }
 
 test "A hashtable update MUST not increase len" {
-	r1 = HashTable.set(HashTable.new(), 1, 10)
-	r2 = HashTable.set(r1.table, 1, 11)
+	r1 = HashTable.new().set(1, 10)
+	r2 = r1.table.set(1, 11)
 	if r2.inserted_new {
 		assert(false)
 	}
-	assert(HashTable.len(r2.table) == 1)
-	match HashTable.get(r2.table, 1) {
+	assert(r2.table.len() == 1)
+	match r2.table.get(1) {
 		HashTable__Lookup.Missing => {
 			assert(false)
 		}
@@ -728,10 +728,10 @@ test "A hashtable update MUST not increase len" {
 }
 
 test "A hashtable remove MUST decrease len" {
-	r1 = HashTable.set(HashTable.new(), 1, 10)
-	r2 = HashTable.set(r1.table, 9, 90)
-	removed = HashTable.remove(r2.table, 9)
-	assert(HashTable.len(removed.table) == 1)
+	r1 = HashTable.new().set(1, 10)
+	r2 = r1.table.set(9, 90)
+	removed = r2.table.remove(9)
+	assert(removed.table.len() == 1)
 	match removed.removed {
 		HashTable__Lookup.Missing => {
 			assert(false)
@@ -746,13 +746,13 @@ test "A hashtable resize MUST preserve entries" {
 	table = HashTable.new()
 	i = 0
 	while i < 20 {
-		r = HashTable.set(table, 100 + i, i)
+		r = table.set(100 + i, i)
 		table = r.table
 		i = i + 1
 	}
-	assert(HashTable.len(table) == 20)
-	assert(HashTable.capacity(table) >= 20)
-	match HashTable.get(table, 100) {
+	assert(table.len() == 20)
+	assert(table.capacity() >= 20)
+	match table.get(100) {
 		HashTable__Lookup.Missing => {
 			assert(false)
 		}
@@ -760,7 +760,7 @@ test "A hashtable resize MUST preserve entries" {
 			assert(v == 0)
 		}
 	}
-	match HashTable.get(table, 119) {
+	match table.get(119) {
 		HashTable__Lookup.Missing => {
 			assert(false)
 		}

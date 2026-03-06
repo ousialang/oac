@@ -38,15 +38,15 @@ namespace Io {
 	}
 
 	fun open_read_only(path: String) -> Int {
-		return Clib.open(String.ptr(path), 0, i32_to_i64(0))
+		return Clib.open(path.ptr(), 0, i32_to_i64(0))
 	}
 
 	fun open_write_truncate(path: String) -> Int {
-		fd = Clib.open(String.ptr(path), Io.write_flags_linux(), Io.default_mode())
+		fd = Clib.open(path.ptr(), Io.write_flags_linux(), Io.default_mode())
 		if fd >= 0 {
 			return fd
 		}
-		return Clib.open(String.ptr(path), Io.write_flags_darwin(), Io.default_mode())
+		return Clib.open(path.ptr(), Io.write_flags_darwin(), Io.default_mode())
 	}
 
 	fun grow_capacity(capacity: I32) -> I32 {

@@ -47,22 +47,22 @@ namespace String {
 	}
 
 	fun ptr(s: String) -> PtrInt {
-		b = String.bytes(s)
+		b = s.bytes()
 		return b.ptr
 	}
 
 	fun len(s: String) -> I32 {
-		b = String.bytes(s)
+		b = s.bytes()
 		return b.len
 	}
 
 	fun is_empty(s: String) -> Bool {
-		return String.len(s) == 0
+		return s.len() == 0
 	}
 
 	fun equals(a: String, b: String) -> Bool {
-		len_a = String.len(a)
-		len_b = String.len(b)
+		len_a = a.len()
+		len_b = b.len()
 		if len_a != len_b {
 			return false
 		}
@@ -79,8 +79,8 @@ namespace String {
 	}
 
 	fun starts_with(s: String, prefix: String) -> Bool {
-		n = String.len(s)
-		m = String.len(prefix)
+		n = s.len()
+		m = prefix.len()
 		if m > n {
 			return false
 		}
@@ -97,8 +97,8 @@ namespace String {
 	}
 
 	fun ends_with(s: String, suffix: String) -> Bool {
-		n = String.len(s)
-		m = String.len(suffix)
+		n = s.len()
+		m = suffix.len()
 		if m > n {
 			return false
 		}
@@ -116,7 +116,7 @@ namespace String {
 	}
 
 	fun char_at_or(s: String, index: I32, fallback: I32) -> I32 {
-		n = String.len(s)
+		n = s.len()
 		if index < 0 || index >= n {
 			return fallback
 		}
@@ -124,7 +124,7 @@ namespace String {
 	}
 
 	fun slice_clamped(s: String, start: I32, len: I32) -> String {
-		n = String.len(s)
+		n = s.len()
 		safe_start = start
 		if safe_start < 0 {
 			safe_start = 0

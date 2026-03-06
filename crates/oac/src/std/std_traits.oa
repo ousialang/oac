@@ -91,24 +91,24 @@ impl Eq for Bool {
 
 impl Hash for Char {
 	fun hash(v: Char) -> I32 {
-		return Char.code(v)
+		return v.code()
 	}
 }
 
 impl Eq for Char {
 	fun equals(a: Char, b: Char) -> Bool {
-		return Char.equals(a, b)
+		return a.equals(b)
 	}
 }
 
 impl Hash for AsciiChar {
 	fun hash(v: AsciiChar) -> I32 {
-		return AsciiChar.code(v)
+		return v.code()
 	}
 }
 
 impl Eq for AsciiChar {
 	fun equals(a: AsciiChar, b: AsciiChar) -> Bool {
-		return AsciiChar.equals(a, b)
+		return a.equals(b)
 	}
 }

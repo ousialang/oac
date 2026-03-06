@@ -12,21 +12,21 @@ fun main() -> I32 {
 	xs = IntList.push_front(2, xs)
 	xs = IntList.push_front(1, xs)
 
-	print(IntList.length(xs))
-	print(IntList.head_or(xs, 99))
+	print(xs.length())
+	print(xs.head_or(99))
 
-	ys = IntList.tail_or(xs, IntList.empty())
-	print(IntList.head_or(ys, 99))
+	ys = xs.tail_or(IntList.empty())
+	print(ys.head_or(99))
 
-	zs = IntList.tail_or(IntList.empty(), ys)
-	print(IntList.length(zs))
+	zs = IntList.empty().tail_or(ys)
+	print(zs.length())
 
-	if IntList.is_empty(IntList.empty()) {
+	if IntList.empty().is_empty() {
 		print(1)
 	} else {
 		print(0)
 	}
-	if IntList.is_empty(xs) {
+	if xs.is_empty() {
 		print(1)
 	} else {
 		print(0)

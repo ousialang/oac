@@ -64,7 +64,7 @@ fun print_write_result(v: IoWriteResult) -> I32 {
 }
 
 fun main() -> I32 {
-	payload = String.bytes("io")
+	payload = "io".bytes()
 	print_write_result(Io.write_all(1, payload))
 
 	null_bytes = Io.read_file("/dev/null")

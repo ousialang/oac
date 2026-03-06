@@ -56,7 +56,7 @@ fun print_lookup(v: UserTable__Lookup) -> I32 {
 
 fun main() -> I32 {
 	table = UserTable.new()
-	print(UserTable.len(table))
+	print(table.len())
 
 	a = UserKey struct {
 		id: 1,
@@ -71,22 +71,22 @@ fun main() -> I32 {
 		bucket: 7,
 	}
 
-	set_a = UserTable.set(table, a, 10)
+	set_a = table.set(a, 10)
 	table = set_a.table
-	set_b = UserTable.set(table, b, 20)
+	set_b = table.set(b, 20)
 	table = set_b.table
-	print(UserTable.len(table))
+	print(table.len())
 
-	print_lookup(UserTable.get(table, a))
-	print_lookup(UserTable.get(table, b))
-	print_lookup(UserTable.get(table, missing))
+	print_lookup(table.get(a))
+	print_lookup(table.get(b))
+	print_lookup(table.get(missing))
 
-	if UserTable.contains_key(table, b) {
+	if table.contains_key(b) {
 		print(1)
 	} else {
 		print(0)
 	}
-	if UserTable.contains_key(table, missing) {
+	if table.contains_key(missing) {
 		print(1)
 	} else {
 		print(0)

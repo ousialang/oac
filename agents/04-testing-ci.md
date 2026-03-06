@@ -225,6 +225,7 @@ Key tests:
 - Execution fixtures also include namespace call coverage:
   - `namespace_basic.oa`
   - `method_call_sugar.oa` (positive runtime coverage for receiver method syntax on locals, temporaries, chained receivers, and field-access receivers)
+- Outside those dedicated syntax fixtures, stdlib `.oa` sources and runtime fixtures now prefer receiver method syntax whenever the helper's first parameter is the owning concrete type or specialization alias; leave static namespace form in place when testing namespace syntax directly or when the helper is not receiver-first.
 - Execution fixtures also include large-string length regression coverage:
   - `string_len_large.oa`
 - Execution fixtures now include trait-bounded generic hash table coverage:

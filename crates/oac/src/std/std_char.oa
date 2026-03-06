@@ -3,13 +3,13 @@ struct Char {
 }
 
 invariant from_code_roundtrip "Char.from_code followed by Char.code must preserve input" for (x: I32, y: I32) {
-	return Char.code(Char.from_code(x)) == x && Char.code(Char.from_code(y)) == y
+	return Char.from_code(x).code() == x && Char.from_code(y).code() == y
 }
 
 invariant equals_matches_code_equality "Char.equals must agree with underlying code equality" for (x: I32, y: I32) {
 	a = Char.from_code(x)
 	b = Char.from_code(y)
-	return Char.equals(a, b) == (x == y)
+	return a.equals(b) == (x == y)
 }
 
 namespace Char {

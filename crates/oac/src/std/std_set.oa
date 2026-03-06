@@ -291,8 +291,8 @@ generic HashSet[K: Hash + Eq] {
 				return dst
 			}
 			Bucket.Node(node) => {
-				inserted = HashSet.insert_no_resize(dst, node.key)
-				return HashSet.insert_bucket_entries(inserted.set, node.next)
+				inserted = dst.insert_no_resize(node.key)
+				return inserted.set.insert_bucket_entries(node.next)
 			}
 		}
 	}
@@ -301,11 +301,11 @@ generic HashSet[K: Hash + Eq] {
 		if count <= 1 {
 			match src {
 				Buckets.Leaf(bucket) => {
-					return HashSet.insert_bucket_entries(dst, bucket)
+					return dst.insert_bucket_entries(bucket)
 				}
 				Buckets.Branch(node) => {
-					left = HashSet.insert_all_buckets(dst, node.left, 1)
-					return HashSet.insert_all_buckets(left, node.right, 1)
+					left = dst.insert_all_buckets(node.left, 1)
+					return left.insert_all_buckets(node.right, 1)
 				}
 			}
 		}
@@ -313,11 +313,11 @@ generic HashSet[K: Hash + Eq] {
 		half = count / 2
 		match src {
 			Buckets.Leaf(bucket) => {
-				return HashSet.insert_bucket_entries(dst, bucket)
+				return dst.insert_bucket_entries(bucket)
 			}
 			Buckets.Branch(node) => {
-				left = HashSet.insert_all_buckets(dst, node.left, half)
-				return HashSet.insert_all_buckets(left, node.right, half)
+				left = dst.insert_all_buckets(node.left, half)
+				return left.insert_all_buckets(node.right, half)
 			}
 		}
 	}
@@ -325,22 +325,22 @@ generic HashSet[K: Hash + Eq] {
 	fun rehash(set: HashSet, new_bucket_count: I32) -> HashSet {
 		cap = HashSet.next_power_of_two(new_bucket_count)
 		fresh = HashSet.with_capacity(cap)
-		return HashSet.insert_all_buckets(fresh, set.buckets, set.bucket_count)
+		return fresh.insert_all_buckets(set.buckets, set.bucket_count)
 	}
 
 	fun maybe_resize_before_insert(set: HashSet) -> HashSet {
 		if set.len >= set.resize_threshold {
 			if set.bucket_count > 536870912 {
-				return HashSet.rehash(set, 1073741824)
+				return set.rehash(1073741824)
 			}
-			return HashSet.rehash(set, set.bucket_count + set.bucket_count)
+			return set.rehash(set.bucket_count + set.bucket_count)
 		}
 		return set
 	}
 
 	fun insert(set: HashSet, key: K) -> InsertResult {
-		resized = HashSet.maybe_resize_before_insert(set)
-		return HashSet.insert_no_resize(resized, key)
+		resized = set.maybe_resize_before_insert()
+		return resized.insert_no_resize(key)
 	}
 
 	fun remove(set: HashSet, key: K) -> RemoveResult {
@@ -397,8 +397,8 @@ generic HashSet[K: Hash + Eq] {
 				return dst
 			}
 			Bucket.Node(node) => {
-				inserted = HashSet.insert(dst, node.key)
-				return HashSet.union_bucket(inserted.set, node.next)
+				inserted = dst.insert(node.key)
+				return inserted.set.union_bucket(node.next)
 			}
 		}
 	}
@@ -407,11 +407,11 @@ generic HashSet[K: Hash + Eq] {
 		if count <= 1 {
 			match src {
 				Buckets.Leaf(bucket) => {
-					return HashSet.union_bucket(dst, bucket)
+					return dst.union_bucket(bucket)
 				}
 				Buckets.Branch(node) => {
-					left = HashSet.union_buckets(dst, node.left, 1)
-					return HashSet.union_buckets(left, node.right, 1)
+					left = dst.union_buckets(node.left, 1)
+					return left.union_buckets(node.right, 1)
 				}
 			}
 		}
@@ -419,17 +419,17 @@ generic HashSet[K: Hash + Eq] {
 		half = count / 2
 		match src {
 			Buckets.Leaf(bucket) => {
-				return HashSet.union_bucket(dst, bucket)
+				return dst.union_bucket(bucket)
 			}
 			Buckets.Branch(node) => {
-				left = HashSet.union_buckets(dst, node.left, half)
-				return HashSet.union_buckets(left, node.right, half)
+				left = dst.union_buckets(node.left, half)
+				return left.union_buckets(node.right, half)
 			}
 		}
 	}
 
 	fun union(left: HashSet, right: HashSet) -> HashSet {
-		return HashSet.union_buckets(left, right.buckets, right.bucket_count)
+		return left.union_buckets(right.buckets, right.bucket_count)
 	}
 
 	fun intersection_bucket(dst: HashSet, right: HashSet, bucket: Bucket) -> HashSet {
@@ -439,11 +439,11 @@ generic HashSet[K: Hash + Eq] {
 			}
 			Bucket.Node(node) => {
 				next = dst
-				if HashSet.contains(right, node.key) {
-					inserted = HashSet.insert(dst, node.key)
+				if right.contains(node.key) {
+					inserted = dst.insert(node.key)
 					next = inserted.set
 				}
-				return HashSet.intersection_bucket(next, right, node.next)
+				return next.intersection_bucket(right, node.next)
 			}
 		}
 	}
@@ -452,11 +452,11 @@ generic HashSet[K: Hash + Eq] {
 		if count <= 1 {
 			match left {
 				Buckets.Leaf(bucket) => {
-					return HashSet.intersection_bucket(dst, right, bucket)
+					return dst.intersection_bucket(right, bucket)
 				}
 				Buckets.Branch(node) => {
-					mid = HashSet.intersection_buckets(dst, node.left, 1, right)
-					return HashSet.intersection_buckets(mid, node.right, 1, right)
+					mid = dst.intersection_buckets(node.left, 1, right)
+					return mid.intersection_buckets(node.right, 1, right)
 				}
 			}
 		}
@@ -464,11 +464,11 @@ generic HashSet[K: Hash + Eq] {
 		half = count / 2
 		match left {
 			Buckets.Leaf(bucket) => {
-				return HashSet.intersection_bucket(dst, right, bucket)
+				return dst.intersection_bucket(right, bucket)
 			}
 			Buckets.Branch(node) => {
-				mid = HashSet.intersection_buckets(dst, node.left, half, right)
-				return HashSet.intersection_buckets(mid, node.right, half, right)
+				mid = dst.intersection_buckets(node.left, half, right)
+				return mid.intersection_buckets(node.right, half, right)
 			}
 		}
 	}
@@ -479,7 +479,7 @@ generic HashSet[K: Hash + Eq] {
 			seed_capacity = right.len
 		}
 		out = HashSet.with_capacity(seed_capacity)
-		return HashSet.intersection_buckets(out, left.buckets, left.bucket_count, right)
+		return out.intersection_buckets(left.buckets, left.bucket_count, right)
 	}
 
 	fun difference_bucket(dst: HashSet, right: HashSet, bucket: Bucket) -> HashSet {
@@ -489,11 +489,11 @@ generic HashSet[K: Hash + Eq] {
 			}
 			Bucket.Node(node) => {
 				next = dst
-				if !HashSet.contains(right, node.key) {
-					inserted = HashSet.insert(dst, node.key)
+				if !right.contains(node.key) {
+					inserted = dst.insert(node.key)
 					next = inserted.set
 				}
-				return HashSet.difference_bucket(next, right, node.next)
+				return next.difference_bucket(right, node.next)
 			}
 		}
 	}
@@ -502,11 +502,11 @@ generic HashSet[K: Hash + Eq] {
 		if count <= 1 {
 			match left {
 				Buckets.Leaf(bucket) => {
-					return HashSet.difference_bucket(dst, right, bucket)
+					return dst.difference_bucket(right, bucket)
 				}
 				Buckets.Branch(node) => {
-					mid = HashSet.difference_buckets(dst, node.left, 1, right)
-					return HashSet.difference_buckets(mid, node.right, 1, right)
+					mid = dst.difference_buckets(node.left, 1, right)
+					return mid.difference_buckets(node.right, 1, right)
 				}
 			}
 		}
@@ -514,70 +514,70 @@ generic HashSet[K: Hash + Eq] {
 		half = count / 2
 		match left {
 			Buckets.Leaf(bucket) => {
-				return HashSet.difference_bucket(dst, right, bucket)
+				return dst.difference_bucket(right, bucket)
 			}
 			Buckets.Branch(node) => {
-				mid = HashSet.difference_buckets(dst, node.left, half, right)
-				return HashSet.difference_buckets(mid, node.right, half, right)
+				mid = dst.difference_buckets(node.left, half, right)
+				return mid.difference_buckets(node.right, half, right)
 			}
 		}
 	}
 
 	fun difference(left: HashSet, right: HashSet) -> HashSet {
 		out = HashSet.with_capacity(left.len)
-		return HashSet.difference_buckets(out, left.buckets, left.bucket_count, right)
+		return out.difference_buckets(left.buckets, left.bucket_count, right)
 	}
 }
 
 test "A hashset MUST have len 0 when created" {
 	set = HashSet.new()
-	assert(HashSet.len(set) == 0)
+	assert(set.len() == 0)
 }
 
 test "A hashset insert/remove MUST update membership" {
-	inserted = HashSet.insert(HashSet.new(), 10)
+	inserted = HashSet.new().insert(10)
 	set = inserted.set
 	assert(inserted.inserted_new)
-	assert(HashSet.contains(set, 10))
+	assert(set.contains(10))
 
-	removed = HashSet.remove(set, 10)
+	removed = set.remove(10)
 	assert(removed.removed)
-	assert(HashSet.len(removed.set) == 0)
-	assert(!HashSet.contains(removed.set, 10))
+	assert(removed.set.len() == 0)
+	assert(!removed.set.contains(10))
 }
 
 test "A hashset duplicate insert MUST keep len stable" {
-	r1 = HashSet.insert(HashSet.new(), 1)
-	r2 = HashSet.insert(r1.set, 1)
+	r1 = HashSet.new().insert(1)
+	r2 = r1.set.insert(1)
 	assert(!r2.inserted_new)
-	assert(HashSet.len(r2.set) == 1)
+	assert(r2.set.len() == 1)
 }
 
 test "A hashset set-ops MUST behave" {
 	left = HashSet.new()
-	left_r1 = HashSet.insert(left, 1)
+	left_r1 = left.insert(1)
 	left = left_r1.set
-	left_r2 = HashSet.insert(left, 2)
+	left_r2 = left.insert(2)
 	left = left_r2.set
-	left_r3 = HashSet.insert(left, 3)
+	left_r3 = left.insert(3)
 	left = left_r3.set
 
 	right = HashSet.new()
-	right_r1 = HashSet.insert(right, 3)
+	right_r1 = right.insert(3)
 	right = right_r1.set
-	right_r2 = HashSet.insert(right, 4)
+	right_r2 = right.insert(4)
 	right = right_r2.set
 
-	u = HashSet.union(left, right)
-	assert(HashSet.len(u) == 4)
-	assert(HashSet.contains(u, 4))
+	u = left.union(right)
+	assert(u.len() == 4)
+	assert(u.contains(4))
 
-	i = HashSet.intersection(left, right)
-	assert(HashSet.len(i) == 1)
-	assert(HashSet.contains(i, 3))
+	i = left.intersection(right)
+	assert(i.len() == 1)
+	assert(i.contains(3))
 
-	d = HashSet.difference(left, right)
-	assert(HashSet.len(d) == 2)
-	assert(HashSet.contains(d, 1))
-	assert(!HashSet.contains(d, 3))
+	d = left.difference(right)
+	assert(d.len() == 2)
+	assert(d.contains(1))
+	assert(!d.contains(3))
 }

@@ -42,94 +42,94 @@ fun print_bool(v: Bool) -> I32 {
 
 fun main() -> I32 {
 	table = IntTable.new()
-	print(IntTable.len(table))
-	print(IntTable.capacity(table))
+	print(table.len())
+	print(table.capacity())
 
-	r1 = IntTable.set(table, 1, 10)
+	r1 = table.set(1, 10)
 	table = r1.table
 	print_bool(r1.inserted_new)
-	r2 = IntTable.set(table, 9, 90)
+	r2 = table.set(9, 90)
 	table = r2.table
 	print_bool(r2.inserted_new)
-	r3 = IntTable.set(table, 17, 170)
+	r3 = table.set(17, 170)
 	table = r3.table
 	print_bool(r3.inserted_new)
-	print(IntTable.len(table))
+	print(table.len())
 
-	print_lookup(IntTable.get(table, 1))
-	print_lookup(IntTable.get(table, 9))
-	print_lookup(IntTable.get(table, 17))
-	print_lookup(IntTable.get(table, 42))
+	print_lookup(table.get(1))
+	print_lookup(table.get(9))
+	print_lookup(table.get(17))
+	print_lookup(table.get(42))
 
-	r4 = IntTable.set(table, 1, 11)
+	r4 = table.set(1, 11)
 	table = r4.table
 	print_bool(r4.inserted_new)
-	print(IntTable.len(table))
-	print_lookup(IntTable.get(table, 1))
+	print(table.len())
+	print_lookup(table.get(1))
 
-	removed1 = IntTable.remove(table, 9)
+	removed1 = table.remove(9)
 	table = removed1.table
 	print_lookup(removed1.removed)
-	print(IntTable.len(table))
-	print_lookup(IntTable.get(table, 9))
+	print(table.len())
+	print_lookup(table.get(9))
 
-	removed2 = IntTable.remove(table, 9)
+	removed2 = table.remove(9)
 	table = removed2.table
 	print_lookup(removed2.removed)
-	print(IntTable.len(table))
+	print(table.len())
 
-	print(IntTable.capacity(table))
-	r = IntTable.set(table, 100, 0)
+	print(table.capacity())
+	r = table.set(100, 0)
 	table = r.table
-	r = IntTable.set(table, 101, 1)
+	r = table.set(101, 1)
 	table = r.table
-	r = IntTable.set(table, 102, 2)
+	r = table.set(102, 2)
 	table = r.table
-	r = IntTable.set(table, 103, 3)
+	r = table.set(103, 3)
 	table = r.table
-	r = IntTable.set(table, 104, 4)
+	r = table.set(104, 4)
 	table = r.table
-	r = IntTable.set(table, 105, 5)
+	r = table.set(105, 5)
 	table = r.table
-	r = IntTable.set(table, 106, 6)
+	r = table.set(106, 6)
 	table = r.table
-	r = IntTable.set(table, 107, 7)
+	r = table.set(107, 7)
 	table = r.table
-	r = IntTable.set(table, 108, 8)
+	r = table.set(108, 8)
 	table = r.table
-	r = IntTable.set(table, 109, 9)
+	r = table.set(109, 9)
 	table = r.table
-	r = IntTable.set(table, 110, 10)
+	r = table.set(110, 10)
 	table = r.table
-	r = IntTable.set(table, 111, 11)
+	r = table.set(111, 11)
 	table = r.table
-	r = IntTable.set(table, 112, 12)
+	r = table.set(112, 12)
 	table = r.table
-	r = IntTable.set(table, 113, 13)
+	r = table.set(113, 13)
 	table = r.table
-	r = IntTable.set(table, 114, 14)
+	r = table.set(114, 14)
 	table = r.table
-	r = IntTable.set(table, 115, 15)
+	r = table.set(115, 15)
 	table = r.table
-	r = IntTable.set(table, 116, 16)
+	r = table.set(116, 16)
 	table = r.table
-	r = IntTable.set(table, 117, 17)
+	r = table.set(117, 17)
 	table = r.table
-	r = IntTable.set(table, 118, 18)
+	r = table.set(118, 18)
 	table = r.table
-	r = IntTable.set(table, 119, 19)
+	r = table.set(119, 19)
 	table = r.table
-	print(IntTable.len(table))
-	print(IntTable.capacity(table))
-	print_lookup(IntTable.get(table, 1))
-	print_lookup(IntTable.get(table, 17))
-	print_lookup(IntTable.get(table, 119))
-	print_bool(IntTable.contains_key(table, 42))
-	print_bool(IntTable.contains_key(table, 119))
+	print(table.len())
+	print(table.capacity())
+	print_lookup(table.get(1))
+	print_lookup(table.get(17))
+	print_lookup(table.get(119))
+	print_bool(table.contains_key(42))
+	print_bool(table.contains_key(119))
 
-	table = IntTable.clear(table)
-	print(IntTable.len(table))
-	print(IntTable.capacity(table))
+	table = table.clear()
+	print(table.len())
+	print(table.capacity())
 
 	return 0
 }

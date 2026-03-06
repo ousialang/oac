@@ -6,7 +6,7 @@ generic Option[T] {
 
 	invariant "Option.none must agree with presence predicates" for (a: T, b: T) {
 		none_value = none()
-		return is_none(none_value) && !is_some(none_value)
+		return none_value.is_none() && !none_value.is_some()
 	}
 
 	fun none() -> Option {
@@ -25,7 +25,7 @@ generic Option[T] {
 	}
 
 	fun is_none(v: Option) -> Bool {
-		return !is_some(v)
+		return !v.is_some()
 	}
 
 	fun unwrap_or(v: Option, fallback: T) -> T {
@@ -58,7 +58,7 @@ generic Result[T, E] {
 	}
 
 	fun is_err(v: Result) -> Bool {
-		return !is_ok(v)
+		return !v.is_ok()
 	}
 
 	fun unwrap_or(v: Result, fallback: T) -> T {

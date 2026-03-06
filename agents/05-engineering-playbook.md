@@ -22,6 +22,7 @@ Act like a compiler engineer, not a text editor:
 - Prefer coherent, cleaner APIs over compatibility shims when the two conflict.
 - Do not change parser shape without corresponding IR/type-check updates.
 - Do not change IR assumptions without auditing backend lowering paths.
+- When editing stdlib `.oa` files or execution fixtures, prefer receiver method syntax for eligible namespace/specialized helpers; keep static calls only when parameter 0 is not the receiver or when the fixture is explicitly covering namespace-vs-method syntax.
 - Runtime backend behavior and verification backend behavior are separate contracts: runtime codegen may use `qbe` or `llvm`, but prove/invariant/loop checks must remain QBE-based unless explicitly redesigned.
 - Keep LLVM runtime lowering as direct `ResolvedProgram` lowering; do not reintroduce production IR->QBE->LLVM translation coupling.
 - Preserve or explicitly migrate snapshot expectations.

@@ -32,7 +32,7 @@ fun print_tail(v: IntList__TailOption) -> I32 {
 			return 0
 		}
 		IntList__TailOption.Some(rest) => {
-			print(IntList.len(rest))
+			print(rest.len())
 			return 0
 		}
 	}
@@ -46,7 +46,7 @@ fun print_pop(v: IntList__PopFrontOption) -> I32 {
 		}
 		IntList__PopFrontOption.Some(r) => {
 			print(r.value)
-			print(IntList.len(r.rest))
+			print(r.rest.len())
 			return 0
 		}
 	}
@@ -54,43 +54,43 @@ fun print_pop(v: IntList__PopFrontOption) -> I32 {
 
 fun main() -> I32 {
 	xs = IntList.empty()
-	print(IntList.len(xs))
-	print(IntList.length(xs))
+	print(xs.len())
+	print(xs.length())
 
 	xs = IntList.singleton(2)
 	xs = IntList.cons(1, xs)
 	xs = IntList.push_front(0, xs)
-	print(IntList.len(xs))
-	print(IntList.head_or(xs, 77))
-	print_front(IntList.front(xs))
-	print_tail(IntList.tail(xs))
+	print(xs.len())
+	print(xs.head_or(77))
+	print_front(xs.front())
+	print_tail(xs.tail())
 
-	print(IntList.at_or(xs, 1, 77))
-	print_front(IntList.at(xs, 2))
-	print_front(IntList.at(xs, 5))
+	print(xs.at_or(1, 77))
+	print_front(xs.at(2))
+	print_front(xs.at(5))
 
-	tail = IntList.tail_or(xs, IntList.empty())
-	print(IntList.len(tail))
-	print_pop(IntList.pop_front(xs))
+	tail = xs.tail_or(IntList.empty())
+	print(tail.len())
+	print_pop(xs.pop_front())
 
 	ys = IntList.push_front(4, IntList.push_front(3, IntList.empty()))
-	app = IntList.append(xs, ys)
-	print(IntList.len(app))
-	print(IntList.at_or(app, 4, 77))
+	app = xs.append(ys)
+	print(app.len())
+	print(app.at_or(4, 77))
 
-	rev = IntList.reverse(app)
-	print(IntList.at_or(rev, 0, 77))
+	rev = app.reverse()
+	print(rev.at_or(0, 77))
 
-	taken = IntList.take(app, 3)
-	print(IntList.len(taken))
-	print(IntList.at_or(taken, 2, 77))
+	taken = app.take(3)
+	print(taken.len())
+	print(taken.at_or(2, 77))
 
-	dropped = IntList.drop(app, 2)
-	print(IntList.len(dropped))
-	print(IntList.at_or(dropped, 0, 77))
+	dropped = app.drop(2)
+	print(dropped.len())
+	print(dropped.at_or(0, 77))
 
-	print(IntList.len(IntList.take(app, 0 - 1)))
-	print(IntList.len(IntList.drop(app, 0 - 1)))
+	print(app.take(0 - 1).len())
+	print(app.drop(0 - 1).len())
 
 	return 0
 }

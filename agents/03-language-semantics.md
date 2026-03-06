@@ -84,6 +84,7 @@ Observed in parser/IR implementation:
 - Receiver method calls are call-only sugar: `value.helper(args...)` lowers through the receiver's resolved type namespace and prepends the receiver as argument 0; bare-identifier syntax `TypeName.helper(...)` remains the existing static namespace/trait/enum surface.
 - Plain field access rules are unchanged: non-variable field access is still rejected, so `(expr).field` is invalid even though `(expr).helper(...)` is accepted.
 - Namespace call lowering also applies to generic-specialized helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
+- Project source style now prefers receiver method syntax in stdlib/runtime fixtures when that lowering is available from parameter 0 ownership (`value.helper(...)` over `TypeName.helper(value, ...)`), while keeping static syntax for constructors, non-receiver-first helpers, trait calls, and explicit namespace-vs-method equivalence coverage.
 - Traits are static-only in v1: method calls use `Trait.method(value, ...)` and are resolved to concrete impl symbols (`Trait__Type__method`) before backend lowering.
 - Trait method signatures must take `Self` as the first parameter type in v1.
 - Special lifecycle-trait shapes are enforced exactly:
