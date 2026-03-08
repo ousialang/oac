@@ -8,6 +8,7 @@ use crate::invariant_metadata::{
     InvariantBinding,
 };
 use crate::ir::ResolvedProgram;
+use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::qbe_backend::INTEGER_SAFETY_MARKER_PREFIX;
 use crate::verification_cache::{
     VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
@@ -18,7 +19,7 @@ use crate::verification_checker::{
     sanitize_ident, should_assume_main_argc_non_negative, summarize_solver_output,
 };
 use crate::verification_cycles::{
-    reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+    reachable_user_functions, reject_recursion_cycles_with_entry_assumptions,
 };
 use crate::verification_outcomes::{
     record_outcome, VerificationKind, VerificationOutcome, VerificationOutcomeRecord,
@@ -226,11 +227,14 @@ pub(crate) fn prepare_integer_safety_obligations_with_config(
             &reachable_names,
             &invariant_by_struct,
         )?;
-        reject_recursion_cycles_with_arg_invariants(
+        let function_precondition_assumptions =
+            build_function_precondition_assumptions_for_names(program, &reachable_names)?;
+        reject_recursion_cycles_with_entry_assumptions(
             program,
             &root.function_name,
             &reachable,
             &arg_invariant_assumptions,
+            &function_precondition_assumptions,
             "integer safety verification",
         )?;
 
@@ -513,6 +517,20 @@ fn collect_verification_roots(
             .iter()
             .map(|binding| binding.function_name.to_string())
     }) {
+        roots.insert(VerificationRoot {
+            function_name,
+            summary_kind: VerificationSummaryKind::OrdinaryFunction,
+        });
+    }
+    for function_name in program
+        .function_preconditions
+        .values()
+        .flat_map(|definitions| {
+            definitions
+                .iter()
+                .map(|definition| definition.helper_function_name.to_string())
+        })
+    {
         roots.insert(VerificationRoot {
             function_name,
             summary_kind: VerificationSummaryKind::OrdinaryFunction,

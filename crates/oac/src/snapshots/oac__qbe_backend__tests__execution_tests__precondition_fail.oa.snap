@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: snapshot_content
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+[OAC-PRE-001] Error: function precondition verification failed: function precondition verification failed (SAT counterexamples found):
+main#main#0#0#pre_0 (root=main, caller=main, callee=guarded, clause=0, qbe_artifact=site_main_main_0_0_pre_0.qbe, smt_artifact=site_main_main_0_0_pre_0.smt2)

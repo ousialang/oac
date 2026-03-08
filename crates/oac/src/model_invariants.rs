@@ -8,6 +8,7 @@ use crate::invariant_metadata::{
     InvariantBinding,
 };
 use crate::ir::{ModelInvariantDefinition, ResolvedProgram};
+use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::verification_cache::{
     VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
     VerificationSummaryCandidate, VerificationSummaryInput, VerificationSummaryKind,
@@ -16,7 +17,7 @@ use crate::verification_checker::{
     checker_module_with_reachable_callees, sanitize_ident, summarize_solver_output,
 };
 use crate::verification_cycles::{
-    reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+    reachable_user_functions, reject_recursion_cycles_with_entry_assumptions,
 };
 use crate::verification_outcomes::{
     record_outcome, VerificationKind, VerificationOutcome, VerificationOutcomeRecord,
@@ -103,11 +104,14 @@ pub(crate) fn verify_model_invariants_with_qbe_with_config(
             &reachable_names,
             &invariant_by_struct,
         )?;
-        reject_recursion_cycles_with_arg_invariants(
+        let function_precondition_assumptions =
+            build_function_precondition_assumptions_for_names(program, &reachable_names)?;
+        reject_recursion_cycles_with_entry_assumptions(
             program,
             &invariant.function_name,
             &reachable,
             &arg_invariant_assumptions,
+            &function_precondition_assumptions,
             "model invariant verification",
         )?;
 
@@ -841,8 +845,6 @@ fun main() -> I32 {
             VerificationProfile::Baseline,
         )
         .expect_err("arg-invariant cycle should fail closed");
-        assert!(err
-            .to_string()
-            .contains("includes arg-invariant precondition edges"));
+        assert!(err.to_string().contains("includes entry-assumption edges"));
     }
 }

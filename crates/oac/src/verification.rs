@@ -9,12 +9,14 @@ use crate::verification_cache::{
 
 #[derive(Debug)]
 pub enum VerificationError {
+    Precondition(anyhow::Error),
     Prove(anyhow::Error),
     StructInvariant(anyhow::Error),
     ModelInvariant(anyhow::Error),
 }
 
 pub(crate) struct OrdinaryVerificationSession {
+    prepared_preconditions: Vec<crate::function_preconditions::PreparedFunctionPreconditionSite>,
     prepared_prove: Vec<crate::prove::PreparedProveSite>,
     prepared_integer: Vec<crate::integer_safety::PreparedIntegerSafetySite>,
     prepared_struct: Vec<crate::struct_invariants::PreparedStructInvariantSite>,
@@ -29,6 +31,11 @@ impl OrdinaryVerificationSession {
         target_dir: &Path,
         config: &VerificationConfig,
     ) -> Result<Self, VerificationError> {
+        let prepared_preconditions =
+            crate::function_preconditions::prepare_function_preconditions_with_config(
+                program, qbe_module, target_dir, config,
+            )
+            .map_err(VerificationError::Precondition)?;
         let prepared_prove = crate::prove::prepare_prove_obligations_with_config(
             program, qbe_module, target_dir, config,
         )
@@ -45,6 +52,15 @@ impl OrdinaryVerificationSession {
             .map_err(VerificationError::StructInvariant)?;
 
         let mut inputs_by_root = BTreeMap::<String, Vec<VerificationSummaryInput>>::new();
+        for prepared in &prepared_preconditions {
+            if prepared.summary_kind() != VerificationSummaryKind::OrdinaryFunction {
+                continue;
+            }
+            inputs_by_root
+                .entry(prepared.root_name().to_string())
+                .or_default()
+                .push(prepared.summary_input());
+        }
         for prepared in &prepared_prove {
             inputs_by_root
                 .entry(prepared.caller().to_string())
@@ -90,6 +106,7 @@ impl OrdinaryVerificationSession {
         }
 
         Ok(Self {
+            prepared_preconditions,
             prepared_prove,
             prepared_integer,
             prepared_struct,
@@ -102,6 +119,12 @@ impl OrdinaryVerificationSession {
         &self,
         config: &VerificationConfig,
     ) -> Result<(), VerificationError> {
+        crate::function_preconditions::verify_prepared_function_preconditions(
+            &self.prepared_preconditions,
+            config,
+            &self.cached_roots,
+        )
+        .map_err(VerificationError::Precondition)?;
         crate::prove::verify_prepared_prove_obligations(
             &self.prepared_prove,
             config,

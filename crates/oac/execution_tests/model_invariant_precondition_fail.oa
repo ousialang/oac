@@ -1,0 +1,13 @@
+fun guarded(x: I32) -> I32 pre {
+	x > 5
+} {
+	return x
+}
+
+invariant constant_call "constant call must satisfy guard" for (lhs: I32, rhs: I32) {
+	return guarded(3) == guarded(3)
+}
+
+fun main() -> I32 {
+	return 0
+}

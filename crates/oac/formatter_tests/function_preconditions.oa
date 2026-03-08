@@ -1,0 +1,10 @@
+fun guarded(x: I32) -> I32 pre {
+	x > 5
+	x < 20
+} {
+	return x
+}
+
+fun main() -> I32 {
+	return guarded(7)
+}

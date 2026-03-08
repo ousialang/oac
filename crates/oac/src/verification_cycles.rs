@@ -8,6 +8,7 @@ use crate::parser::Statement;
 enum VerificationEdgeKind {
     Call,
     ArgInvariant { arg_index: usize },
+    FunctionPrecondition,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,19 +51,28 @@ pub fn reachable_user_functions(
     Ok(reachable)
 }
 
-pub fn reject_recursion_cycles_with_arg_invariants(
+pub fn reject_recursion_cycles_with_entry_assumptions(
     program: &ResolvedProgram,
     root: &str,
     reachable: &HashSet<String>,
     arg_invariant_assumptions: &[qbe_smt::FunctionArgInvariantAssumption],
+    function_precondition_assumptions: &[qbe_smt::FunctionEntryPreconditionAssumption],
     verification_label: &str,
 ) -> anyhow::Result<()> {
     if !reachable.contains(root) {
         return Ok(());
     }
 
-    let assumption_edges = build_assumption_edges(arg_invariant_assumptions);
-    let adjacency = build_combined_graph(program, root, reachable, &assumption_edges)?;
+    let arg_invariant_edges = build_arg_invariant_edges(arg_invariant_assumptions);
+    let function_precondition_edges =
+        build_function_precondition_edges(function_precondition_assumptions);
+    let adjacency = build_combined_graph(
+        program,
+        root,
+        reachable,
+        &arg_invariant_edges,
+        &function_precondition_edges,
+    )?;
 
     if adjacency.is_empty() {
         return Ok(());
@@ -89,23 +99,36 @@ pub fn reject_recursion_cycles_with_arg_invariants(
             .filter(|(_, edge)| matches!(edge.kind, VerificationEdgeKind::ArgInvariant { .. }))
             .cloned()
             .collect::<Vec<_>>();
-        if internal_arg_edges.is_empty() {
+        let internal_precondition_edges = internal_edges
+            .iter()
+            .filter(|(_, edge)| matches!(edge.kind, VerificationEdgeKind::FunctionPrecondition))
+            .cloned()
+            .collect::<Vec<_>>();
+        if internal_arg_edges.is_empty() && internal_precondition_edges.is_empty() {
             continue;
         }
 
-        let (arg_source, arg_edge) = internal_arg_edges
+        let (assumption_source, assumption_edge) = internal_arg_edges
             .first()
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("internal error: missing arg edge in offending SCC"))?;
-        let path = find_path_within_scc(&adjacency, &node_set, &arg_edge.to, &arg_source)
+            .or_else(|| internal_precondition_edges.first().cloned())
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "internal error: failed to reconstruct cycle witness for arg-invariant edge"
-                )
+                anyhow::anyhow!("internal error: missing assumption edge in offending SCC")
             })?;
+        let path = find_path_within_scc(
+            &adjacency,
+            &node_set,
+            &assumption_edge.to,
+            &assumption_source,
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal error: failed to reconstruct cycle witness for entry-assumption edge"
+            )
+        })?;
 
         let mut cycle_edges = path;
-        cycle_edges.push((arg_source, arg_edge));
+        cycle_edges.push((assumption_source, assumption_edge));
 
         let cycle = cycle_edges
             .iter()
@@ -113,30 +136,42 @@ pub fn reject_recursion_cycles_with_arg_invariants(
             .collect::<Vec<_>>()
             .join(" ; ");
 
-        let mut arg_edge_summaries = internal_arg_edges
+        let mut assumption_edge_summaries = internal_arg_edges
             .iter()
             .map(|(from, edge)| match edge.kind {
                 VerificationEdgeKind::ArgInvariant { arg_index } => {
                     format!("{from}[arg#{arg_index}] -> {}", edge.to)
                 }
-                VerificationEdgeKind::Call => unreachable!("filtered to arg edges"),
+                VerificationEdgeKind::Call | VerificationEdgeKind::FunctionPrecondition => {
+                    unreachable!("filtered to arg edges")
+                }
             })
             .collect::<Vec<_>>();
-        arg_edge_summaries.sort();
-        arg_edge_summaries.dedup();
+        assumption_edge_summaries.extend(internal_precondition_edges.iter().map(|(from, edge)| {
+            match edge.kind {
+                VerificationEdgeKind::FunctionPrecondition => {
+                    format!("{from}[pre] -> {}", edge.to)
+                }
+                VerificationEdgeKind::Call | VerificationEdgeKind::ArgInvariant { .. } => {
+                    unreachable!("filtered to precondition edges")
+                }
+            }
+        }));
+        assumption_edge_summaries.sort();
+        assumption_edge_summaries.dedup();
 
         return Err(anyhow::anyhow!(
-            "recursion cycles are unsupported by {}: {} (includes arg-invariant precondition edges: {})",
+            "recursion cycles are unsupported by {}: {} (includes entry-assumption edges: {})",
             verification_label,
             cycle,
-            arg_edge_summaries.join(", ")
+            assumption_edge_summaries.join(", ")
         ));
     }
 
     Ok(())
 }
 
-fn build_assumption_edges(
+fn build_arg_invariant_edges(
     arg_invariant_assumptions: &[qbe_smt::FunctionArgInvariantAssumption],
 ) -> HashMap<String, Vec<(String, usize)>> {
     let mut assumption_edges = HashMap::<String, Vec<(String, usize)>>::new();
@@ -156,11 +191,29 @@ fn build_assumption_edges(
     assumption_edges
 }
 
+fn build_function_precondition_edges(
+    function_precondition_assumptions: &[qbe_smt::FunctionEntryPreconditionAssumption],
+) -> HashMap<String, Vec<String>> {
+    let mut assumption_edges = HashMap::<String, Vec<String>>::new();
+    for assumption in function_precondition_assumptions {
+        assumption_edges
+            .entry(assumption.function_name.clone())
+            .or_default()
+            .push(assumption.precondition_function_name.clone());
+    }
+    for edges in assumption_edges.values_mut() {
+        edges.sort();
+        edges.dedup();
+    }
+    assumption_edges
+}
+
 fn build_combined_graph(
     program: &ResolvedProgram,
     root: &str,
     reachable: &HashSet<String>,
-    assumption_edges: &HashMap<String, Vec<(String, usize)>>,
+    arg_invariant_edges: &HashMap<String, Vec<(String, usize)>>,
+    function_precondition_edges: &HashMap<String, Vec<String>>,
 ) -> anyhow::Result<HashMap<String, Vec<VerificationEdge>>> {
     let mut visited = HashSet::<String>::new();
     let mut queue = VecDeque::<String>::from([root.to_string()]);
@@ -198,7 +251,7 @@ fn build_combined_graph(
             }
         }
 
-        if let Some(assumptions) = assumption_edges.get(&function_name) {
+        if let Some(assumptions) = arg_invariant_edges.get(&function_name) {
             for (invariant_function, arg_index) in assumptions {
                 if !program
                     .function_definitions
@@ -217,6 +270,27 @@ fn build_combined_graph(
                 });
                 if !visited.contains(invariant_function) {
                     queue.push_back(invariant_function.clone());
+                }
+            }
+        }
+
+        if let Some(assumptions) = function_precondition_edges.get(&function_name) {
+            for precondition_function in assumptions {
+                if !program
+                    .function_definitions
+                    .contains_key(precondition_function)
+                {
+                    return Err(anyhow::anyhow!(
+                        "missing function definition for function precondition helper {}",
+                        precondition_function
+                    ));
+                }
+                edges.push(VerificationEdge {
+                    to: precondition_function.clone(),
+                    kind: VerificationEdgeKind::FunctionPrecondition,
+                });
+                if !visited.contains(precondition_function) {
+                    queue.push_back(precondition_function.clone());
                 }
             }
         }
@@ -249,6 +323,7 @@ fn edge_sort_key(edge: &VerificationEdge) -> (String, u8, usize) {
     let (kind_order, arg_index) = match edge.kind {
         VerificationEdgeKind::Call => (0, 0),
         VerificationEdgeKind::ArgInvariant { arg_index } => (1, arg_index),
+        VerificationEdgeKind::FunctionPrecondition => (2, 0),
     };
     (edge.to.clone(), kind_order, arg_index)
 }
@@ -327,6 +402,9 @@ fn render_cycle_edge((from, edge): &(String, VerificationEdge)) -> String {
         VerificationEdgeKind::Call => format!("{from} -> {}", edge.to),
         VerificationEdgeKind::ArgInvariant { arg_index } => {
             format!("{from} -[arg#{arg_index} invariant]-> {}", edge.to)
+        }
+        VerificationEdgeKind::FunctionPrecondition => {
+            format!("{from} -[precondition]-> {}", edge.to)
         }
     }
 }

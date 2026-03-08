@@ -1,6 +1,6 @@
 enum Token {
 	End,
-	Int(I32),
+	Int: I32,
 }
 
 impl Copy for Token {

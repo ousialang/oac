@@ -278,9 +278,9 @@ comptime fun derive_tags(T: Type) -> DeclSet {
 import "helper.oa"
 
 enum Token {
-	Int(I32),
+	Int: I32,
 	Plus,
-	Wrapped(String),
+	Wrapped: String,
 }
 
 comptime apply derive_tags(Token)

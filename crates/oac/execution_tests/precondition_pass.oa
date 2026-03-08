@@ -1,0 +1,13 @@
+fun guarded(x: I32) -> I32 pre {
+	x > 5
+	x < 20
+} {
+	prove(x > 5)
+	return x
+}
+
+fun main() -> I32 {
+	value = guarded(7)
+	print(value)
+	return 0
+}

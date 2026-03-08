@@ -1,6 +1,6 @@
 enum Token {
 	End,
-	Int(I32),
+	Int: I32,
 }
 
 fun main() -> I32 {

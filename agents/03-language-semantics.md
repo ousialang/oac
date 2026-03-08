@@ -46,6 +46,7 @@ Observed in parser/IR implementation:
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Leading newlines before opening braces in braced declaration/block headers are treated as whitespace (`enum Name` newline `{`, `trait Name` newline `{`, `if cond` newline `{`, and similar forms remain valid).
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
+- Ordinary runtime functions may also declare verification-only `pre { ... }` blocks between the return type and body; clauses are anonymous multiline Bool expressions, conjuncted together, and rejected on `extern fun`, `comptime fun`, and trait methods in v1.
 - Runtime pointer-memory builtins: `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, `store_u8(addr: PtrInt, value: U8) -> Void`, `store_i32(addr: PtrInt, value: I32) -> Void`, `store_i64(addr: PtrInt, value: I64) -> Void`, and `store_bool(addr: PtrInt, value: Bool) -> Void`.
 - Top-level test declarations: `test "Name" { ... }`.
 - Legacy syntax `template` / `instantiate` is hard-cut and rejected with migration diagnostics.
@@ -59,6 +60,7 @@ Observed in parser/IR implementation:
 - `if` and `while` conditions must type-check to `Bool`.
 - `prove(...)` and `assert(...)` conditions must type-check to `Bool`.
 - `prove(...)` and `assert(...)` cannot be used as expressions.
+- Function `pre { ... }` clauses must type-check to `Bool`, and a present `pre` block must contain at least one clause.
 - Function return paths must not mix incompatible return types.
 - `main` must use one of these signatures: `fun main() -> I32`, `fun main(argc: I32, argv: I64) -> I32`, or `fun main(argc: I32, argv: PtrInt) -> I32`.
 - Assignments bind variable type to expression type.
@@ -71,7 +73,7 @@ Observed in parser/IR implementation:
 - Numeric binary ops are strict and same-type only: `U8/U8`, `I32/I32`, `I64/I64`, `FP32/FP32`, `FP64/FP64` (no implicit int/float coercions).
 - Non-logical infix operators are trait-based for non-primitive cases: `+/-/*//==/!=/< <= > >=` resolve through `Addition`, `Subtraction`, `Multiplication`, `Division`, `Equality`, and `Comparison` impls when the compiler does not keep a primitive builtin path.
 - Fixed-width integer arithmetic uses two's-complement wrapping semantics (`I32`/`I64` overflow is not trapped); verification reasons over the same bitvector behavior as runtime rather than mathematical integers.
-- Source-level integer `+`, `-`, `*`, `/` over `U8`, `I32`, `I64`, and `PtrInt` are fail-closed at compile time: every reachable runtime site and every site reachable from struct/model-invariant roots must be proven overflow/underflow-safe during `check proofs`, or compilation stops with `OAC-PROVE-001`.
+- Source-level integer `+`, `-`, `*`, `/` over `U8`, `I32`, `I64`, and `PtrInt` are fail-closed at compile time: every reachable runtime site and every site reachable from struct/model-invariant roots plus generated precondition helpers must be proven overflow/underflow-safe during `check proofs`, or compilation stops with `OAC-PROVE-001`.
 - Integer-safety predicates are fixed in v1: `U8` requires `add/mul <= 255`, `sub >= 0`, `div rhs != 0`; `I32`/`I64`/`PtrInt` use signed monotonicity checks for `add/sub`, guarded `result / rhs == lhs` for `mul`, and `rhs != 0 && !(lhs == MIN && rhs == -1)` for `div`.
 - `U8` relational operators (`<`, `>`, `<=`, `>=`) use unsigned comparisons in codegen.
 - `U8` division lowers to unsigned integer division in codegen.
@@ -143,11 +145,14 @@ Observed in parser/IR implementation:
   - multi-argument invariants (`for (a: ..., b: ..., ...)`) are model invariants.
 - Unary invariant clauses synthesize internal functions named `__struct__<TypeName>__invariant__<key>` with signature `fun ...(v: <TypeName>) -> Bool` (`<key>` is identifier-based or deterministic anonymous ordinal like `anon_0`); legacy explicit functions named `__struct__<TypeName>__invariant(v: TypeName) -> Bool` are still accepted for compatibility.
 - Multi-argument model-invariant clauses synthesize internal functions named `__model__invariant__<key>` and are tracked globally (identifier uniqueness is global across model invariants).
+- Function `pre { ... }` clauses synthesize hidden helper functions named `__pre__<function_name>__clause_<ordinal>` with the same parameter list as the owning function and return type `Bool`; the original function body does not get runtime checks inserted in v1.
 - Malformed legacy invariant functions are compile errors.
+- Build-time verification checks function preconditions per `(call-site, clause)` at user-defined call sites reachable from `main`, generated precondition helpers, struct-invariant helpers, and model-invariant roots; any SAT counterexample is reported as `OAC-PRE-001`.
 - Build-time verification checks struct invariants per `(call-site, invariant)` at return sites of user-defined function calls reachable from `main` (excluding invariant function bodies).
 - Build-time verification also checks `prove(...)` obligations at reachable statement sites from `main` by synthesizing checker QBE functions that return `1` on proof-condition violation.
-- Build-time verification also checks source-level integer arithmetic at reachable marker sites: ordinary roots are `main` plus reachable helper callees, and additional roots are every struct-invariant function plus every model-invariant function.
+- Build-time verification also checks source-level integer arithmetic at reachable marker sites: ordinary roots are `main` plus reachable helper callees, and additional roots are every generated precondition helper, struct-invariant function, and model-invariant function.
 - Build-time verification checks model invariants globally (independent of `main` reachability): one obligation per declaration.
+- Function-precondition checker synthesis instruments the cloned caller immediately before the targeted call site with a call to the synthesized helper and returns `1` when that helper returns `0`.
 - Verification synthesizes each site checker from compiled QBE by instrumenting the target call with an invariant check and returning `1` on violation / `0` on success, then asks if exit code `1` is reachable (`unsat` means invariant proven, `sat` means compile failure).
 - `prove(...)` checker synthesis instruments QBE marker assignments (`.oac_prove_site_*`), prunes the cloned caller CFG to blocks that can still reach the targeted site before checker-module closure, and rewrites checker return to `1` when the proved condition is false at the targeted site.
 - Integer-safety checker synthesis instruments QBE marker assignments emitted by codegen (`.oac_integer_site_<type>__<op>__<id>__{lhs,rhs,out}`), clones the marker’s caller as checker `main`, prunes CFG branches that cannot reach the marker, and rewrites checker return to `1` when the operator’s safety predicate is false at that site.
@@ -157,9 +162,10 @@ Observed in parser/IR implementation:
 - Checker reachable-callee discovery now traverses only entry-reachable CFG blocks per QBE function (and stops scanning a block after terminators), so dead instrumentation blocks do not contribute spurious call targets/argument-invariant assumptions.
 - Struct-invariant checker synthesis also prunes the cloned caller CFG to blocks that can still reach the targeted call site before checker-module closure, so post-site branches do not contribute extra callees to the obligation.
 - Before CHC encoding, checker entry functions rewrite only the compiler-generated assert-fail pattern (`call $exit(w 242)` immediately followed by `hlt`) into safe `ret 0`; helper callees keep terminal assert exits so callers do not continue past impossible states, and other `exit(...)` paths remain aborts.
-- Checker entry preconditions now include argument-type invariants in prove/struct-invariant/model-invariant pipelines: for each checker function argument whose semantic type has struct invariants, encoding adds one invariant relation precondition per invariant (`*_ret` relation + non-zero return).
+- Checker entry preconditions now include argument-type invariants in prove/struct-invariant/model-invariant/function-precondition pipelines: for each checker function argument whose semantic type has struct invariants, encoding adds one invariant relation precondition per invariant (`*_ret` relation + non-zero return).
+- Checker entry preconditions also include synthesized function-precondition helpers for the checker function itself: each helper summary relation is assumed to hold and return non-zero at entry, so callee-local `prove(...)` obligations may rely on the function’s own `pre { ... }` clauses.
 - Checker entry preconditions also include integer range assumptions where available: semantic `U8` parameters become `[0,255]` assumptions in `qbe-smt`, so checker modules reason about byte ranges without requiring separate user-written invariants.
-- These argument-invariant preconditions are assumptions only: the checker’s entry memory/heap state is not replaced with the invariant-call output memory/heap.
+- These checker entry preconditions are assumptions only: the checker’s entry memory/heap state is not replaced with invariant-helper or precondition-helper output memory/heap.
 - Shared recursion-cycle analysis lives in `verification_cycles.rs` and uses SCCs over the combined verification graph with deterministic cycle witness reconstruction for fail-closed diagnostics.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
 - Comptime `I32` arithmetic is checked instead of panicking-through-Rust: `+/-/*` overflow and `/` divide-by-zero or `MIN / -1` produce deterministic comptime diagnostics.
@@ -169,11 +175,11 @@ Observed in parser/IR implementation:
 - `oac test <file.oa>` is fail-fast: each `test` block is lowered to a generated zero-arg `I32` function, and a generated `main` executes tests in declaration order. A failing runtime `assert` exits immediately with code `242`.
 - `oac test` requires at least one `test` declaration and rejects source files that already define `main` (because `main` is synthesized by the test runner).
 - `oac build` does not lower or execute `test` declarations; test lowering is isolated to the `oac test` command path.
-- Call-only recursion cycles are allowed for struct-invariant/prove/model-invariant verification; cycles containing argument-invariant precondition edges are rejected fail-closed on the combined verification graph.
+- Call-only recursion cycles are allowed for struct-invariant/prove/model-invariant/function-precondition verification; cycles containing checker entry-assumption edges (argument invariants or function preconditions) are rejected fail-closed on the combined verification graph.
 - Unsupported proving constructs at QBE level fail closed through `qbe-smt` (hard `Unsupported` encoding errors).
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).
-- Prove and model-invariant obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
-- Prove/struct-invariant/model-invariant obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
+- Function-precondition, prove, and model-invariant obligations use the same CHC encoding/query shape (`exit == 1` reachability over synthesized checker QBE).
+- Function-precondition/prove/struct-invariant/model-invariant obligations are solved via the shared `qbe-smt` CHC backend runner (Z3 invocation is centralized there).
 - Verification outcome classes are `{sat, unsat, unknown}` per obligation; `sat`/`unsat` interpretation is unchanged (`sat` fail, `unsat` pass), and `unknown` remains fail-closed.
 - Outcome-migration policy for unknown mitigation is strict: only baseline `unknown` obligations may change outcome; baseline `sat`/`unsat` obligations must remain unchanged.
 - Default solver retry behavior is `10s` then `30s`; candidate profile may add a third attempt for large obligations still `unknown`, controlled by `OAC_Z3_LARGE_OBLIGATION_BYTES` and `OAC_Z3_TIMEOUT_LARGE_OBLIGATION_SECS`.

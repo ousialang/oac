@@ -37,6 +37,13 @@ pub struct FunctionArgInvariantAssumption {
     pub invariant_function_name: String,
 }
 
+/// Assumes that a function entry satisfies a helper-defined precondition relation.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct FunctionEntryPreconditionAssumption {
+    pub function_name: String,
+    pub precondition_function_name: String,
+}
+
 /// Assumes that a function argument is constrained to an inclusive integer range.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FunctionArgRangeAssumption {
@@ -51,6 +58,7 @@ pub struct FunctionArgRangeAssumption {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct ModuleAssumptions {
     pub arg_invariant_assumptions: Vec<FunctionArgInvariantAssumption>,
+    pub entry_precondition_assumptions: Vec<FunctionEntryPreconditionAssumption>,
     pub arg_range_assumptions: Vec<FunctionArgRangeAssumption>,
 }
 
@@ -1199,6 +1207,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "__struct__Box__invariant".to_string(),
             }],
+            entry_precondition_assumptions: vec![],
             arg_range_assumptions: vec![],
         };
 
@@ -1227,6 +1236,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "main".to_string(),
             }],
+            entry_precondition_assumptions: vec![],
             arg_range_assumptions: vec![],
         };
         let err = encode_single_function_with_assumptions(
@@ -1252,6 +1262,7 @@ mod tests {
                 arg_index: 1,
                 invariant_function_name: "main".to_string(),
             }],
+            entry_precondition_assumptions: vec![],
             arg_range_assumptions: vec![],
         };
         let err = encode_single_function_with_assumptions(
@@ -1288,6 +1299,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "invariant_bad_arity".to_string(),
             }],
+            entry_precondition_assumptions: vec![],
             arg_range_assumptions: vec![],
         };
 
@@ -1340,6 +1352,7 @@ mod tests {
                 arg_index: 0,
                 invariant_function_name: "__struct__Payload__invariant".to_string(),
             }],
+            entry_precondition_assumptions: vec![],
             arg_range_assumptions: vec![],
         };
         let module = module_with(vec![main, helper, invariant]);
@@ -1362,6 +1375,7 @@ mod tests {
         let module = module_with(vec![main]);
         let assumptions = ModuleAssumptions {
             arg_invariant_assumptions: vec![],
+            entry_precondition_assumptions: vec![],
             arg_range_assumptions: vec![FunctionArgRangeAssumption {
                 function_name: "main".to_string(),
                 arg_index: 0,

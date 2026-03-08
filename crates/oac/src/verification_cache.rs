@@ -243,6 +243,7 @@ fn compute_content_hash(
 
 fn verification_kind_label(kind: VerificationKind) -> &'static str {
     match kind {
+        VerificationKind::Precondition => "precondition",
         VerificationKind::Prove => "prove",
         VerificationKind::StructInvariant => "struct_invariant",
         VerificationKind::ModelInvariant => "model_invariant",

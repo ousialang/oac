@@ -119,6 +119,8 @@ pub struct Function {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extern_symbol_name: Option<String>,
     pub parameters: Vec<Parameter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<Expression>,
     pub body: Vec<Statement>,
     pub return_type: String,
     pub is_comptime: bool,
@@ -784,6 +786,71 @@ fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<S
     Ok(body)
 }
 
+fn parse_precondition_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Expression>> {
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Word("pre".to_string()),
+        "expected 'pre' keyword"
+    );
+    consume_newlines(tokens);
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace after pre"
+    );
+    anyhow::ensure!(
+        tokens.remove(0) == TokenData::Newline,
+        "expected newline after opening brace in pre block"
+    );
+
+    let mut preconditions = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(_) => {
+                let expression = parse_expression(tokens, 0)?;
+                preconditions.push(expression);
+                match tokens.first() {
+                    Some(TokenData::Newline) => {
+                        tokens.remove(0);
+                    }
+                    Some(TokenData::Parenthesis {
+                        opening: '}',
+                        is_opening: false,
+                    }) => {}
+                    Some(token) => {
+                        return Err(anyhow::anyhow!(
+                            "expected newline or closing brace after precondition expression, got {:?}",
+                            token
+                        ));
+                    }
+                    None => {
+                        return Err(anyhow::anyhow!("unexpected end of file in pre block"));
+                    }
+                }
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in pre block")),
+        }
+    }
+
+    anyhow::ensure!(
+        !preconditions.is_empty(),
+        "expected at least one precondition clause in pre block"
+    );
+    Ok(preconditions)
+}
+
 fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<StructDef> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("struct".to_string()),
@@ -969,6 +1036,17 @@ fn parse_function_declaration(
     );
 
     let return_type = parse_type_reference(tokens)?;
+    consume_newlines(tokens);
+    let preconditions = if tokens.first() == Some(&TokenData::Word("pre".to_string())) {
+        anyhow::ensure!(
+            !is_comptime,
+            "comptime function {} cannot use pre blocks in v1",
+            name
+        );
+        parse_precondition_block(tokens)?
+    } else {
+        vec![]
+    };
 
     let body = parse_function_like_body(tokens)?;
 
@@ -976,6 +1054,7 @@ fn parse_function_declaration(
         name,
         extern_symbol_name: None,
         parameters,
+        preconditions,
         body,
         return_type,
         is_comptime,
@@ -1005,11 +1084,18 @@ fn parse_extern_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Res
         "expected '->' after function parameters"
     );
     let return_type = parse_type_reference(tokens)?;
+    if tokens.first() == Some(&TokenData::Word("pre".to_string())) {
+        return Err(anyhow::anyhow!(
+            "extern function {} cannot use pre blocks in v1",
+            name
+        ));
+    }
 
     Ok(Function {
         name,
         extern_symbol_name: None,
         parameters,
+        preconditions: vec![],
         body: vec![],
         return_type,
         is_comptime: false,
@@ -1961,6 +2047,12 @@ fn parse_trait_method_signature(tokens: &mut Vec<TokenData>) -> anyhow::Result<T
         "expected '->' after trait method parameters"
     );
     let return_type = parse_type_reference(tokens)?;
+    if tokens.first() == Some(&TokenData::Word("pre".to_string())) {
+        return Err(anyhow::anyhow!(
+            "trait method {} cannot use pre blocks in v1",
+            name
+        ));
+    }
     if tokens.first() == Some(&TokenData::Symbols(",".to_string())) {
         tokens.remove(0);
     }
@@ -2679,6 +2771,118 @@ fun main() -> I32 {
         assert!(!main.is_comptime);
         assert!(matches!(main.body[0], super::Statement::Prove { .. }));
         assert!(matches!(main.body[1], super::Statement::Assert { .. }));
+    }
+
+    #[test]
+    fn parses_function_preconditions() {
+        let source = r#"
+fun clamp(v: I32) -> I32 pre {
+	v >= 0
+	v <= 10
+} {
+	return v
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        let function = &ast.top_level_functions[0];
+        assert_eq!(function.preconditions.len(), 2);
+    }
+
+    #[test]
+    fn parses_function_preconditions_ast_snapshot() {
+        let source = r#"
+fun clamp(v: I32) -> I32 pre {
+	v >= 0
+	v <= 10
+} {
+	return v
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let ast = parse(tokens).expect("parse source");
+        insta::assert_json_snapshot!("parser_function_preconditions_ast", ast);
+    }
+
+    #[test]
+    fn rejects_empty_precondition_block() {
+        let source = r#"
+fun clamp(v: I32) -> I32 pre {
+} {
+	return v
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("empty pre block must fail");
+        assert!(
+            err.to_string()
+                .contains("expected at least one precondition clause in pre block"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_extern_function_preconditions() {
+        let source = r#"
+extern fun clamp(v: I32) -> I32 pre {
+	v >= 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("extern pre block must fail");
+        assert!(
+            err.to_string()
+                .contains("extern function clamp cannot use pre blocks in v1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_comptime_function_preconditions() {
+        let source = r#"
+comptime fun clamp(v: I32) -> I32 pre {
+	v >= 0
+} {
+	return v
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("comptime pre block must fail");
+        assert!(
+            err.to_string()
+                .contains("comptime function clamp cannot use pre blocks in v1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_trait_method_preconditions() {
+        let source = r#"
+trait Clamp {
+	fun clamp(v: I32) -> I32 pre {
+		v >= 0
+	}
+}
+"#
+        .to_string();
+
+        let tokens = tokenize(source).expect("tokenize source");
+        let err = parse(tokens).expect_err("trait method pre block must fail");
+        assert!(
+            err.to_string()
+                .contains("trait method clamp cannot use pre blocks in v1"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

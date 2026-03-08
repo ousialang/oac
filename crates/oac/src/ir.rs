@@ -493,6 +493,7 @@ pub struct ResolvedProgram {
     pub trait_method_signatures: HashMap<String, TraitMethodSignature>,
     pub trait_impl_methods: HashMap<String, String>,
     pub struct_invariants: HashMap<String, Vec<StructInvariantDefinition>>,
+    pub function_preconditions: HashMap<String, Vec<FunctionPreconditionDefinition>>,
     pub model_invariants: Vec<ModelInvariantDefinition>,
     pub comptime_function_definitions: HashMap<String, FunctionDefinition>,
     pub comptime_apply_order: Vec<parser::ComptimeApply>,
@@ -530,6 +531,13 @@ pub struct ModelInvariantDefinition {
     pub key: String,
     pub identifier: Option<String>,
     pub display_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct FunctionPreconditionDefinition {
+    pub owner_function_name: String,
+    pub helper_function_name: String,
+    pub clause_ordinal: usize,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -1901,6 +1909,7 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         trait_impl_methods,
         type_definitions: HashMap::new(),
         struct_invariants: HashMap::new(),
+        function_preconditions: HashMap::new(),
         model_invariants: Vec::new(),
         comptime_function_definitions: HashMap::new(),
         comptime_apply_order: ast.comptime_applies.clone(),
@@ -2412,6 +2421,9 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         &mut program.model_invariants,
     )?;
     all_functions.extend(synthesized_invariants);
+    let synthesized_preconditions =
+        synthesize_precondition_functions(&all_functions, &mut program.function_preconditions)?;
+    all_functions.extend(synthesized_preconditions);
 
     // Pass 1: register signatures for all top-level functions and synthesized invariants.
     for function in all_functions.iter() {
@@ -2949,6 +2961,82 @@ fn generated_model_invariant_function_name(key: &str) -> String {
     format!("{MODEL_INVARIANT_PREFIX}{key}")
 }
 
+fn generated_precondition_function_name(function_name: &str, clause_ordinal: usize) -> String {
+    format!("__pre__{}__clause_{}", function_name, clause_ordinal)
+}
+
+fn synthesize_precondition_functions(
+    functions: &[parser::Function],
+    out_function_preconditions: &mut HashMap<String, Vec<FunctionPreconditionDefinition>>,
+) -> anyhow::Result<Vec<parser::Function>> {
+    let mut out = Vec::new();
+    let existing_function_names = functions
+        .iter()
+        .map(|function| function.name.clone())
+        .collect::<HashSet<_>>();
+    let mut generated_function_names = HashSet::<String>::new();
+
+    for function in functions {
+        if function.preconditions.is_empty() {
+            continue;
+        }
+        if function.is_extern {
+            return Err(anyhow::anyhow!(
+                "extern function {} cannot use pre blocks in v1",
+                function.name
+            ));
+        }
+        if function.is_comptime {
+            return Err(anyhow::anyhow!(
+                "comptime function {} cannot use pre blocks in v1",
+                function.name
+            ));
+        }
+
+        let entry = out_function_preconditions
+            .entry(function.name.clone())
+            .or_default();
+        for (clause_ordinal, expression) in function.preconditions.iter().enumerate() {
+            let helper_function_name =
+                generated_precondition_function_name(&function.name, clause_ordinal);
+            if existing_function_names.contains(&helper_function_name)
+                || !generated_function_names.insert(helper_function_name.clone())
+            {
+                return Err(anyhow::anyhow!(
+                    "function {} precondition clause {} conflicts with existing function {}",
+                    function.name,
+                    clause_ordinal,
+                    helper_function_name
+                ));
+            }
+
+            entry.push(FunctionPreconditionDefinition {
+                owner_function_name: function.name.clone(),
+                helper_function_name: helper_function_name.clone(),
+                clause_ordinal,
+            });
+            out.push(parser::Function {
+                name: helper_function_name,
+                extern_symbol_name: None,
+                parameters: function.parameters.clone(),
+                preconditions: vec![],
+                body: vec![parser::Statement::Return {
+                    expr: expression.clone(),
+                }],
+                return_type: "Bool".to_string(),
+                is_comptime: false,
+                is_extern: false,
+            });
+        }
+    }
+
+    for definitions in out_function_preconditions.values_mut() {
+        definitions.sort_by(|lhs, rhs| lhs.clause_ordinal.cmp(&rhs.clause_ordinal));
+    }
+
+    Ok(out)
+}
+
 fn synthesize_invariant_functions(
     invariants: &[parser::StructInvariantDecl],
     type_definitions: &HashMap<String, TypeDef>,
@@ -3083,6 +3171,7 @@ fn synthesize_invariant_functions(
             name: function_name,
             extern_symbol_name: None,
             parameters: invariant.parameters.clone(),
+            preconditions: vec![],
             body: invariant.body.clone(),
             return_type: "Bool".to_string(),
             is_comptime: false,
@@ -3540,6 +3629,7 @@ fn collect_trait_metadata(
                 name: function_name,
                 extern_symbol_name: None,
                 parameters: method.parameters.clone(),
+                preconditions: method.preconditions.clone(),
                 body: method.body.clone(),
                 return_type: method.return_type.clone(),
                 is_comptime: false,
@@ -4203,6 +4293,18 @@ fn expand_one_generic_specialization(
                 .map(|param| parser::Parameter {
                     name: param.name.clone(),
                     ty: rewrite_type_ref(&param.ty, &type_substitution_map, &local_type_name_map),
+                })
+                .collect(),
+            preconditions: function
+                .preconditions
+                .iter()
+                .map(|expression| {
+                    rewrite_expression(
+                        expression,
+                        &type_substitution_map,
+                        &local_type_name_map,
+                        &local_function_name_map,
+                    )
                 })
                 .collect(),
             body: function
@@ -6250,6 +6352,92 @@ fun main() -> I32 {
     }
 
     #[test]
+    fn resolve_synthesizes_function_precondition_helpers_and_metadata() {
+        let source = r#"
+fun guarded(x: I32) -> I32 pre {
+	x > 5
+	x < 20
+} {
+	return x
+}
+
+fun main() -> I32 {
+	return guarded(7)
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        let metadata = resolved
+            .function_preconditions
+            .get("guarded")
+            .expect("missing function precondition metadata");
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(metadata[0].owner_function_name, "guarded");
+        assert_eq!(metadata[0].helper_function_name, "__pre__guarded__clause_0");
+        assert_eq!(metadata[0].clause_ordinal, 0);
+        assert_eq!(metadata[1].helper_function_name, "__pre__guarded__clause_1");
+        assert_eq!(metadata[1].clause_ordinal, 1);
+
+        let helper = resolved
+            .function_definitions
+            .get("__pre__guarded__clause_0")
+            .expect("missing synthesized precondition helper");
+        assert_eq!(helper.sig.parameters.len(), 1);
+        assert_eq!(helper.sig.parameters[0].ty, "I32");
+        assert_eq!(helper.sig.return_type, "Bool");
+    }
+
+    #[test]
+    fn resolve_rewrites_generic_function_preconditions_to_specialized_types() {
+        let source = r#"
+generic Box[T] {
+	struct Box {
+		value: T,
+	}
+
+	fun unwrap(v: Box) -> T pre {
+		v.value == v.value
+	} {
+		return v.value
+	}
+}
+
+specialize BoxI32 = Box[I32]
+
+fun main() -> I32 {
+	return 0
+}
+"#
+        .to_string();
+
+        let tokens = tokenizer::tokenize(source).expect("tokenize source");
+        let ast = parser::parse(tokens).expect("parse source");
+        let resolved = resolve(ast).expect("resolve source");
+
+        let metadata = resolved
+            .function_preconditions
+            .get("BoxI32__unwrap")
+            .expect("missing specialized function precondition metadata");
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(
+            metadata[0].helper_function_name,
+            "__pre__BoxI32__unwrap__clause_0"
+        );
+
+        let helper = resolved
+            .function_definitions
+            .get("__pre__BoxI32__unwrap__clause_0")
+            .expect("missing specialized precondition helper");
+        assert_eq!(helper.sig.parameters.len(), 1);
+        assert_eq!(helper.sig.parameters[0].ty, "BoxI32");
+        assert_eq!(helper.sig.return_type, "Bool");
+    }
+
+    #[test]
     fn resolve_rejects_duplicate_invariant_identifier_for_same_struct() {
         let source = r#"
 struct Counter {
@@ -7461,7 +7649,7 @@ fun main() -> I32 {
         let source = r#"
 enum Token {
 	End,
-	Int(I32),
+	Int: I32,
 }
 
 fun main() -> I32 {
@@ -7488,7 +7676,7 @@ fun main() -> I32 {
         let source = r#"
 enum Token {
 	End,
-	Int(I32),
+	Int: I32,
 }
 
 impl Equality for Token {
@@ -7540,9 +7728,9 @@ struct Payload {
 }
 
 enum Token {
-	Int(I32),
+	Int: I32,
 	Plus,
-	Wrapped(Payload),
+	Wrapped: Payload,
 }
 
 comptime fun reflect(T: Type) -> DeclSet {
@@ -7594,7 +7782,7 @@ fun main() -> I32 {
     fn resolve_rejects_runtime_enum_semantic_introspection_builtin_call() {
         let source = r#"
 enum Token {
-	Int(I32),
+	Int: I32,
 	Plus,
 }
 

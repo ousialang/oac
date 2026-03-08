@@ -7,8 +7,9 @@ use qbe::{
 
 use crate::encode_extern_models::{call_is_exit, extern_call_model, ExternCallModel};
 use crate::{
-    EncodeOptions, FunctionArgInvariantAssumption, FunctionArgRangeAssumption, ModuleAssumptions,
-    QbeSmtError, BLIT_INLINE_LIMIT, GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
+    EncodeOptions, FunctionArgInvariantAssumption, FunctionArgRangeAssumption,
+    FunctionEntryPreconditionAssumption, ModuleAssumptions, QbeSmtError, BLIT_INLINE_LIMIT,
+    GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
 };
 
 pub(crate) fn encode_module(
@@ -103,6 +104,28 @@ pub(crate) fn encode_module(
             BV64_SORT
         ));
     }
+    for assumption_index in 0..context.max_entry_precondition_assumptions {
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            precondition_assumption_regs_var(assumption_index),
+            REG_STATE_SORT
+        ));
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            precondition_assumption_mem_var(assumption_index),
+            MEM_STATE_SORT
+        ));
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            precondition_assumption_heap_var(assumption_index),
+            BV64_SORT
+        ));
+        smt.push_str(&format!(
+            "(declare-var {} {})\n",
+            precondition_assumption_ret_var(assumption_index),
+            BV64_SORT
+        ));
+    }
     smt.push('\n');
 
     for function_name in &context.function_order {
@@ -167,6 +190,35 @@ pub(crate) fn encode_module(
             init_terms.push(format!("(= {regs_var} {call_regs_expr})"));
             init_terms.push(module_ret_relation_app(
                 &module_ret_relation_name(invariant_function.id),
+                &regs_var,
+                "mem",
+                "heap",
+                &ret_var,
+                &mem_var,
+                &heap_var,
+            ));
+            init_terms.push(format!("(distinct {ret_var} {})", bv_const_u64(0, 64)));
+        }
+
+        let function_preconditions = context
+            .entry_precondition_assumptions
+            .get(function_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        for (assumption_index, assumption) in function_preconditions.iter().enumerate() {
+            let precondition_function = context
+                .functions
+                .get(&assumption.precondition_function_name)
+                .expect("validated precondition function exists");
+            let call_regs_expr = build_function_entry_regs_expr(function, precondition_function)?;
+            let regs_var = precondition_assumption_regs_var(assumption_index);
+            let mem_var = precondition_assumption_mem_var(assumption_index);
+            let heap_var = precondition_assumption_heap_var(assumption_index);
+            let ret_var = precondition_assumption_ret_var(assumption_index);
+
+            init_terms.push(format!("(= {regs_var} {call_regs_expr})"));
+            init_terms.push(module_ret_relation_app(
+                &module_ret_relation_name(precondition_function.id),
                 &regs_var,
                 "mem",
                 "heap",
@@ -582,6 +634,12 @@ struct ValidatedArgInvariantAssumption {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct ValidatedEntryPreconditionAssumption {
+    function_name: String,
+    precondition_function_name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct ValidatedArgRangeAssumption {
     function_name: String,
     arg_index: usize,
@@ -596,8 +654,10 @@ struct ModuleEncodingContext {
     functions: HashMap<String, EncodedFunction>,
     global_map: HashMap<String, u64>,
     arg_invariant_assumptions: HashMap<String, Vec<ValidatedArgInvariantAssumption>>,
+    entry_precondition_assumptions: HashMap<String, Vec<ValidatedEntryPreconditionAssumption>>,
     arg_range_assumptions: HashMap<String, Vec<ValidatedArgRangeAssumption>>,
     max_arg_invariant_assumptions: usize,
+    max_entry_precondition_assumptions: usize,
     uses_fp: bool,
 }
 
@@ -671,6 +731,41 @@ fn build_module_encoding_context(
         });
     }
 
+    let mut precondition_records = assumptions.entry_precondition_assumptions.clone();
+    precondition_records.sort_by(|lhs, rhs| {
+        lhs.function_name.cmp(&rhs.function_name).then(
+            lhs.precondition_function_name
+                .cmp(&rhs.precondition_function_name),
+        )
+    });
+
+    let mut seen_precondition_assumptions = BTreeSet::<(String, String)>::new();
+    let mut preconditions_by_function =
+        HashMap::<String, Vec<ValidatedEntryPreconditionAssumption>>::new();
+    for assumption in precondition_records {
+        let key = (
+            assumption.function_name.clone(),
+            assumption.precondition_function_name.clone(),
+        );
+        if !seen_precondition_assumptions.insert(key) {
+            continue;
+        }
+        validate_entry_precondition_assumption(&assumption, &all_typed_args)?;
+        preconditions_by_function
+            .entry(assumption.function_name.clone())
+            .or_default()
+            .push(ValidatedEntryPreconditionAssumption {
+                function_name: assumption.function_name,
+                precondition_function_name: assumption.precondition_function_name,
+            });
+    }
+    for function_preconditions in preconditions_by_function.values_mut() {
+        function_preconditions.sort_by(|lhs, rhs| {
+            lhs.precondition_function_name
+                .cmp(&rhs.precondition_function_name)
+        });
+    }
+
     let mut range_records = assumptions.arg_range_assumptions.clone();
     range_records.sort_by(|lhs, rhs| {
         lhs.function_name
@@ -739,6 +834,13 @@ fn build_module_encoding_context(
                 }
             }
         }
+        if let Some(function_preconditions) = preconditions_by_function.get(&function_name) {
+            for assumption in function_preconditions {
+                if !reachable.contains(&assumption.precondition_function_name) {
+                    worklist.push_back(assumption.precondition_function_name.clone());
+                }
+            }
+        }
     }
 
     let mut function_order = reachable.into_iter().collect::<Vec<_>>();
@@ -759,6 +861,25 @@ fn build_module_encoding_context(
                     message: format!(
                         "arg-invariant assumption target invariant function ${} is not encoded from entry ${entry}",
                         assumption.invariant_function_name
+                    ),
+                });
+            }
+        }
+    }
+    for (function_name, function_preconditions) in &preconditions_by_function {
+        if !encoded_functions.contains(function_name) {
+            return Err(QbeSmtError::Unsupported {
+                message: format!(
+                    "entry-precondition assumption target function ${function_name} is not encoded from entry ${entry}"
+                ),
+            });
+        }
+        for assumption in function_preconditions {
+            if !encoded_functions.contains(&assumption.precondition_function_name) {
+                return Err(QbeSmtError::Unsupported {
+                    message: format!(
+                        "entry-precondition assumption target helper function ${} is not encoded from entry ${entry}",
+                        assumption.precondition_function_name,
                     ),
                 });
             }
@@ -873,9 +994,12 @@ fn build_module_encoding_context(
 
     let mut encoded_arg_invariant_assumptions =
         HashMap::<String, Vec<ValidatedArgInvariantAssumption>>::new();
+    let mut encoded_entry_precondition_assumptions =
+        HashMap::<String, Vec<ValidatedEntryPreconditionAssumption>>::new();
     let mut encoded_arg_range_assumptions =
         HashMap::<String, Vec<ValidatedArgRangeAssumption>>::new();
     let mut max_arg_invariant_assumptions = 0usize;
+    let mut max_entry_precondition_assumptions = 0usize;
     for function_name in &function_order {
         let function_assumptions = assumptions_by_function
             .get(function_name)
@@ -886,6 +1010,17 @@ fn build_module_encoding_context(
         }
         if !function_assumptions.is_empty() {
             encoded_arg_invariant_assumptions.insert(function_name.clone(), function_assumptions);
+        }
+        let function_preconditions = preconditions_by_function
+            .get(function_name)
+            .cloned()
+            .unwrap_or_default();
+        if function_preconditions.len() > max_entry_precondition_assumptions {
+            max_entry_precondition_assumptions = function_preconditions.len();
+        }
+        if !function_preconditions.is_empty() {
+            encoded_entry_precondition_assumptions
+                .insert(function_name.clone(), function_preconditions);
         }
         let function_ranges = range_assumptions_by_function
             .get(function_name)
@@ -902,8 +1037,10 @@ fn build_module_encoding_context(
         functions,
         global_map,
         arg_invariant_assumptions: encoded_arg_invariant_assumptions,
+        entry_precondition_assumptions: encoded_entry_precondition_assumptions,
         arg_range_assumptions: encoded_arg_range_assumptions,
         max_arg_invariant_assumptions,
+        max_entry_precondition_assumptions,
         uses_fp,
     })
 }
@@ -949,6 +1086,62 @@ fn validate_arg_invariant_assumption(
                 invariant_args.len()
             ),
         });
+    }
+
+    Ok(())
+}
+
+fn validate_entry_precondition_assumption(
+    assumption: &FunctionEntryPreconditionAssumption,
+    all_typed_args: &HashMap<String, Vec<FunctionArg>>,
+) -> Result<(), QbeSmtError> {
+    let Some(function_args) = all_typed_args.get(&assumption.function_name) else {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "entry-precondition assumption target function ${} is missing from module",
+                assumption.function_name
+            ),
+        });
+    };
+
+    let Some(precondition_args) = all_typed_args.get(&assumption.precondition_function_name) else {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "entry-precondition assumption helper function ${} is missing from module",
+                assumption.precondition_function_name
+            ),
+        });
+    };
+
+    if precondition_args.len() != function_args.len() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "entry-precondition assumption helper function ${} must match arity of ${} (expected {}, found {})",
+                assumption.precondition_function_name,
+                assumption.function_name,
+                function_args.len(),
+                precondition_args.len()
+            ),
+        });
+    }
+
+    for (arg_index, (function_arg, precondition_arg)) in function_args
+        .iter()
+        .zip(precondition_args.iter())
+        .enumerate()
+    {
+        if function_arg.ty != precondition_arg.ty {
+            return Err(QbeSmtError::Unsupported {
+                message: format!(
+                    "entry-precondition assumption helper function ${} argument {} type {:?} does not match ${} argument type {:?}",
+                    assumption.precondition_function_name,
+                    arg_index,
+                    precondition_arg.ty,
+                    assumption.function_name,
+                    function_arg.ty
+                ),
+            });
+        }
     }
 
     Ok(())
@@ -1163,6 +1356,52 @@ fn build_unary_callee_input_regs_expr(
     ))
 }
 
+fn build_function_entry_regs_expr(
+    function: &EncodedFunction,
+    callee: &EncodedFunction,
+) -> Result<String, QbeSmtError> {
+    if function.args.len() != callee.args.len() {
+        return Err(QbeSmtError::Unsupported {
+            message: format!(
+                "entry-precondition assumption target ${} must accept exactly {} argument(s), found {}",
+                callee.name,
+                function.args.len(),
+                callee.args.len()
+            ),
+        });
+    }
+
+    let mut regs_expr = zero_regs_array_expr();
+    for (function_arg, callee_arg) in function.args.iter().zip(callee.args.iter()) {
+        let source_slot = *function.reg_slots.get(&function_arg.name).ok_or_else(|| {
+            QbeSmtError::Unsupported {
+                message: format!(
+                    "missing source argument register slot %{} for ${}",
+                    function_arg.name, function.name
+                ),
+            }
+        })?;
+        let callee_slot =
+            *callee
+                .reg_slots
+                .get(&callee_arg.name)
+                .ok_or_else(|| QbeSmtError::Unsupported {
+                    message: format!(
+                        "missing callee argument register slot %{} for ${}",
+                        callee_arg.name, callee.name
+                    ),
+                })?;
+        let source_value_expr = format!("(select regs {})", reg_slot_const(source_slot));
+        let normalized = normalize_to_assign_type(&source_value_expr, callee_arg.ty);
+        regs_expr = format!(
+            "(store {regs_expr} {} {normalized})",
+            reg_slot_const(callee_slot)
+        );
+    }
+
+    Ok(regs_expr)
+}
+
 fn zero_regs_array_expr() -> String {
     format!(
         "((as const (Array (_ BitVec 32) (_ BitVec 64))) {})",
@@ -1184,6 +1423,22 @@ fn assumption_heap_var(index: usize) -> String {
 
 fn assumption_ret_var(index: usize) -> String {
     format!("ret_call_{index}")
+}
+
+fn precondition_assumption_regs_var(index: usize) -> String {
+    format!("pre_regs_call_{index}")
+}
+
+fn precondition_assumption_mem_var(index: usize) -> String {
+    format!("pre_mem_call_{index}")
+}
+
+fn precondition_assumption_heap_var(index: usize) -> String {
+    format!("pre_heap_call_{index}")
+}
+
+fn precondition_assumption_ret_var(index: usize) -> String {
+    format!("pre_ret_call_{index}")
 }
 
 const REG_STATE_SORT: &str = "(Array (_ BitVec 32) (_ BitVec 64))";

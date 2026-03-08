@@ -10,6 +10,7 @@ use crate::invariant_metadata::{
 };
 use crate::ir::{ResolvedProgram, TypeDef};
 use crate::parser::Statement;
+use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::verification_cache::{
     VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
     VerificationSummaryInput,
@@ -19,7 +20,7 @@ use crate::verification_checker::{
     sanitize_ident, should_assume_main_argc_non_negative, summarize_solver_output,
 };
 use crate::verification_cycles::{
-    reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+    reachable_user_functions, reject_recursion_cycles_with_entry_assumptions,
 };
 use crate::verification_outcomes::{
     record_outcome, VerificationKind, VerificationOutcome, VerificationOutcomeRecord,
@@ -139,11 +140,14 @@ pub(crate) fn prepare_struct_invariant_obligations_with_config(
         &reachable_names,
         &invariant_by_struct,
     )?;
-    reject_recursion_cycles_with_arg_invariants(
+    let function_precondition_assumptions =
+        build_function_precondition_assumptions_for_names(program, &reachable_names)?;
+    reject_recursion_cycles_with_entry_assumptions(
         program,
         "main",
         &reachable,
         &arg_invariant_assumptions,
+        &function_precondition_assumptions,
         "struct invariant verification",
     )?;
     let verification_dir = target_dir.join("struct_invariants");
@@ -1653,17 +1657,16 @@ fun main() -> I32 {
             &invariants,
         )
         .expect("build argument invariant assumptions");
-        let err = reject_recursion_cycles_with_arg_invariants(
+        let err = reject_recursion_cycles_with_entry_assumptions(
             &program,
             "main",
             &reachable,
             &arg_invariant_assumptions,
+            &[],
             "struct invariant verification",
         )
         .expect_err("combined call graph cycles must fail closed");
-        assert!(err
-            .to_string()
-            .contains("includes arg-invariant precondition edges"));
+        assert!(err.to_string().contains("includes entry-assumption edges"));
     }
 
     #[test]
@@ -1703,11 +1706,12 @@ fun main() -> I32 {
             &invariants,
         )
         .expect("build arg invariant assumptions");
-        reject_recursion_cycles_with_arg_invariants(
+        reject_recursion_cycles_with_entry_assumptions(
             &program,
             "main",
             &reachable,
             &arg_invariant_assumptions,
+            &[],
             "struct invariant verification",
         )
         .expect("call-only recursion should be allowed");
@@ -1765,17 +1769,16 @@ fun main() -> I32 {
             arg_index: 0,
             invariant_function_name: "a".to_string(),
         }];
-        let err = reject_recursion_cycles_with_arg_invariants(
+        let err = reject_recursion_cycles_with_entry_assumptions(
             &program,
             "main",
             &reachable,
             &assumptions,
+            &[],
             "struct invariant verification",
         )
         .expect_err("mixed call+arg cycle should fail closed");
-        assert!(err
-            .to_string()
-            .contains("includes arg-invariant precondition edges"));
+        assert!(err.to_string().contains("includes entry-assumption edges"));
     }
 
     #[test]

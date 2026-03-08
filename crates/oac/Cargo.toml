@@ -18,9 +18,6 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 uuid = { version = "1.11", features = ["v7"] }
 url = "2"
 
-# Dependencies for RISC-V ELF to SMT conversion
-goblin = "0.8" # ELF parsing
-
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }
 tempfile = "3"

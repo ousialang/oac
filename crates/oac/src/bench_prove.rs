@@ -161,7 +161,7 @@ struct FixtureSpec {
     expected_code: Option<&'static str>,
 }
 
-const FULL_SUITE_FIXTURES: [FixtureSpec; 8] = [
+const FULL_SUITE_FIXTURES: [FixtureSpec; 9] = [
     FixtureSpec {
         id: "prove_pass",
         source: "crates/oac/execution_tests/prove_pass.oa",
@@ -201,6 +201,11 @@ const FULL_SUITE_FIXTURES: [FixtureSpec; 8] = [
         id: "model_invariant_fail",
         source: "crates/oac/execution_tests/model_invariant_fail.oa",
         expected_code: Some("OAC-MINV-001"),
+    },
+    FixtureSpec {
+        id: "precondition_fail",
+        source: "crates/oac/execution_tests/precondition_fail.oa",
+        expected_code: Some("OAC-PRE-001"),
     },
 ];
 
@@ -673,8 +678,13 @@ fn run_fixture_iteration(
     };
 
     let prove_stats = smt2_dir_stats(&fixture_dir.join("prove"))?;
+    let precondition_stats = smt2_dir_stats(&fixture_dir.join("preconditions"))?;
     let struct_inv_stats = smt2_dir_stats(&fixture_dir.join("struct_invariants"))?;
     let model_inv_stats = smt2_dir_stats(&fixture_dir.join("model_invariants"))?;
+    let prove_stats = ArtifactStats {
+        count: prove_stats.count.saturating_add(precondition_stats.count),
+        bytes: prove_stats.bytes.saturating_add(precondition_stats.bytes),
+    };
     let inv_stats = ArtifactStats {
         count: struct_inv_stats.count.saturating_add(model_inv_stats.count),
         bytes: struct_inv_stats.bytes.saturating_add(model_inv_stats.bytes),
@@ -1052,7 +1062,7 @@ mod tests {
 
     #[test]
     fn suite_selection_matches_contract() {
-        assert_eq!(suite_fixtures(BenchSuite::Full).len(), 8);
+        assert_eq!(suite_fixtures(BenchSuite::Full).len(), 9);
         assert_eq!(suite_fixtures(BenchSuite::Quick).len(), 4);
     }
 

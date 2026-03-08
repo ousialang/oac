@@ -8,6 +8,7 @@ use crate::invariant_metadata::{
     InvariantBinding,
 };
 use crate::ir::ResolvedProgram;
+use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::qbe_backend::PROVE_MARKER_PREFIX;
 use crate::verification_cache::{
     VerificationCacheMode, VerificationCacheWritePolicy, VerificationConfig,
@@ -18,7 +19,7 @@ use crate::verification_checker::{
     sanitize_ident, should_assume_main_argc_non_negative, summarize_solver_output,
 };
 use crate::verification_cycles::{
-    reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+    reachable_user_functions, reject_recursion_cycles_with_entry_assumptions,
 };
 use crate::verification_outcomes::{
     record_outcome, VerificationKind, VerificationOutcome, VerificationOutcomeRecord,
@@ -165,11 +166,14 @@ pub(crate) fn prepare_prove_obligations_with_config(
         &reachable_names,
         &invariant_by_struct,
     )?;
-    reject_recursion_cycles_with_arg_invariants(
+    let function_precondition_assumptions =
+        build_function_precondition_assumptions_for_names(program, &reachable_names)?;
+    reject_recursion_cycles_with_entry_assumptions(
         program,
         "main",
         &reachable,
         &arg_invariant_assumptions,
+        &function_precondition_assumptions,
         "prove verification",
     )?;
 
@@ -461,7 +465,7 @@ mod tests {
         verify_prove_obligations_with_qbe, verify_prove_obligations_with_qbe_with_profile,
     };
     use crate::verification_cycles::{
-        reachable_user_functions, reject_recursion_cycles_with_arg_invariants,
+        reachable_user_functions, reject_recursion_cycles_with_entry_assumptions,
     };
     use crate::verification_profile::VerificationProfile;
     use crate::verification_solver::test_support;
@@ -568,6 +572,28 @@ fun main() -> I32 {
     }
 
     #[test]
+    fn prove_sites_can_use_function_preconditions() {
+        let source = r#"
+fun helper(x: I32) -> I32 pre {
+	x > 5
+} {
+	prove(x > 5)
+	return x
+}
+
+fun main() -> I32 {
+	return helper(7)
+}
+"#;
+
+        let program = resolve_program(source);
+        let qbe_module = qbe_backend::compile(program.clone());
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
+            .expect("function preconditions should satisfy helper prove obligations");
+    }
+
+    #[test]
     fn unknown_prove_obligations_fail_closed_with_attempt_ladder() {
         let source = r#"
 fun main() -> I32 {
@@ -641,9 +667,7 @@ fun main() -> I32 {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let err = verify_prove_obligations_with_qbe(&program, &qbe_module, tempdir.path())
             .expect_err("combined call graph cycles must fail closed");
-        assert!(err
-            .to_string()
-            .contains("includes arg-invariant precondition edges"));
+        assert!(err.to_string().contains("includes entry-assumption edges"));
     }
 
     #[test]
@@ -671,10 +695,11 @@ fun main() -> I32 {
         let program = resolve_program(source);
         let reachable =
             reachable_user_functions(&program, "main").expect("collect reachable functions");
-        reject_recursion_cycles_with_arg_invariants(
+        reject_recursion_cycles_with_entry_assumptions(
             &program,
             "main",
             &reachable,
+            &[],
             &[],
             "prove verification",
         )
@@ -716,17 +741,16 @@ fun main() -> I32 {
             arg_index: 0,
             invariant_function_name: "a".to_string(),
         }];
-        let err = reject_recursion_cycles_with_arg_invariants(
+        let err = reject_recursion_cycles_with_entry_assumptions(
             &program,
             "main",
             &reachable,
             &assumptions,
+            &[],
             "prove verification",
         )
         .expect_err("mixed call+arg cycle should fail closed");
-        assert!(err
-            .to_string()
-            .contains("includes arg-invariant precondition edges"));
+        assert!(err.to_string().contains("includes entry-assumption edges"));
     }
 
     #[test]

@@ -15,20 +15,21 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
    - After the initial function-body type check, resolve normalizes receiver method syntax (`value.helper(...)`) into ordinary calls (`TypeName__helper(value, ...)`) or enum-constructor postfix forms before ownership rewriting, purity checks, call indexing, and codegen.
    - The same normalization pass also rewrites non-builtin infix operators into ordinary calls to resolved operator-trait impls (`Addition`, `Subtraction`, `Multiplication`, `Division`, `Equality`, `Comparison`), while keeping compiler-owned primitive scalar operators as builtin `BinOp` nodes.
 6. Lower to QBE with `qbe_backend::compile`.
-7. Prepare prove + integer-safety + struct-invariant checker artifacts, group ordinary-root obligations into repo-local summary candidates, and consult proof-cache policy from `VerificationConfig` / `--proof-cache`.
-   - Prove, integer-safety, and struct-invariant site checkers first prune the cloned caller CFG to blocks that can still reach the targeted site before reachable-callee closure is computed.
+7. Prepare function-precondition + prove + integer-safety + struct-invariant checker artifacts, group ordinary-root obligations into repo-local summary candidates, and consult proof-cache policy from `VerificationConfig` / `--proof-cache`.
+   - Function-precondition, prove, integer-safety, and struct-invariant site checkers first prune the cloned caller CFG to blocks that can still reach the targeted site before reachable-callee closure is computed.
    - Assembled checker entry functions rewrite only compiler-generated assert-fail exits (`call $exit(w 242)` + `hlt`) to safe `ret 0` before CHC encoding; helper callees keep terminal assert exits so callers do not continue past impossible states, and other exits remain aborts.
-8. Verify `prove(...)` obligations with `prove::verify_prepared_prove_obligations` (SMT-based, fail-closed, trust mode skips solver only when the combined ordinary-function summary matches a cached `unsat` entry).
-9. Verify source-level integer arithmetic obligations with `integer_safety::verify_prepared_integer_safety_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable integer `+/-/*//` sites from `main` plus all struct/model-invariant roots).
-10. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as prove/int-safety checking); after all ordinary-root obligations succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
-11. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe_with_config` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module, and uses one summary candidate per model-invariant checker root).
-12. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
-13. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
+8. Verify function-precondition obligations with `function_preconditions::verify_prepared_function_preconditions` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable user-defined call sites from `main`, generated precondition helpers, struct-invariant helpers, and model-invariant roots).
+9. Verify `prove(...)` obligations with `prove::verify_prepared_prove_obligations` (SMT-based, fail-closed, trust mode skips solver only when the combined ordinary-function summary matches a cached `unsat` entry).
+10. Verify source-level integer arithmetic obligations with `integer_safety::verify_prepared_integer_safety_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable integer `+/-/*//` sites from `main` plus all struct/model-invariant roots and generated precondition helpers).
+11. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as precondition/prove/int-safety checking); after all ordinary-root obligations succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
+12. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe_with_config` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module, and uses one summary candidate per model-invariant checker root).
+13. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
+14. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
     - QBE runtime backend: emit `target/oac/ir.qbe`, run `qbe`, emit `target/oac/assembly.s`.
     - LLVM runtime backend: emit `target/oac/ir.ll`, run `clang -x ir -c`, emit `target/oac/object.o`.
-14. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
-15. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
-16. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
+15. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+16. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+17. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -38,6 +39,8 @@ Artifacts emitted during build:
 - `target/oac/ir.ll` (LLVM runtime backend)
 - `target/oac/prove/site_*.qbe` (generated checker programs, when prove obligations exist)
 - `target/oac/prove/site_*.smt2` (when prove obligations exist)
+- `target/oac/preconditions/site_*.qbe` (generated checker programs, when function-precondition obligations exist)
+- `target/oac/preconditions/site_*.smt2` (when function-precondition obligations exist)
 - `target/oac/integer_safety/site_*.qbe` (generated checker programs, when integer-safety obligations exist)
 - `target/oac/integer_safety/site_*.smt2` (when integer-safety obligations exist)
 - `target/oac/struct_invariants/site_*.qbe` (generated checker programs, when obligations exist)
@@ -73,7 +76,7 @@ Artifacts emitted during test runs:
 - `target/oac/test/assembly.s`
 - `target/oac/test/object.o` (LLVM runtime backend)
 - `target/oac/test/app`
-- prove/invariant debug artifacts under `target/oac/test/prove/`, `target/oac/test/struct_invariants/`, and `target/oac/test/model_invariants/` when obligations exist
+- proof debug artifacts under `target/oac/test/preconditions/`, `target/oac/test/prove/`, `target/oac/test/struct_invariants/`, and `target/oac/test/model_invariants/` when obligations exist
 - shared repo-local proof summaries under `target/oac/verification_cache/` when `--proof-cache` is not `off`
 
 ## End-to-End Bench Flow
@@ -82,7 +85,7 @@ Defined in `crates/oac/src/bench_prove.rs` (`run` / `run_with_runner`):
 
 1. Select fixture corpus (`full` or `quick`) and iteration count.
 2. For each fixture+iteration, compile through the same front-end+backend path as `oac build` into isolated targets under `target/oac/bench/runs/<fixture>/iter_<n>/`.
-3. Record elapsed wall time per iteration and collect checker artifact metrics (`prove/*.smt2` plus `struct_invariants/*.smt2` and `model_invariants/*.smt2`, aggregated for invariant stats).
+3. Record elapsed wall time per iteration and collect checker artifact metrics (`prove/*.smt2` plus `preconditions/*.smt2` in proof-stage totals, and `struct_invariants/*.smt2` plus `model_invariants/*.smt2` aggregated for invariant stats).
 4. Use median elapsed time per fixture as the reported value.
 5. Compare fixture medians against committed baseline (`crates/oac/bench/prove_baseline.json`) with regression policy `delta_ms >= 200 && delta_pct >= 20.0`.
 6. Emit JSON report (`target/oac/bench/prove/latest.json` by default) plus compact console table.
@@ -91,7 +94,7 @@ Defined in `crates/oac/src/bench_prove.rs` (`run` / `run_with_runner`):
 Notes:
 - Timing regressions are report-only in v1 (command still exits success when outcomes match expectations).
 - Unexpected fixture outcomes (unexpected success/failure or wrong diagnostic code) fail the command.
-- Full suite fixture set includes prove, struct-invariant, template-hash-table, and model-invariant pass/fail checks; quick suite remains the first four fixtures for fast local iteration.
+- Full suite fixture set includes prove, function-precondition, struct-invariant, template-hash-table, and model-invariant pass/fail checks; quick suite remains the first four fixtures for fast local iteration.
 
 ## Front-End Details
 
@@ -114,6 +117,7 @@ Core AST includes:
 - Top-level test declarations (`test "Name" { ... }`).
 - Top-level namespaces (`namespace Name { ... }`) support `fun` and `extern fun`; declarations are flattened to mangled internal function keys (`Name__fn`).
 - External declarations (`extern fun name(...) -> Type`) are signature-only AST nodes and may appear at top-level or inside namespace blocks.
+- Optional function `pre { ... }` blocks are parsed after the return type and before the body on ordinary `fun` definitions; clauses are multiline Bool expressions and the block must contain at least one clause.
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, method calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`receiver.fn(args)` parses as a method call; resolve preserves `Name.fn(args)` as static namespace/trait/enum syntax and rewrites value receivers to ordinary calls)
 - Char literals are parsed from single quotes (for example `'x'`, `'\n'`) and lowered to a namespaced constructor call (`Char.from_code(<i32>)`).
@@ -145,6 +149,7 @@ Important enforced invariants include:
 - conditions in `if` / `while` must be `Bool`
 - `prove(...)` and `assert(...)` conditions must be `Bool`
 - `prove(...)` and `assert(...)` are statement-only; expression usage is rejected
+- Function `pre { ... }` clauses are lowered by resolve into synthesized helper functions `__pre__<function_name>__clause_<ordinal>` with the same parameter list as the owning function, and `ResolvedProgram.function_preconditions` tracks the owning function -> helper mapping for later verification/entry assumptions.
 - user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
 - namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
 - receiver method calls (`value.fn(args)`) are resolved through the receiver's concrete type (`TypeName__fn(value, args...)`) and normalized into ordinary `Call(...)` nodes before ownership/codegen
@@ -233,8 +238,6 @@ Important enforced invariants include:
 
 ## SMT Adjacent Paths
 
-- `main.rs` also exposes `riscv-smt` subcommand.
-- `riscv_smt.rs` parses RISC-V ELF and emits SMT-LIB constraints for bounded cycle checking.
 - `verification.rs` is the shared in-crate verification entrypoint; it runs ordinary-root prove obligations first, then ordinary-root integer-safety obligations, then struct invariants, then model invariants.
 - `qbe-smt` is used by prove, struct-invariant, and model-invariant verification to encode checker QBE modules (checker entry + reachable user callees) into CHC/fixedpoint (Horn) constraints.
 - `integer_safety.rs` reuses the same checker-module closure helpers as `prove.rs`: it collects marker sites reachable from `main` plus struct/model-invariant roots, clones the site’s caller into checker `main`, prunes CFG branches that cannot reach the target marker, injects a `ret bad` predicate after the marker, and groups resulting obligations into ordinary/model summary candidates for cache reuse.

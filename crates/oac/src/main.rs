@@ -7,6 +7,7 @@ mod comptime;
 mod diagnostics;
 mod flat_imports;
 mod formatter;
+mod function_preconditions;
 mod integer_safety;
 mod invariant_metadata;
 mod ir;
@@ -14,9 +15,9 @@ mod llvm_backend;
 mod lsp;
 mod model_invariants;
 mod parser;
+mod precondition_metadata;
 mod prove;
 mod qbe_backend;
-mod riscv_smt;
 mod runtime_layout;
 mod struct_invariants;
 mod symbol_keys;
@@ -187,12 +188,6 @@ fn run(oac: Oac) -> Result<(), CompilerDiagnosticBundle> {
                 )
             })?;
         }
-        OacSubcommand::RiscvSmt(riscv_smt_opts) => {
-            let current_dir = std::env::current_dir().map_err(|err| {
-                io_stage_error("OAC-IO-003", "failed to get current directory", err)
-            })?;
-            process_riscv_smt(&current_dir, riscv_smt_opts)?;
-        }
         OacSubcommand::BenchProve(bench_opts) => {
             let current_dir = std::env::current_dir().map_err(|err| {
                 io_stage_error("OAC-IO-024", "failed to get current directory", err)
@@ -201,63 +196,6 @@ fn run(oac: Oac) -> Result<(), CompilerDiagnosticBundle> {
         }
     }
 
-    Ok(())
-}
-
-fn process_riscv_smt(
-    _current_dir: &Path,
-    opts: RiscvSmtOpts,
-) -> Result<(), CompilerDiagnosticBundle> {
-    let elf_path = Path::new(&opts.elf_file);
-    if opts.check {
-        let result = riscv_smt::check_returns_zero_within_cycles(elf_path).map_err(|err| {
-            CompilerDiagnosticBundle::from_anyhow(
-                DiagnosticStage::Resolve,
-                "OAC-RISCV-001",
-                "failed to run RISC-V SMT check",
-                &err,
-                None,
-                None,
-            )
-        })?;
-        if result {
-            println!(
-                "Program {} is SATISFIABLE to return 0 within {} cycles.",
-                opts.elf_file,
-                riscv_smt::MAX_CYCLES
-            );
-        } else {
-            println!(
-                "Program {} is UNSATISFIABLE to return 0 within {} cycles.",
-                opts.elf_file,
-                riscv_smt::MAX_CYCLES
-            );
-        }
-    } else {
-        let smt_expression =
-            riscv_smt::elf_to_smt_returns_zero_within_cycles(elf_path).map_err(|err| {
-                CompilerDiagnosticBundle::from_anyhow(
-                    DiagnosticStage::Resolve,
-                    "OAC-RISCV-002",
-                    "failed to build RISC-V SMT expression",
-                    &err,
-                    None,
-                    None,
-                )
-            })?;
-        if let Some(output_path) = opts.output {
-            std::fs::write(&output_path, smt_expression).map_err(|err| {
-                io_stage_error(
-                    "OAC-IO-004",
-                    format!("failed to write SMT output {}", output_path),
-                    err,
-                )
-            })?;
-            info!("SMT expression written to {}", output_path);
-        } else {
-            println!("{}", smt_expression);
-        }
-    }
     Ok(())
 }
 
@@ -880,6 +818,14 @@ fn compile_ast_to_executable_with_profile_and_reporter(
         &verification_config,
     )
     .map_err(|err| match err {
+        verification::VerificationError::Precondition(err) => stage_error_from_anyhow(
+            DiagnosticStage::Precondition,
+            "OAC-PRE-001",
+            "function precondition verification failed",
+            err,
+            source_path,
+            source_text,
+        ),
         verification::VerificationError::Prove(err) => stage_error_from_anyhow(
             DiagnosticStage::Prove,
             "OAC-PROVE-001",
@@ -910,6 +856,14 @@ fn compile_ast_to_executable_with_profile_and_reporter(
         ordinary_verification
             .verify_prove_stage(&verification_config)
             .map_err(|err| match err {
+                verification::VerificationError::Precondition(err) => stage_error_from_anyhow(
+                    DiagnosticStage::Precondition,
+                    "OAC-PRE-001",
+                    "function precondition verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
                 verification::VerificationError::Prove(err) => stage_error_from_anyhow(
                     DiagnosticStage::Prove,
                     "OAC-PROVE-001",
@@ -941,6 +895,14 @@ fn compile_ast_to_executable_with_profile_and_reporter(
         ordinary_verification
             .verify_struct_stage(&verification_config)
             .map_err(|err| match err {
+                verification::VerificationError::Precondition(err) => stage_error_from_anyhow(
+                    DiagnosticStage::Precondition,
+                    "OAC-PRE-001",
+                    "function precondition verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
                 verification::VerificationError::Prove(err) => stage_error_from_anyhow(
                     DiagnosticStage::Prove,
                     "OAC-PROVE-001",
@@ -971,6 +933,14 @@ fn compile_ast_to_executable_with_profile_and_reporter(
     run_compiler_stage(reporter.as_deref_mut(), "check global rules", || {
         verification::verify_model_stage(&ir, &qbe_ir, target_dir, &verification_config).map_err(
             |err| match err {
+                verification::VerificationError::Precondition(err) => stage_error_from_anyhow(
+                    DiagnosticStage::Precondition,
+                    "OAC-PRE-001",
+                    "function precondition verification failed",
+                    err,
+                    source_path,
+                    source_text,
+                ),
                 verification::VerificationError::Prove(err) => stage_error_from_anyhow(
                     DiagnosticStage::Prove,
                     "OAC-PROVE-001",
@@ -1377,7 +1347,6 @@ enum OacSubcommand {
     Test(Test),
     Fmt(Fmt),
     Lsp(LspOpts),
-    RiscvSmt(RiscvSmtOpts),
     BenchProve(bench_prove::BenchProveOpts),
 }
 
@@ -1452,25 +1421,6 @@ struct Fmt {
 #[derive(clap::Parser, Debug)]
 #[clap(name = "lsp", about = "Run the Ousia Language Server over stdio.")]
 struct LspOpts {}
-
-#[derive(clap::Parser, Debug)]
-#[clap(
-    name = "riscv-smt",
-    about = "Turn a RISC-V ELF into an SMT expression."
-)]
-struct RiscvSmtOpts {
-    /// Path to the RISC-V ELF file
-    #[clap(short, long)]
-    elf_file: String,
-
-    /// Output SMT file path (optional, prints to stdout if not provided)
-    #[clap(short, long)]
-    output: Option<String>,
-
-    /// Check if the program returns 0 within MAX_CYCLES instead of generating SMT
-    #[clap(short, long, default_value = "false")]
-    check: bool,
-}
 
 #[cfg(test)]
 mod tests {

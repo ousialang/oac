@@ -7,6 +7,10 @@ use crate::invariant_metadata::{
     InvariantBinding,
 };
 use crate::ir::ResolvedProgram;
+use crate::precondition_metadata::{
+    build_function_precondition_assumptions,
+    build_function_precondition_assumptions_with_name_overrides,
+};
 use crate::qbe_backend::ASSERT_FAILURE_EXIT_CODE;
 
 pub(crate) fn checker_module_with_reachable_callees(
@@ -53,10 +57,13 @@ pub(crate) fn checker_module_with_reachable_callees(
                 &module.functions,
                 invariant_by_struct,
             )?;
+            let entry_precondition_assumptions =
+                build_function_precondition_assumptions(program, &module.functions)?;
             let arg_range_assumptions =
                 build_function_arg_range_assumptions(program, &module.functions)?;
             qbe_smt::ModuleAssumptions {
                 arg_invariant_assumptions,
+                entry_precondition_assumptions,
                 arg_range_assumptions,
             }
         } else {
@@ -67,6 +74,12 @@ pub(crate) fn checker_module_with_reachable_callees(
                     invariant_by_struct,
                     checker_to_program_name,
                 )?;
+            let entry_precondition_assumptions =
+                build_function_precondition_assumptions_with_name_overrides(
+                    program,
+                    &module.functions,
+                    checker_to_program_name,
+                )?;
             let arg_range_assumptions = build_function_arg_range_assumptions_with_name_overrides(
                 program,
                 &module.functions,
@@ -74,6 +87,7 @@ pub(crate) fn checker_module_with_reachable_callees(
             )?;
             qbe_smt::ModuleAssumptions {
                 arg_invariant_assumptions,
+                entry_precondition_assumptions,
                 arg_range_assumptions,
             }
         };
@@ -82,9 +96,15 @@ pub(crate) fn checker_module_with_reachable_callees(
             .iter()
             .map(|assumption| assumption.invariant_function_name.clone())
             .collect::<BTreeSet<_>>();
+        let required_precondition_functions = assumptions
+            .entry_precondition_assumptions
+            .iter()
+            .map(|assumption| assumption.precondition_function_name.clone())
+            .collect::<BTreeSet<_>>();
 
         let mut next_roots = additional_roots.clone();
         next_roots.extend(required_invariant_functions);
+        next_roots.extend(required_precondition_functions);
         if next_roots == additional_roots {
             rewrite_checker_assert_failure_exits(&mut module);
             return Ok((module, assumptions));

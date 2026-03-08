@@ -1,0 +1,9 @@
+---
+source: crates/oac/src/qbe_backend.rs
+expression: snapshot_content
+snapshot_kind: text
+---
+COMPILATION ERROR
+
+[OAC-PRE-001] Error: function precondition verification failed: function precondition verification failed (SAT counterexamples found):
+__model__invariant__constant_call#__model__invariant__constant_call#0#1#pre_0 (root=__model__invariant__constant_call, caller=__model__invariant__constant_call, callee=guarded, clause=0, qbe_artifact=site___model__invariant__constant_call___model__invariant__constant_call_0_1_pre_0.qbe, smt_artifact=site___model__invariant__constant_call___model__invariant__constant_call_0_1_pre_0.smt2)

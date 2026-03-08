@@ -1553,9 +1553,9 @@ struct Payload {
 }
 
 enum Token {
-	Int(I32),
+	Int: I32,
 	Plus,
-	Wrapped(Payload),
+	Wrapped: Payload,
 }
 
 comptime fun reflect(T: Type) -> DeclSet {
@@ -1628,9 +1628,9 @@ struct Payload {
 }
 
 enum Token {
-	Int(I32),
+	Int: I32,
 	Plus,
-	Wrapped(Payload),
+	Wrapped: Payload,
 }
 
 comptime fun clone_enum(T: Type) -> DeclSet {
@@ -1679,9 +1679,9 @@ comptime apply clone_enum(Token)
         let mut ast = parse_source(
             r#"
 enum Token {
-	Int(I32),
+	Int: I32,
 	Plus,
-	Wrapped(String),
+	Wrapped: String,
 }
 
 comptime apply derive_enum_tags(Token)

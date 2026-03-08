@@ -12,6 +12,7 @@ const OUTCOME_SCHEMA_VERSION: u32 = 1;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum VerificationKind {
+    Precondition,
     Prove,
     StructInvariant,
     ModelInvariant,

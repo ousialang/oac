@@ -6,7 +6,7 @@ Ousia is an experimental language and compiler implemented in Rust.
 
 The active compiler workspace is:
 - `Cargo.toml` (workspace root)
-- `crates/oac` (CLI + tokenizer/parser/type checker/IR/QBE backend/RISC-V SMT)
+- `crates/oac` (CLI + tokenizer/parser/type checker/IR/QBE backend)
 - `crates/qbe-rs` (QBE Rust bindings/wrapper)
 - `crates/qbe-smt` (QBE-to-SMT CHC/fixedpoint encoding support for invariant proving)
 
@@ -47,7 +47,6 @@ Editor tooling in this repository:
 - `crates/oac/src/ir.rs`: type resolution, semantic checks, and resolved IR.
 - `crates/oac/src/qbe_backend.rs`: code generation to QBE IR and end-to-end execution tests.
 - `crates/oac/src/builtins.rs`: built-in scalar types (including `U8`/`Void`) and builtin type parsing.
-- `crates/oac/src/riscv_smt.rs`: ELF -> SMT pipeline for bounded return-to-zero checks.
 - `crates/oac/src/verification.rs`: shared proof/invariant verification entrypoint that sequences prove verification before struct-invariant verification.
 - `crates/oac/src/prove.rs`: SMT-backed compile-time verification pass for `prove(...)` statement obligations.
 - `crates/oac/src/struct_invariants.rs`: SMT-backed compile-time struct invariant verification pass.
