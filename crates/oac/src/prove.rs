@@ -3,11 +3,12 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::ast_paths::marker_path_id;
 use crate::invariant_metadata::{
     build_function_arg_invariant_assumptions_for_names, discover_struct_invariant_bindings,
     InvariantBinding,
 };
-use crate::ir::ResolvedProgram;
+use crate::ir::{ResolvedProgram, SourceSpan};
 use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::qbe_backend::PROVE_MARKER_PREFIX;
 use crate::verification_cache::{
@@ -32,6 +33,8 @@ struct ProveSite {
     id: String,
     caller: String,
     marker_temp: String,
+    ast_path: Option<String>,
+    source_span: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug)]
@@ -39,7 +42,9 @@ pub(crate) struct PreparedProveSite {
     site: ProveSite,
     qbe_filename: String,
     smt_filename: String,
-    smt: String,
+    solver_smt: String,
+    #[allow(dead_code)]
+    artifact_smt: String,
 }
 
 impl PreparedProveSite {
@@ -51,7 +56,7 @@ impl PreparedProveSite {
         VerificationSummaryInput {
             kind: VerificationKind::Prove,
             local_id: self.site.id.clone(),
-            smt: self.smt.clone(),
+            smt: self.solver_smt.clone(),
         }
     }
 }
@@ -100,6 +105,7 @@ pub(crate) fn verify_prove_obligations_with_qbe_with_config(
 }
 
 fn collect_prove_sites(
+    program: &ResolvedProgram,
     function_map: &HashMap<String, qbe::Function>,
     reachable: &HashSet<String>,
 ) -> anyhow::Result<Vec<ProveSite>> {
@@ -108,6 +114,20 @@ fn collect_prove_sites(
 
     let mut sites = Vec::new();
     for function_name in functions {
+        let source_paths = program
+            .function_definitions
+            .get(&function_name)
+            .map(|definition| {
+                definition
+                    .local_source_spans
+                    .iter()
+                    .filter_map(|(path, span)| {
+                        path.ends_with("/prove.cond")
+                            .then(|| (marker_path_id(path), (path.clone(), span.clone())))
+                    })
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
         let function = function_map
             .get(&function_name)
             .ok_or_else(|| anyhow::anyhow!("missing QBE function {}", function_name))?;
@@ -126,11 +146,19 @@ fn collect_prove_sites(
                 if !dest.starts_with(PROVE_MARKER_PREFIX) {
                     continue;
                 }
+                let marker_id = dest.trim_start_matches(PROVE_MARKER_PREFIX).to_string();
+                let (ast_path, source_span) = source_paths
+                    .get(&marker_id)
+                    .cloned()
+                    .map(|(path, span)| (Some(path), Some(span)))
+                    .unwrap_or((None, None));
 
                 sites.push(ProveSite {
                     id: format!("{}#{}#{}", function_name, block_index, item_index),
                     caller: function_name.clone(),
                     marker_temp: dest.clone(),
+                    ast_path,
+                    source_span,
                 });
             }
         }
@@ -155,7 +183,7 @@ pub(crate) fn prepare_prove_obligations_with_config(
         .map(|function| (function.name.clone(), function.clone()))
         .collect::<HashMap<_, _>>();
 
-    let sites = collect_prove_sites(&function_map, &reachable)?;
+    let sites = collect_prove_sites(program, &function_map, &reachable)?;
     if sites.is_empty() {
         return Ok(Vec::new());
     }
@@ -202,7 +230,19 @@ pub(crate) fn prepare_prove_obligations_with_config(
             )
         })?;
 
-        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+        let mut header_comments = vec![
+            format!("prove obligation {}", site.id),
+            format!("caller: {}", site.caller),
+            format!("target marker: {}", site.marker_temp),
+            "bad means exit == 1 is reachable".to_string(),
+        ];
+        if let Some(ast_path) = &site.ast_path {
+            header_comments.insert(2, format!("ast path: {}", ast_path));
+        }
+        if let Some(source_span) = &site.source_span {
+            header_comments.insert(2, format!("source: {}", source_span.display_compact()));
+        }
+        let scripts = qbe_smt::qbe_module_to_annotated_smt_with_assumptions(
             &checker_module,
             "main",
             &qbe_smt::EncodeOptions {
@@ -213,6 +253,7 @@ pub(crate) fn prepare_prove_obligations_with_config(
                 first_arg_i32_range: None,
             },
             &assumptions,
+            &qbe_smt::ArtifactAnnotations { header_comments },
         )
         .map_err(|err| {
             anyhow::anyhow!(
@@ -224,7 +265,7 @@ pub(crate) fn prepare_prove_obligations_with_config(
         })?;
 
         let smt_path = verification_dir.join(&smt_filename);
-        std::fs::write(&smt_path, &smt).with_context(|| {
+        std::fs::write(&smt_path, &scripts.artifact_smt).with_context(|| {
             format!(
                 "failed to write prove SMT obligation {}",
                 smt_path.display()
@@ -235,7 +276,8 @@ pub(crate) fn prepare_prove_obligations_with_config(
             site,
             qbe_filename,
             smt_filename,
-            smt,
+            solver_smt: scripts.solver_smt,
+            artifact_smt: scripts.artifact_smt,
         });
     }
 
@@ -265,7 +307,7 @@ pub(crate) fn verify_prepared_prove_obligations(
         let strict_cache_mismatch = config.cache_mode == VerificationCacheMode::Strict
             && cached_roots.contains(prepared.caller());
 
-        match solve_chc_with_policy(&prepared.smt, config.profile) {
+        match solve_chc_with_policy(&prepared.solver_smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::Prove,
@@ -518,7 +560,7 @@ fun helper(v: Foo) -> I32 {
 }
 
 fun main() -> I32 {
-	f = Foo struct { x: sub(0, 1), }
+	f = Foo struct { x: 0 - 1, }
 	return helper(f)
 }
 "#;
@@ -559,7 +601,7 @@ fun helper(v: Counter) -> I32 {
 }
 
 fun main() -> I32 {
-	c = Counter struct { value: sub(0, 1), max: sub(0, 2), }
+	c = Counter struct { value: 0 - 1, max: 0 - 2, }
 	return helper(c)
 }
 "#;
@@ -823,7 +865,8 @@ fun main() -> I32 {
             .collect::<HashMap<_, _>>();
         let reachable =
             reachable_user_functions(&program, "main").expect("collect reachable functions");
-        let sites = super::collect_prove_sites(&function_map, &reachable).expect("collect sites");
+        let sites =
+            super::collect_prove_sites(&program, &function_map, &reachable).expect("collect sites");
         assert_eq!(sites.len(), 1, "expected one prove site");
 
         let (checker_module, _checker, _assumptions) = super::build_site_checker_module(
@@ -880,7 +923,8 @@ fun main() -> I32 {
             .collect::<HashMap<_, _>>();
         let reachable =
             reachable_user_functions(&program, "main").expect("collect reachable functions");
-        let sites = super::collect_prove_sites(&function_map, &reachable).expect("collect sites");
+        let sites =
+            super::collect_prove_sites(&program, &function_map, &reachable).expect("collect sites");
         assert_eq!(sites.len(), 1, "expected one prove site");
         let (checker_module, checker, assumptions) = super::build_site_checker_module(
             &program,
@@ -904,7 +948,9 @@ fun main() -> I32 {
         .expect("encode prove checker");
 
         assert!(
-            smt.contains("(bvult (select mem (bvadd"),
+            smt.contains("__oac_strcmp_out0")
+                && smt.contains("__oac_strcmp_finished0")
+                && smt.contains("(ite (bvult"),
             "expected tri-state strcmp ordering branch in SMT: {smt}"
         );
         assert!(

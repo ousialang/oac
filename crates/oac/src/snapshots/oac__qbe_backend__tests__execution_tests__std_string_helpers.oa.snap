@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-[OAC-PROVE-001] Error: prove obligation verification failed: missing signature for function __string_data_ptr while building argument-invariant assumptions
+[OAC-PRE-001] Error: function precondition verification failed: solver returned unknown for function precondition obligation main#String__slice_clamped#8#0#pre_0 (root=main, caller=String__slice_clamped, callee=slice, clause=0, qbe_artifact=site_main_String__slice_clamped_8_0_pre_0.qbe, smt_artifact=site_main_String__slice_clamped_8_0_pre_0.smt2, attempts=[10s:unknown(timeout), 30s:unknown(timeout)]). verification is fail-closed until this obligation is proven unsat

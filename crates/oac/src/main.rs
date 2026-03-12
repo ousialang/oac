@@ -1,3 +1,4 @@
+mod ast_paths;
 mod ast_walk;
 mod bench_prove;
 mod builtins;
@@ -19,6 +20,7 @@ mod precondition_metadata;
 mod prove;
 mod qbe_backend;
 mod runtime_layout;
+mod source_span;
 mod struct_invariants;
 mod symbol_keys;
 mod test_framework;
@@ -209,7 +211,11 @@ fn format_source_file(fmt: &Fmt) -> Result<(), CompilerDiagnosticBundle> {
         )
     })?;
 
-    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
+    let tokens = tokenizer::tokenize_with_source_name(
+        source.clone(),
+        Some(source_path.display().to_string()),
+    )
+    .map_err(|err| {
         CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
             "OAC-TOKENIZE-004",
             &source,
@@ -288,7 +294,11 @@ pub(crate) fn parse_source_to_ast_with_artifacts(
     })?;
     trace!(source_len = source.len(), "Read source file");
 
-    let tokens = tokenizer::tokenize(source.clone()).map_err(|err| {
+    let tokens = tokenizer::tokenize_with_source_name(
+        source.clone(),
+        Some(source_path.display().to_string()),
+    )
+    .map_err(|err| {
         CompilerDiagnosticBundle::single(diagnostic_from_tokenizer_error(
             codes.tokenize_code,
             &source,
@@ -333,16 +343,31 @@ pub(crate) fn parse_source_to_ast_with_artifacts(
             Some(&source),
         )
     })?;
-    comptime::execute_comptime_applies(&mut ast).map_err(|err| {
-        stage_error_from_anyhow(
-            DiagnosticStage::Comptime,
-            codes.comptime_code,
-            codes.comptime_message,
-            err,
-            Some(source_path),
-            Some(&source),
-        )
-    })?;
+    if !ast.comptime_applies.is_empty() {
+        let bootstrap_program =
+            ir::resolve_with_mode(ast.clone(), ir::ResolveMode::BootstrapComptime).map_err(
+                |err| {
+                    stage_error_from_anyhow(
+                        DiagnosticStage::Comptime,
+                        codes.comptime_code,
+                        codes.comptime_message,
+                        err,
+                        Some(source_path),
+                        Some(&source),
+                    )
+                },
+            )?;
+        comptime::execute_comptime_applies(&mut ast, bootstrap_program).map_err(|err| {
+            stage_error_from_anyhow(
+                DiagnosticStage::Comptime,
+                codes.comptime_code,
+                codes.comptime_message,
+                err,
+                Some(source_path),
+                Some(&source),
+            )
+        })?;
+    }
 
     Ok((source, ast))
 }
@@ -1431,8 +1456,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        format_source_file, reject_proven_non_terminating_main, resolve_linker_attempts_for_config,
-        Fmt, LinkerAttempt, Oac, OacSubcommand, RuntimeBackend,
+        format_source_file, parse_source_to_ast_with_artifacts, reject_proven_non_terminating_main,
+        resolve_linker_attempts_for_config, Fmt, FrontendPipelineCodes, LinkerAttempt, Oac,
+        OacSubcommand, RuntimeBackend,
     };
     use crate::verification_cache::VerificationCacheMode;
 
@@ -1498,15 +1524,7 @@ mod tests {
             block(
                 "while_body",
                 vec![
-                    assign(
-                        "next",
-                        Type::Word,
-                        Instr::Call(
-                            "sub".to_string(),
-                            vec![(Type::Word, temp("i")), (Type::Word, Value::Const(0))],
-                            None,
-                        ),
-                    ),
+                    assign("next", Type::Word, Instr::Sub(temp("i"), Value::Const(0))),
                     assign("i", Type::Word, Instr::Copy(temp("next"))),
                     volatile(Instr::Jmp("while_cond".to_string())),
                 ],
@@ -1746,6 +1764,57 @@ mod tests {
             program: "clang".to_string(),
             args: vec!["--target=aarch64-linux-gnu".to_string()],
         }));
+    }
+
+    #[test]
+    fn prepare_source_allows_bootstrap_comptime_without_main_before_test_lowering() {
+        let temp_dir = tempdir().expect("create tempdir");
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir_all(&target_dir).expect("create target dir");
+        let source_path = temp_dir.path().join("tests_only.oa");
+        fs::write(
+            &source_path,
+            r#"
+struct Counter {
+	value: I32,
+}
+
+comptime fun emit_counter_x(T: Type) -> DeclSet {
+	return DeclSet.new().add_derived_struct(T.as_struct_opt().unwrap(), T.name().concat("X"))
+}
+
+comptime apply emit_counter_x(Counter)
+
+test "CounterX Exists" {
+	value = CounterX struct { value: 7 }
+	assert(value.value == 7)
+}
+"#,
+        )
+        .expect("write source");
+
+        let (_source, ast) = parse_source_to_ast_with_artifacts(
+            &source_path,
+            &target_dir,
+            &FrontendPipelineCodes {
+                read_source_io_code: "OAC-IO-TEST-001",
+                tokenize_code: "OAC-TOKENIZE-TEST-001",
+                serialize_tokens_io_code: "OAC-IO-TEST-002",
+                write_tokens_io_code: "OAC-IO-TEST-003",
+                parse_code: "OAC-PARSE-TEST-001",
+                parse_message: "failed to parse test source",
+                import_code: "OAC-IMPORT-TEST-001",
+                import_message: "failed to resolve test imports",
+                comptime_code: "OAC-COMPTIME-TEST-001",
+                comptime_message: "failed to execute test comptime applies",
+            },
+        )
+        .expect("prepare source should succeed without a user main");
+
+        assert!(ast.type_definitions.iter().any(|def| {
+            matches!(def, crate::parser::TypeDefDecl::Struct(def) if def.name == "CounterX")
+        }));
+        assert_eq!(ast.tests.len(), 1);
     }
 
     #[test]

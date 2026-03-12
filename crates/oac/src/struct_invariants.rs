@@ -3,12 +3,13 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::ast_paths::local_statement_key;
 use crate::ast_walk::{self, AstPathStyle};
 use crate::invariant_metadata::{
     build_function_arg_invariant_assumptions_for_names, discover_struct_invariant_bindings,
     InvariantBinding,
 };
-use crate::ir::{ResolvedProgram, TypeDef};
+use crate::ir::{ResolvedProgram, SourceSpan, TypeDef};
 use crate::parser::Statement;
 use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::verification_cache::{
@@ -105,7 +106,9 @@ pub(crate) struct PreparedStructInvariantSite {
     assumptions: qbe_smt::ModuleAssumptions,
     qbe_filename: String,
     smt_filename: String,
-    smt: String,
+    solver_smt: String,
+    #[allow(dead_code)]
+    artifact_smt: String,
 }
 
 impl PreparedStructInvariantSite {
@@ -117,7 +120,7 @@ impl PreparedStructInvariantSite {
         VerificationSummaryInput {
             kind: VerificationKind::StructInvariant,
             local_id: self.site.id.clone(),
-            smt: self.smt.clone(),
+            smt: self.solver_smt.clone(),
         }
     }
 }
@@ -178,7 +181,7 @@ pub(crate) fn prepare_struct_invariant_obligations_with_config(
             format!("failed to write checker QBE program {}", qbe_path.display())
         })?;
 
-        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+        let scripts = qbe_smt::qbe_module_to_annotated_smt_with_assumptions(
             &checker_module,
             "main",
             &qbe_smt::EncodeOptions {
@@ -189,6 +192,32 @@ pub(crate) fn prepare_struct_invariant_obligations_with_config(
                 first_arg_i32_range: None,
             },
             &assumptions,
+            &qbe_smt::ArtifactAnnotations {
+                header_comments: {
+                    let mut comments = vec![
+                        format!("struct invariant obligation {}", site.id),
+                        format!("caller: {}", site.caller),
+                        format!("callee: {}", site.callee),
+                        format!("struct: {}", site.struct_name),
+                        format!("invariant: {}", site.invariant_display_name),
+                        "bad means exit == 1 is reachable".to_string(),
+                    ];
+                    if let Some(ast_path) = &site.call_ast_path {
+                        comments.insert(3, format!("call ast path: {}", ast_path));
+                    }
+                    if let Some(source_span) = &site.call_source_span {
+                        comments
+                            .insert(3, format!("call source: {}", source_span.display_compact()));
+                    }
+                    if let Some(source_span) = &site.invariant_source_span {
+                        comments.insert(
+                            6.min(comments.len()),
+                            format!("invariant source: {}", source_span.display_compact()),
+                        );
+                    }
+                    comments
+                },
+            },
         )
         .map_err(|err| {
             anyhow::anyhow!(
@@ -200,7 +229,7 @@ pub(crate) fn prepare_struct_invariant_obligations_with_config(
         })?;
 
         let smt_path = verification_dir.join(&smt_filename);
-        std::fs::write(&smt_path, &smt)
+        std::fs::write(&smt_path, &scripts.artifact_smt)
             .with_context(|| format!("failed to write SMT obligation {}", smt_path.display()))?;
 
         prepared.push(PreparedStructInvariantSite {
@@ -210,7 +239,8 @@ pub(crate) fn prepare_struct_invariant_obligations_with_config(
             assumptions,
             qbe_filename,
             smt_filename,
-            smt,
+            solver_smt: scripts.solver_smt,
+            artifact_smt: scripts.artifact_smt,
         });
     }
 
@@ -229,11 +259,14 @@ struct ObligationSite {
     caller: String,
     callee: String,
     callee_call_ordinal: usize,
+    call_ast_path: Option<String>,
+    call_source_span: Option<SourceSpan>,
     struct_name: String,
     invariant_key: String,
     invariant_fn: String,
     invariant_display_name: String,
     invariant_identifier: Option<String>,
+    invariant_source_span: Option<SourceSpan>,
 }
 
 fn collect_obligation_sites(
@@ -265,12 +298,18 @@ fn collect_obligation_sites(
 
         let mut callee_ordinals = HashMap::<String, usize>::new();
         for (top_statement_index, statement) in function.body.iter().enumerate() {
+            let statement_path = local_statement_key(top_statement_index);
             let mut expr_index_map = HashMap::new();
             let mut expr_index = 0usize;
-            index_statement_expressions(statement, "", &mut expr_index, &mut expr_index_map);
+            index_statement_expressions(
+                statement,
+                &statement_path,
+                &mut expr_index,
+                &mut expr_index_map,
+            );
 
             let mut call_nodes = Vec::new();
-            collect_call_nodes_from_statement(statement, "", &mut call_nodes);
+            collect_call_nodes_from_statement(statement, &statement_path, &mut call_nodes);
 
             for (expr_path, callee_name) in call_nodes {
                 let current_ordinal = *callee_ordinals.entry(callee_name.clone()).or_insert(0);
@@ -305,6 +344,15 @@ fn collect_obligation_sites(
                 })?;
 
                 for invariant_binding in invariant_bindings {
+                    let invariant_source_span = program
+                        .struct_invariants
+                        .get(return_type)
+                        .and_then(|definitions| {
+                            definitions.iter().find(|definition| {
+                                definition.function_name == invariant_binding.function_name
+                            })
+                        })
+                        .and_then(|definition| definition.source_span.clone());
                     let id = format!(
                         "{}#{}#{}#{}",
                         function_name, top_statement_index, expr_index, invariant_binding.key
@@ -314,11 +362,14 @@ fn collect_obligation_sites(
                         caller: function_name.clone(),
                         callee: callee_name.clone(),
                         callee_call_ordinal: current_ordinal,
+                        call_ast_path: Some(expr_path.clone()),
+                        call_source_span: function.local_source_spans.get(&expr_path).cloned(),
                         struct_name: return_type.clone(),
                         invariant_key: invariant_binding.key.clone(),
                         invariant_fn: invariant_binding.function_name.clone(),
                         invariant_display_name: invariant_binding.display_name.clone(),
                         invariant_identifier: invariant_binding.identifier.clone(),
+                        invariant_source_span,
                     });
                 }
             }
@@ -338,7 +389,7 @@ fn index_statement_expressions(
     ast_walk::walk_statement_expressions(
         statement,
         statement_path,
-        AstPathStyle::StructInvariants,
+        AstPathStyle::Ir,
         &mut |expression_path, _| {
             out.insert(expression_path.to_string(), *next_index);
             *next_index += 1;
@@ -354,7 +405,7 @@ fn collect_call_nodes_from_statement(
     ast_walk::walk_statement_calls(
         statement,
         statement_path,
-        AstPathStyle::StructInvariants,
+        AstPathStyle::Ir,
         &mut |expression_path, call_name| {
             out.push((expression_path.to_string(), call_name.to_string()));
         },
@@ -385,7 +436,7 @@ pub(crate) fn verify_prepared_struct_invariant_obligations(
         let strict_cache_mismatch = config.cache_mode == VerificationCacheMode::Strict
             && cached_roots.contains(prepared.caller());
 
-        match solve_chc_with_policy(&prepared.smt, config.profile) {
+        match solve_chc_with_policy(&prepared.solver_smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::StructInvariant,
@@ -1361,7 +1412,7 @@ invariant non_negative_max "counter max must be non-negative" for (v: Counter) {
 }
 
 fun make_counter() -> Counter {
-	return Counter struct { value: 1, max: sub(0, 1), }
+	return Counter struct { value: 1, max: 0 - 1, }
 }
 
 fun main() -> I32 {
@@ -1455,7 +1506,7 @@ fun make_counter(v: I32) -> Counter {
 fun main() -> I32 {
 	i = 4
 	while i > 0 {
-		i = sub(i, 1)
+		i = i - 1
 	}
 	c = make_counter(1)
 	return 0
@@ -1685,7 +1736,7 @@ fun loop_make(n: I32) -> Foo {
 	if n == 0 {
 		return Foo struct { x: 0, }
 	} else {
-		return loop_make(sub(n, 1))
+		return loop_make(n - 1)
 	}
 }
 
@@ -1889,7 +1940,9 @@ fun main(argc: I32, argv: PtrInt) -> I32 {
         )
         .expect("string/io clib-backed checker should encode");
         assert!(
-            smt.contains("(bvult (select mem (bvadd"),
+            smt.contains("__oac_strcmp_out0")
+                && smt.contains("__oac_strcmp_finished0")
+                && smt.contains("(ite (bvult"),
             "expected tri-state strcmp ordering branch in SMT: {smt}"
         );
         assert!(
@@ -2054,7 +2107,7 @@ fun main(argc: I32, argv: I64) -> I32 {
         )
         .expect("encode checker to CHC");
         assert!(
-            smt.contains("(bvsge (select regs (_ bv") && smt.contains("(_ bv0 64))"),
+            smt.contains("(bvsge (select regs_curr (_ bv") && smt.contains("(_ bv0 64))"),
             "SMT should include argc >= 0 constraint: {smt}"
         );
     }

@@ -71,6 +71,260 @@ snapshot_kind: text
         }
       },
       "Newline"
+    ],
+    "spans": [
+      {
+        "start": {
+          "absolute_i": 1,
+          "line": 1,
+          "column": 1
+        },
+        "end": {
+          "absolute_i": 3,
+          "line": 1,
+          "column": 3
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 5,
+          "line": 1,
+          "column": 5
+        },
+        "end": {
+          "absolute_i": 8,
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 9,
+          "line": 1,
+          "column": 9
+        },
+        "end": {
+          "absolute_i": 9,
+          "line": 1,
+          "column": 9
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 10,
+          "line": 1,
+          "column": 10
+        },
+        "end": {
+          "absolute_i": 10,
+          "line": 1,
+          "column": 10
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 12,
+          "line": 1,
+          "column": 12
+        },
+        "end": {
+          "absolute_i": 13,
+          "line": 1,
+          "column": 13
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 15,
+          "line": 1,
+          "column": 15
+        },
+        "end": {
+          "absolute_i": 17,
+          "line": 1,
+          "column": 17
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 19,
+          "line": 1,
+          "column": 19
+        },
+        "end": {
+          "absolute_i": 19,
+          "line": 1,
+          "column": 19
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 20,
+          "line": 1,
+          "column": 20
+        },
+        "end": {
+          "absolute_i": 20,
+          "line": 1,
+          "column": 20
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 22,
+          "line": 2,
+          "column": 2
+        },
+        "end": {
+          "absolute_i": 23,
+          "line": 2,
+          "column": 3
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 25,
+          "line": 2,
+          "column": 5
+        },
+        "end": {
+          "absolute_i": 25,
+          "line": 2,
+          "column": 5
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 27,
+          "line": 2,
+          "column": 7
+        },
+        "end": {
+          "absolute_i": 29,
+          "line": 2,
+          "column": 9
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 30,
+          "line": 2,
+          "column": 10
+        },
+        "end": {
+          "absolute_i": 30,
+          "line": 2,
+          "column": 10
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 32,
+          "line": 3,
+          "column": 2
+        },
+        "end": {
+          "absolute_i": 33,
+          "line": 3,
+          "column": 3
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 35,
+          "line": 3,
+          "column": 5
+        },
+        "end": {
+          "absolute_i": 35,
+          "line": 3,
+          "column": 5
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 37,
+          "line": 3,
+          "column": 7
+        },
+        "end": {
+          "absolute_i": 40,
+          "line": 3,
+          "column": 10
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 41,
+          "line": 3,
+          "column": 11
+        },
+        "end": {
+          "absolute_i": 41,
+          "line": 3,
+          "column": 11
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 43,
+          "line": 4,
+          "column": 2
+        },
+        "end": {
+          "absolute_i": 48,
+          "line": 4,
+          "column": 7
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 50,
+          "line": 4,
+          "column": 9
+        },
+        "end": {
+          "absolute_i": 50,
+          "line": 4,
+          "column": 9
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 51,
+          "line": 4,
+          "column": 10
+        },
+        "end": {
+          "absolute_i": 51,
+          "line": 4,
+          "column": 10
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 52,
+          "line": 5,
+          "column": 1
+        },
+        "end": {
+          "absolute_i": 52,
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 53,
+          "line": 5,
+          "column": 2
+        },
+        "end": {
+          "absolute_i": 53,
+          "line": 5,
+          "column": 2
+        }
+      }
     ]
   }
 }

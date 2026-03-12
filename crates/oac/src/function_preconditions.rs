@@ -3,12 +3,13 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::ast_paths::local_statement_key;
 use crate::ast_walk::{self, AstPathStyle};
 use crate::invariant_metadata::{
     build_function_arg_invariant_assumptions_for_names, discover_struct_invariant_bindings,
     InvariantBinding,
 };
-use crate::ir::ResolvedProgram;
+use crate::ir::{ResolvedProgram, SourceSpan};
 use crate::parser::Statement;
 use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::verification_cache::{
@@ -44,6 +45,9 @@ struct FunctionPreconditionSite {
     callee_call_ordinal: usize,
     clause_ordinal: usize,
     helper_function_name: String,
+    call_ast_path: Option<String>,
+    call_source_span: Option<SourceSpan>,
+    precondition_source_span: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,7 +55,9 @@ pub(crate) struct PreparedFunctionPreconditionSite {
     site: FunctionPreconditionSite,
     qbe_filename: String,
     smt_filename: String,
-    smt: String,
+    solver_smt: String,
+    #[allow(dead_code)]
+    artifact_smt: String,
 }
 
 impl PreparedFunctionPreconditionSite {
@@ -67,7 +73,7 @@ impl PreparedFunctionPreconditionSite {
         VerificationSummaryInput {
             kind: VerificationKind::Precondition,
             local_id: self.site.id.clone(),
-            smt: self.smt.clone(),
+            smt: self.solver_smt.clone(),
         }
     }
 }
@@ -184,7 +190,28 @@ pub(crate) fn prepare_function_preconditions_with_config(
                 )
             })?;
 
-            let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            let mut header_comments = vec![
+                format!("precondition obligation {}", site.id),
+                format!("root: {}", site.root_name),
+                format!("caller: {}", site.caller),
+                format!("callee: {}", site.callee),
+                format!("clause: {}", site.clause_ordinal),
+                "bad means exit == 1 is reachable".to_string(),
+            ];
+            if let Some(ast_path) = &site.call_ast_path {
+                header_comments.insert(4, format!("call ast path: {}", ast_path));
+            }
+            if let Some(source_span) = &site.call_source_span {
+                header_comments
+                    .insert(4, format!("call source: {}", source_span.display_compact()));
+            }
+            if let Some(source_span) = &site.precondition_source_span {
+                header_comments.insert(
+                    5,
+                    format!("precondition source: {}", source_span.display_compact()),
+                );
+            }
+            let scripts = qbe_smt::qbe_module_to_annotated_smt_with_assumptions(
                 &checker_module,
                 "main",
                 &qbe_smt::EncodeOptions {
@@ -195,6 +222,7 @@ pub(crate) fn prepare_function_preconditions_with_config(
                     first_arg_i32_range: None,
                 },
                 &assumptions,
+                &qbe_smt::ArtifactAnnotations { header_comments },
             )
             .map_err(|err| {
                 anyhow::anyhow!(
@@ -206,7 +234,7 @@ pub(crate) fn prepare_function_preconditions_with_config(
             })?;
 
             let smt_path = verification_dir.join(&smt_filename);
-            std::fs::write(&smt_path, &smt).with_context(|| {
+            std::fs::write(&smt_path, &scripts.artifact_smt).with_context(|| {
                 format!(
                     "failed to write function precondition SMT obligation {}",
                     smt_path.display()
@@ -217,7 +245,8 @@ pub(crate) fn prepare_function_preconditions_with_config(
                 site,
                 qbe_filename,
                 smt_filename,
-                smt,
+                solver_smt: scripts.solver_smt,
+                artifact_smt: scripts.artifact_smt,
             });
         }
     }
@@ -278,7 +307,7 @@ pub(crate) fn verify_prepared_function_preconditions(
                 }
             };
 
-        match solve_chc_with_policy(&prepared.smt, config.profile) {
+        match solve_chc_with_policy(&prepared.solver_smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::Precondition,
@@ -494,10 +523,16 @@ fn collect_precondition_sites(
         for (top_statement_index, statement) in function.body.iter().enumerate() {
             let mut expr_index_map = HashMap::new();
             let mut expr_index = 0usize;
-            index_statement_expressions(statement, "", &mut expr_index, &mut expr_index_map);
+            let statement_path = local_statement_key(top_statement_index);
+            index_statement_expressions(
+                statement,
+                &statement_path,
+                &mut expr_index,
+                &mut expr_index_map,
+            );
 
             let mut call_nodes = Vec::new();
-            collect_call_nodes_from_statement(statement, "", &mut call_nodes);
+            collect_call_nodes_from_statement(statement, &statement_path, &mut call_nodes);
 
             for (expr_path, callee_name) in call_nodes {
                 let current_ordinal = *callee_ordinals.entry(callee_name.clone()).or_insert(0);
@@ -533,6 +568,9 @@ fn collect_precondition_sites(
                         callee_call_ordinal: current_ordinal,
                         clause_ordinal: definition.clause_ordinal,
                         helper_function_name: definition.helper_function_name.clone(),
+                        call_ast_path: Some(expr_path.clone()),
+                        call_source_span: function.local_source_spans.get(&expr_path).cloned(),
+                        precondition_source_span: definition.source_span.clone(),
                     });
                 }
             }
@@ -552,7 +590,7 @@ fn index_statement_expressions(
     ast_walk::walk_statement_expressions(
         statement,
         statement_path,
-        AstPathStyle::StructInvariants,
+        AstPathStyle::Ir,
         &mut |expression_path, _| {
             out.insert(expression_path.to_string(), *next_index);
             *next_index += 1;
@@ -568,7 +606,7 @@ fn collect_call_nodes_from_statement(
     ast_walk::walk_statement_calls(
         statement,
         statement_path,
-        AstPathStyle::StructInvariants,
+        AstPathStyle::Ir,
         &mut |expression_path, call_name| {
             out.push((expression_path.to_string(), call_name.to_string()));
         },

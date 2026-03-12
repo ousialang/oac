@@ -62,6 +62,17 @@ pub struct ModuleAssumptions {
     pub arg_range_assumptions: Vec<FunctionArgRangeAssumption>,
 }
 
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct ArtifactAnnotations {
+    pub header_comments: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct EncodedScripts {
+    pub solver_smt: String,
+    pub artifact_smt: String,
+}
+
 /// Errors produced by the encoder/classifier.
 #[derive(Debug, Error)]
 pub enum QbeSmtError {
@@ -142,7 +153,24 @@ pub fn qbe_module_to_smt_with_assumptions(
     options: &EncodeOptions,
     assumptions: &ModuleAssumptions,
 ) -> Result<String, QbeSmtError> {
-    encode::encode_module(module, entry, options, assumptions)
+    Ok(qbe_module_to_annotated_smt_with_assumptions(
+        module,
+        entry,
+        options,
+        assumptions,
+        &ArtifactAnnotations::default(),
+    )?
+    .solver_smt)
+}
+
+pub fn qbe_module_to_annotated_smt_with_assumptions(
+    module: &QbeModule,
+    entry: &str,
+    options: &EncodeOptions,
+    assumptions: &ModuleAssumptions,
+    annotations: &ArtifactAnnotations,
+) -> Result<EncodedScripts, QbeSmtError> {
+    encode::encode_module_scripts(module, entry, options, assumptions, annotations)
 }
 
 /// Encode one QBE function body into SMT-LIB text.
@@ -274,10 +302,11 @@ mod tests {
     use qbe::{Block, BlockItem, Cmp, Function, Instr, Linkage, Module, Statement, Type, Value};
 
     use super::{
-        classify_simple_loops, classify_solver_output, qbe_module_to_smt,
-        qbe_module_to_smt_with_assumptions, qbe_to_smt, EncodeOptions,
-        FunctionArgInvariantAssumption, FunctionArgRangeAssumption, LoopProofStatus,
-        ModuleAssumptions, SolverResult,
+        classify_simple_loops, classify_solver_output,
+        qbe_module_to_annotated_smt_with_assumptions, qbe_module_to_smt,
+        qbe_module_to_smt_with_assumptions, qbe_to_smt, ArtifactAnnotations, EncodeOptions,
+        FunctionArgInvariantAssumption, FunctionArgRangeAssumption,
+        FunctionEntryPreconditionAssumption, LoopProofStatus, ModuleAssumptions, SolverResult,
     };
 
     fn temp(name: &str) -> Value {
@@ -368,12 +397,83 @@ mod tests {
 
         assert!(smt.contains("(set-logic HORN)"));
         assert!(smt.contains("(set-option :fp.engine spacer)"));
-        assert!(smt.contains("(declare-rel f0_pc_0"));
-        assert!(smt.contains("(declare-rel f0_ret"));
-        assert!(smt.contains("(declare-rel f0_abort"));
+        assert!(smt.contains("(declare-rel pc__main__0"));
+        assert!(smt.contains("(declare-rel ret__main"));
+        assert!(smt.contains("(declare-rel abort__main"));
         assert!(smt.contains("(declare-rel bad ())"));
         assert!(smt.contains("(query bad)"));
-        assert!(smt.contains("(= exit (_ bv1 64))"));
+        assert!(smt.contains("(= exit_curr (_ bv1 64))"));
+    }
+
+    #[test]
+    fn annotated_encoding_adds_comments_without_changing_solver_script() {
+        let function = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block(
+                "entry",
+                vec![
+                    assign("y", Type::Word, Instr::Add(temp("x"), Value::Const(1))),
+                    volatile(Instr::Ret(Some(temp("y")))),
+                ],
+            )],
+        );
+        let module = module_with(vec![function.clone()]);
+
+        let scripts = qbe_module_to_annotated_smt_with_assumptions(
+            &module,
+            &function.name,
+            &EncodeOptions::default(),
+            &ModuleAssumptions::default(),
+            &ArtifactAnnotations {
+                header_comments: vec!["prove obligation main#0#0".to_string()],
+            },
+        )
+        .expect("encodes");
+
+        let solver = qbe_module_to_smt(&module, &function.name, &EncodeOptions::default())
+            .expect("solver script encodes");
+
+        assert_eq!(scripts.solver_smt, solver);
+        assert!(scripts.artifact_smt.contains("; prove obligation main#0#0"));
+        assert!(scripts.artifact_smt.contains("; entry function: $main"));
+        assert!(scripts.artifact_smt.contains("; function $main (%x:word)"));
+        assert!(scripts
+            .artifact_smt
+            .contains("; pc 0 in @entry: %y =w add %x, 1"));
+        assert!(scripts.artifact_smt.contains("(declare-rel pc__main__0"));
+    }
+
+    #[test]
+    fn artifact_header_comment_changes_do_not_change_solver_script() {
+        let function = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        );
+        let module = module_with(vec![function.clone()]);
+
+        let scripts_a = qbe_module_to_annotated_smt_with_assumptions(
+            &module,
+            &function.name,
+            &EncodeOptions::default(),
+            &ModuleAssumptions::default(),
+            &ArtifactAnnotations {
+                header_comments: vec!["first header".to_string()],
+            },
+        )
+        .expect("encodes");
+        let scripts_b = qbe_module_to_annotated_smt_with_assumptions(
+            &module,
+            &function.name,
+            &EncodeOptions::default(),
+            &ModuleAssumptions::default(),
+            &ArtifactAnnotations {
+                header_comments: vec!["second header".to_string()],
+            },
+        )
+        .expect("encodes");
+
+        assert_eq!(scripts_a.solver_smt, scripts_b.solver_smt);
+        assert_ne!(scripts_a.artifact_smt, scripts_b.artifact_smt);
     }
 
     #[test]
@@ -430,13 +530,13 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(distinct (select regs (_ bv0 32)) (_ bv0 64))"));
-        assert!(
-            smt.contains("(f0_pc_1 regs_next mem_next heap_next exit_next in_regs in_mem in_heap)")
-        );
-        assert!(
-            smt.contains("(f0_pc_2 regs_next mem_next heap_next exit_next in_regs in_mem in_heap)")
-        );
+        assert!(smt.contains("(distinct (select regs_curr (_ bv0 32)) (_ bv0 64))"));
+        assert!(smt.contains(
+            "(pc__main__1 regs_next mem_next heap_next exit_next regs_in mem_in heap_in)"
+        ));
+        assert!(smt.contains(
+            "(pc__main__2 regs_next mem_next heap_next exit_next regs_in mem_in heap_in)"
+        ));
     }
 
     #[test]
@@ -469,10 +569,12 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(f0_pc_2 regs mem heap exit in_regs in_mem in_heap)"));
-        assert!(
-            smt.contains("(f0_pc_1 regs_next mem_next heap_next exit_next in_regs in_mem in_heap)")
-        );
+        assert!(smt.contains(
+            "(pc__main__2 regs_curr mem_curr heap_curr exit_curr regs_in mem_in heap_in)"
+        ));
+        assert!(smt.contains(
+            "(pc__main__1 regs_next mem_next heap_next exit_next regs_in mem_in heap_in)"
+        ));
     }
 
     #[test]
@@ -499,9 +601,9 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(store mem"));
-        assert!(smt.contains("(select mem"));
-        assert!(smt.contains("(bvadd heap"));
+        assert!(smt.contains("(store mem_curr"));
+        assert!(smt.contains("(select mem_curr"));
+        assert!(smt.contains("(bvadd heap_curr"));
     }
 
     #[test]
@@ -523,7 +625,7 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(bvsge (select regs (_ bv0 32)) (_ bv0 64))"));
+        assert!(smt.contains("(bvsge (select regs_curr (_ bv0 32)) (_ bv0 64))"));
     }
 
     #[test]
@@ -545,8 +647,8 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(bvsge (select regs (_ bv0 32)) (_ bv5 64))"));
-        assert!(smt.contains("(bvsle (select regs (_ bv0 32)) (_ bv9 64))"));
+        assert!(smt.contains("(bvsge (select regs_curr (_ bv0 32)) (_ bv5 64))"));
+        assert!(smt.contains("(bvsle (select regs_curr (_ bv0 32)) (_ bv9 64))"));
     }
 
     #[test]
@@ -593,8 +695,10 @@ mod tests {
         )
         .expect("exit call should encode");
 
-        assert!(smt.contains("(= code_call (_ bv242 64))"));
-        assert!(smt.contains("(f0_abort in_regs in_mem in_heap code_call mem_call heap_call)"));
+        assert!(smt.contains("(= call_exit_code (_ bv242 64))"));
+        assert!(smt.contains(
+            "(abort__main regs_in mem_in heap_in call_exit_code call_mem_out call_heap_out)"
+        ));
     }
 
     #[test]
@@ -655,7 +759,7 @@ mod tests {
         .expect("memcpy should encode");
 
         assert!(smt.contains("(ite (bvule"));
-        assert!(smt.contains("(select mem"));
+        assert!(smt.contains("(select mem_curr"));
     }
 
     #[test]
@@ -696,8 +800,8 @@ mod tests {
         )
         .expect("memcmp should encode");
 
-        assert!(smt.contains("(bvule (select regs (_ bv2 32))"));
-        assert!(smt.contains("(select mem (bvadd"));
+        assert!(smt.contains("(bvule (select regs_curr (_ bv2 32))"));
+        assert!(smt.contains("(select mem_curr (bvadd"));
     }
 
     #[test]
@@ -728,7 +832,7 @@ mod tests {
 
         assert!(smt.contains("(_ bv15 64)"));
         assert!(smt.contains("(_ bv0 8)"));
-        assert!(smt.contains("(select mem (bvadd"));
+        assert!(smt.contains("(select mem_curr (bvadd"));
     }
 
     #[test]
@@ -762,8 +866,8 @@ mod tests {
         .expect("strcmp should encode");
 
         assert!(smt.contains("(_ bv0 8)"));
-        assert!(smt.contains("(distinct (select mem (bvadd"));
-        assert!(smt.contains("(bvult (select mem (bvadd"));
+        assert!(smt.contains("(distinct (select mem_curr (bvadd"));
+        assert!(smt.contains("(bvult (select mem_curr (bvadd"));
         assert!(smt.contains("(_ bv18446744073709551615 64)"));
         assert!(smt.contains("(_ bv1 64)"));
     }
@@ -1129,8 +1233,8 @@ mod tests {
             },
         )
         .expect("module encoder should accept user calls with summaries");
-        assert!(smt.contains("(declare-rel f0_ret"));
-        assert!(smt.contains("(declare-rel f1_ret"));
+        assert!(smt.contains("(declare-rel ret__main"));
+        assert!(smt.contains("(declare-rel ret__helper"));
         assert!(smt.contains("(query bad)"));
     }
 
@@ -1155,8 +1259,8 @@ mod tests {
         let smt = qbe_module_to_smt(&module, "main", &EncodeOptions::default())
             .expect("module encoder should accept self-recursive user calls");
 
-        assert!(smt.contains("(declare-rel f0_ret"));
-        assert!(smt.contains("(declare-rel f0_abort"));
+        assert!(smt.contains("(declare-rel ret__main"));
+        assert!(smt.contains("(declare-rel abort__main"));
         assert!(smt.contains("(query bad)"));
     }
 
@@ -1219,9 +1323,53 @@ mod tests {
         )
         .expect("module with argument invariant assumptions should encode");
 
-        assert!(smt.contains("(declare-var regs_call_0"));
-        assert!(smt.contains("regs_call_0 mem heap ret_call_0 mem_call_0 heap_call_0"));
-        assert!(smt.contains("(distinct ret_call_0 (_ bv0 64))"));
+        assert!(smt.contains("(declare-var arg_inv_regs_0"));
+        assert!(smt.contains(
+            "arg_inv_regs_0 mem_curr heap_curr arg_inv_ret_0 arg_inv_mem_0 arg_inv_heap_0"
+        ));
+        assert!(smt.contains("(distinct arg_inv_ret_0 (_ bv0 64))"));
+    }
+
+    #[test]
+    fn encodes_precondition_assumption_in_entry_rule() {
+        let helper = Function {
+            linkage: Linkage::default(),
+            name: "__pre__guarded__clause_0".to_string(),
+            arguments: vec![(Type::Word, temp("x"))],
+            return_ty: Some(Type::Word),
+            blocks: vec![block(
+                "entry",
+                vec![volatile(Instr::Ret(Some(Value::Const(1))))],
+            )],
+        };
+        let main = make_main(
+            vec![(Type::Word, temp("x"))],
+            vec![block("entry", vec![volatile(Instr::Ret(Some(temp("x"))))])],
+        );
+        let module = module_with(vec![main, helper]);
+        let assumptions = ModuleAssumptions {
+            arg_invariant_assumptions: vec![],
+            entry_precondition_assumptions: vec![FunctionEntryPreconditionAssumption {
+                function_name: "main".to_string(),
+                precondition_function_name: "__pre__guarded__clause_0".to_string(),
+            }],
+            arg_range_assumptions: vec![],
+        };
+
+        let smt = qbe_module_to_smt_with_assumptions(
+            &module,
+            "main",
+            &EncodeOptions::default(),
+            &assumptions,
+        )
+        .expect("module with entry precondition assumptions should encode");
+
+        assert!(smt.contains("(declare-var precond_regs_0"));
+        assert!(smt.contains(
+            "precond_regs_0 mem_curr heap_curr precond_ret_0 precond_mem_0 precond_heap_0"
+        ));
+        assert!(smt.contains("(select regs_curr"));
+        assert!(!smt.contains("(select regs "));
     }
 
     #[test]
@@ -1513,8 +1661,8 @@ mod tests {
         let smt = encode_single_function(&function, &EncodeOptions::default())
             .expect("FP32 load/store should encode");
         assert!(smt.contains("(set-logic ALL)"));
-        assert!(smt.contains("(store mem"));
-        assert!(smt.contains("(select mem"));
+        assert!(smt.contains("(store mem_curr"));
+        assert!(smt.contains("(select mem_curr"));
     }
 
     #[test]
@@ -1565,8 +1713,8 @@ mod tests {
         let smt = encode_single_function(&function, &EncodeOptions::default())
             .expect("FP64 load/store should encode");
         assert!(smt.contains("(set-logic ALL)"));
-        assert!(smt.contains("(store mem"));
-        assert!(smt.contains("(select mem"));
+        assert!(smt.contains("(store mem_curr"));
+        assert!(smt.contains("(select mem_curr"));
     }
 
     #[test]
@@ -1692,10 +1840,10 @@ mod tests {
         )
         .expect("encodes");
 
-        assert!(smt.contains("(or (= pred (_ bv1 32)) (= pred (_ bv2 32)))"));
-        assert!(smt.contains("(ite (= pred (_ bv1 32))"));
+        assert!(smt.contains("(or (= pred_curr (_ bv1 32)) (= pred_curr (_ bv2 32)))"));
+        assert!(smt.contains("(ite (= pred_curr (_ bv1 32))"));
         assert!(smt.contains(
-            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+            "(declare-rel pc__main__0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
         ));
     }
 
@@ -1715,10 +1863,10 @@ mod tests {
         let smt = encode_single_function(&function, &EncodeOptions::default()).expect("encodes");
 
         assert!(smt.contains(
-            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
+            "(declare-rel pc__main__0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
         ));
         assert!(!smt.contains(
-            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+            "(declare-rel pc__main__0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
         ));
     }
 
@@ -1793,14 +1941,14 @@ mod tests {
         .expect("mixed module encodes");
 
         assert!(smt.contains(
-            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+            "(declare-rel pc__helper__0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
         ) || smt.contains(
-            "(declare-rel f1_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
+            "(declare-rel pc__main__0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (_ BitVec 32)"
         ));
         assert!(smt.contains(
-            "(declare-rel f0_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
+            "(declare-rel pc__helper__0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
         ) || smt.contains(
-            "(declare-rel f1_pc_0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
+            "(declare-rel pc__main__0 ((Array (_ BitVec 32) (_ BitVec 64)) (Array (_ BitVec 64) (_ BitVec 8)) (_ BitVec 64) (_ BitVec 64) (Array (_ BitVec 32) (_ BitVec 64))"
         ));
     }
 

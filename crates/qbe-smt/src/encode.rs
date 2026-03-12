@@ -7,43 +7,70 @@ use qbe::{
 
 use crate::encode_extern_models::{call_is_exit, extern_call_model, ExternCallModel};
 use crate::{
-    EncodeOptions, FunctionArgInvariantAssumption, FunctionArgRangeAssumption,
-    FunctionEntryPreconditionAssumption, ModuleAssumptions, QbeSmtError, BLIT_INLINE_LIMIT,
-    GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
+    ArtifactAnnotations, EncodeOptions, EncodedScripts, FunctionArgInvariantAssumption,
+    FunctionArgRangeAssumption, FunctionEntryPreconditionAssumption, ModuleAssumptions,
+    QbeSmtError, BLIT_INLINE_LIMIT, GLOBAL_BASE, GLOBAL_STRIDE, INITIAL_HEAP_BASE,
 };
 
+#[allow(dead_code)]
 pub(crate) fn encode_module(
     module: &QbeModule,
     entry: &str,
     options: &EncodeOptions,
     assumptions: &ModuleAssumptions,
 ) -> Result<String, QbeSmtError> {
-    let context = build_module_encoding_context(module, entry, assumptions)?;
+    Ok(encode_module_scripts(
+        module,
+        entry,
+        options,
+        assumptions,
+        &ArtifactAnnotations::default(),
+    )?
+    .solver_smt)
+}
 
-    let mut smt = String::new();
+pub(crate) fn encode_module_scripts(
+    module: &QbeModule,
+    entry: &str,
+    options: &EncodeOptions,
+    assumptions: &ModuleAssumptions,
+    annotations: &ArtifactAnnotations,
+) -> Result<EncodedScripts, QbeSmtError> {
+    let context = build_module_encoding_context(module, entry, assumptions)?;
+    let mut smt = ScriptBuilder::new(entry, annotations);
+
     if context.uses_fp {
-        smt.push_str("(set-logic ALL)\n");
+        smt.push_solver_line("(set-logic ALL)");
     } else {
-        smt.push_str("(set-logic HORN)\n");
+        smt.push_solver_line("(set-logic HORN)");
     }
-    smt.push_str("(set-option :fp.engine spacer)\n");
-    smt.push_str("(set-info :source |qbe-smt chc fixedpoint model|)\n\n");
+    smt.push_solver_line("(set-option :fp.engine spacer)");
+    smt.push_solver_line("(set-info :source |qbe-smt chc fixedpoint model|)");
+    smt.push_blank_line();
 
     for function_name in &context.function_order {
         let function = context
             .functions
             .get(function_name)
             .expect("function metadata exists");
+        smt.push_artifact_comment(format!(
+            "function ${} ({})",
+            function.name,
+            function_args_summary(function)
+        ));
+        smt.push_artifact_comment(format!(
+            "relations: pc__{}__<pc>, ret__{}, abort__{}",
+            function.id, function.id, function.id
+        ));
         for pc in 0..function.flattened.statements.len() {
-            smt.push_str(&module_pc_relation_decl(
-                &module_pc_relation_name(function.id, pc),
+            smt.push_solver_line(&module_pc_relation_decl(
+                &module_pc_relation_name(&function.id, pc),
                 function.uses_pred,
             ));
-            smt.push('\n');
         }
-        smt.push_str(&format!(
-            "(declare-rel {} ({} {} {} {} {} {}))\n",
-            module_ret_relation_name(function.id),
+        smt.push_solver_line(&format!(
+            "(declare-rel {} ({} {} {} {} {} {}))",
+            module_ret_relation_name(&function.id),
             REG_STATE_SORT,
             MEM_STATE_SORT,
             BV64_SORT,
@@ -51,9 +78,9 @@ pub(crate) fn encode_module(
             MEM_STATE_SORT,
             BV64_SORT
         ));
-        smt.push_str(&format!(
-            "(declare-rel {} ({} {} {} {} {} {}))\n",
-            module_abort_relation_name(function.id),
+        smt.push_solver_line(&format!(
+            "(declare-rel {} ({} {} {} {} {} {}))",
+            module_abort_relation_name(&function.id),
             REG_STATE_SORT,
             MEM_STATE_SORT,
             BV64_SORT,
@@ -61,72 +88,80 @@ pub(crate) fn encode_module(
             MEM_STATE_SORT,
             BV64_SORT
         ));
+        smt.push_blank_line();
     }
-    smt.push_str("(declare-rel bad ())\n\n");
+    smt.push_artifact_comment("query relation");
+    smt.push_solver_line("(declare-rel bad ())");
+    smt.push_blank_line();
 
-    smt.push_str(&format!("(declare-var regs {})\n", REG_STATE_SORT));
-    smt.push_str(&format!("(declare-var mem {})\n", MEM_STATE_SORT));
-    smt.push_str(&format!("(declare-var heap {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var exit {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var pred {})\n", BV32_SORT));
-    smt.push_str(&format!("(declare-var regs_next {})\n", REG_STATE_SORT));
-    smt.push_str(&format!("(declare-var mem_next {})\n", MEM_STATE_SORT));
-    smt.push_str(&format!("(declare-var heap_next {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var exit_next {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var pred_next {})\n", BV32_SORT));
-    smt.push_str(&format!("(declare-var in_regs {})\n", REG_STATE_SORT));
-    smt.push_str(&format!("(declare-var in_mem {})\n", MEM_STATE_SORT));
-    smt.push_str(&format!("(declare-var in_heap {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var regs_call {})\n", REG_STATE_SORT));
-    smt.push_str(&format!("(declare-var mem_call {})\n", MEM_STATE_SORT));
-    smt.push_str(&format!("(declare-var heap_call {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var ret_call {})\n", BV64_SORT));
-    smt.push_str(&format!("(declare-var code_call {})\n", BV64_SORT));
+    smt.push_artifact_comment("shared state variables");
+    smt.push_solver_line(&format!("(declare-var {REGS_CURR_VAR} {REG_STATE_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {MEM_CURR_VAR} {MEM_STATE_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {HEAP_CURR_VAR} {BV64_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {EXIT_CURR_VAR} {BV64_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {PRED_CURR_VAR} {BV32_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {REGS_NEXT_VAR} {REG_STATE_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {MEM_NEXT_VAR} {MEM_STATE_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {HEAP_NEXT_VAR} {BV64_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {EXIT_NEXT_VAR} {BV64_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {PRED_NEXT_VAR} {BV32_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {REGS_IN_VAR} {REG_STATE_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {MEM_IN_VAR} {MEM_STATE_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {HEAP_IN_VAR} {BV64_SORT})"));
+    smt.push_solver_line(&format!(
+        "(declare-var {CALL_REGS_IN_VAR} {REG_STATE_SORT})"
+    ));
+    smt.push_solver_line(&format!(
+        "(declare-var {CALL_MEM_OUT_VAR} {MEM_STATE_SORT})"
+    ));
+    smt.push_solver_line(&format!("(declare-var {CALL_HEAP_OUT_VAR} {BV64_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {CALL_RET_VAR} {BV64_SORT})"));
+    smt.push_solver_line(&format!("(declare-var {CALL_CODE_VAR} {BV64_SORT})"));
     for assumption_index in 0..context.max_arg_invariant_assumptions {
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             assumption_regs_var(assumption_index),
             REG_STATE_SORT
         ));
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             assumption_mem_var(assumption_index),
             MEM_STATE_SORT
         ));
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             assumption_heap_var(assumption_index),
             BV64_SORT
         ));
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             assumption_ret_var(assumption_index),
             BV64_SORT
         ));
     }
     for assumption_index in 0..context.max_entry_precondition_assumptions {
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             precondition_assumption_regs_var(assumption_index),
             REG_STATE_SORT
         ));
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             precondition_assumption_mem_var(assumption_index),
             MEM_STATE_SORT
         ));
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             precondition_assumption_heap_var(assumption_index),
             BV64_SORT
         ));
-        smt.push_str(&format!(
-            "(declare-var {} {})\n",
+        smt.push_solver_line(&format!(
+            "(declare-var {} {})",
             precondition_assumption_ret_var(assumption_index),
             BV64_SORT
         ));
     }
-    smt.push('\n');
+    smt.push_blank_line();
 
     for function_name in &context.function_order {
         let function = context
@@ -139,11 +174,11 @@ pub(crate) fn encode_module(
         let pc_to_block_id = &function.flattened.pc_to_block_id;
 
         let mut init_terms = vec![
-            format!("(= exit {})", bv_const_u64(0, 64)),
-            format!("(= pred {})", bv_const_u64(u32::MAX as u64, 32)),
-            "(= in_regs regs)".to_string(),
-            "(= in_mem mem)".to_string(),
-            "(= in_heap heap)".to_string(),
+            eq_expr(EXIT_CURR_VAR, &bv_const_u64(0, 64)),
+            eq_expr(PRED_CURR_VAR, &bv_const_u64(u32::MAX as u64, 32)),
+            eq_expr(REGS_IN_VAR, REGS_CURR_VAR),
+            eq_expr(MEM_IN_VAR, MEM_CURR_VAR),
+            eq_expr(HEAP_IN_VAR, HEAP_CURR_VAR),
         ];
 
         let arg_names: BTreeSet<&str> = function.args.iter().map(|arg| arg.name.as_str()).collect();
@@ -154,7 +189,7 @@ pub(crate) fn encode_module(
                     .get(reg_name)
                     .expect("function reg slot exists");
                 init_terms.push(format!(
-                    "(= (select regs {}) {})",
+                    "(= (select {REGS_CURR_VAR} {}) {})",
                     reg_slot_const(slot),
                     bv_const_u64(0, 64)
                 ));
@@ -179,7 +214,8 @@ pub(crate) fn encode_module(
                 .reg_slots
                 .get(&source_arg.name)
                 .expect("validated source argument register slot exists");
-            let source_value_expr = format!("(select regs {})", reg_slot_const(source_slot));
+            let source_value_expr =
+                format!("(select {REGS_CURR_VAR} {})", reg_slot_const(source_slot));
             let call_regs_expr =
                 build_unary_callee_input_regs_expr(invariant_function, &source_value_expr)?;
             let regs_var = assumption_regs_var(assumption_index);
@@ -187,17 +223,17 @@ pub(crate) fn encode_module(
             let heap_var = assumption_heap_var(assumption_index);
             let ret_var = assumption_ret_var(assumption_index);
 
-            init_terms.push(format!("(= {regs_var} {call_regs_expr})"));
+            init_terms.push(eq_expr(&regs_var, &call_regs_expr));
             init_terms.push(module_ret_relation_app(
-                &module_ret_relation_name(invariant_function.id),
+                &module_ret_relation_name(&invariant_function.id),
                 &regs_var,
-                "mem",
-                "heap",
+                MEM_CURR_VAR,
+                HEAP_CURR_VAR,
                 &ret_var,
                 &mem_var,
                 &heap_var,
             ));
-            init_terms.push(format!("(distinct {ret_var} {})", bv_const_u64(0, 64)));
+            init_terms.push(distinct_expr(&ret_var, &bv_const_u64(0, 64)));
         }
 
         let function_preconditions = context
@@ -216,17 +252,17 @@ pub(crate) fn encode_module(
             let heap_var = precondition_assumption_heap_var(assumption_index);
             let ret_var = precondition_assumption_ret_var(assumption_index);
 
-            init_terms.push(format!("(= {regs_var} {call_regs_expr})"));
+            init_terms.push(eq_expr(&regs_var, &call_regs_expr));
             init_terms.push(module_ret_relation_app(
-                &module_ret_relation_name(precondition_function.id),
+                &module_ret_relation_name(&precondition_function.id),
                 &regs_var,
-                "mem",
-                "heap",
+                MEM_CURR_VAR,
+                HEAP_CURR_VAR,
                 &ret_var,
                 &mem_var,
                 &heap_var,
             ));
-            init_terms.push(format!("(distinct {ret_var} {})", bv_const_u64(0, 64)));
+            init_terms.push(distinct_expr(&ret_var, &bv_const_u64(0, 64)));
         }
 
         let function_ranges = context
@@ -243,7 +279,8 @@ pub(crate) fn encode_module(
                 .reg_slots
                 .get(&source_arg.name)
                 .expect("validated source argument register slot exists");
-            let source_value_expr = format!("(select regs {})", reg_slot_const(source_slot));
+            let source_value_expr =
+                format!("(select {REGS_CURR_VAR} {})", reg_slot_const(source_slot));
             if assumption.signed {
                 init_terms.push(format!(
                     "(bvsge {source_value_expr} {})",
@@ -266,7 +303,7 @@ pub(crate) fn encode_module(
         }
 
         if function.name == context.entry {
-            init_terms.push(format!("(= heap {})", bv_const_u64(INITIAL_HEAP_BASE, 64)));
+            init_terms.push(eq_expr(HEAP_CURR_VAR, &bv_const_u64(INITIAL_HEAP_BASE, 64)));
             if options.assume_main_argc_non_negative {
                 if let Some(first_arg) = function.args.first() {
                     let slot = *function
@@ -274,7 +311,7 @@ pub(crate) fn encode_module(
                         .get(&first_arg.name)
                         .expect("entry first arg register exists");
                     init_terms.push(format!(
-                        "(bvsge (select regs {}) {})",
+                        "(bvsge (select {REGS_CURR_VAR} {}) {})",
                         reg_slot_const(slot),
                         bv_const_u64(0, 64)
                     ));
@@ -290,12 +327,12 @@ pub(crate) fn encode_module(
                     let lower_bits = lower as i64 as u64;
                     let upper_bits = upper as i64 as u64;
                     init_terms.push(format!(
-                        "(bvsge (select regs {}) {})",
+                        "(bvsge (select {REGS_CURR_VAR} {}) {})",
                         reg_slot_const(slot),
                         bv_const_u64(lower_bits, 64)
                     ));
                     init_terms.push(format!(
-                        "(bvsle (select regs {}) {})",
+                        "(bvsle (select {REGS_CURR_VAR} {}) {})",
                         reg_slot_const(slot),
                         bv_const_u64(upper_bits, 64)
                     ));
@@ -303,25 +340,75 @@ pub(crate) fn encode_module(
             }
         }
 
-        smt.push_str(&format!(
-            "(rule (=> {} {}))\n\n",
+        smt.push_artifact_comment(format!("entry assumptions for ${}", function.name));
+        if !function_assumptions.is_empty() {
+            smt.push_artifact_comment(format!(
+                "argument invariant assumptions: {}",
+                function_assumptions
+                    .iter()
+                    .map(|assumption| format!(
+                        "arg {} satisfies ${}",
+                        assumption.arg_index, assumption.invariant_function_name
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !function_preconditions.is_empty() {
+            smt.push_artifact_comment(format!(
+                "entry precondition assumptions: {}",
+                function_preconditions
+                    .iter()
+                    .map(|assumption| assumption.precondition_function_name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !function_ranges.is_empty() {
+            smt.push_artifact_comment(format!(
+                "argument range assumptions: {}",
+                function_ranges
+                    .iter()
+                    .map(|assumption| {
+                        let kind = if assumption.signed {
+                            "signed"
+                        } else {
+                            "unsigned"
+                        };
+                        format!(
+                            "arg {} in [{}..={}] ({kind})",
+                            assumption.arg_index, assumption.lower, assumption.upper
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        smt.push_solver_line(&format!(
+            "(rule (=> {} {}))",
             and_terms(init_terms),
             module_pc_relation_app(
-                &module_pc_relation_name(function.id, 0),
-                "regs",
-                "mem",
-                "heap",
-                "exit",
-                function.pred_arg("pred"),
-                "in_regs",
-                "in_mem",
-                "in_heap",
+                &module_pc_relation_name(&function.id, 0),
+                REGS_CURR_VAR,
+                MEM_CURR_VAR,
+                HEAP_CURR_VAR,
+                EXIT_CURR_VAR,
+                function.pred_arg(PRED_CURR_VAR),
+                REGS_IN_VAR,
+                MEM_IN_VAR,
+                HEAP_IN_VAR,
             )
         ));
+        smt.push_blank_line();
 
         for (pc, statement) in flat.iter().enumerate() {
-            let from_rel = module_pc_relation_name(function.id, pc);
-            let phi_guard = phi_guard_expr(statement, "pred", label_to_block_id);
+            let from_rel = module_pc_relation_name(&function.id, pc);
+            let phi_guard = phi_guard_expr(statement, PRED_CURR_VAR, label_to_block_id);
+            smt.push_artifact_comment(format!(
+                "pc {pc} in @{}: {}",
+                function.flattened.pc_to_block_label[pc],
+                statement_display_text(statement)
+            ));
 
             if let Some(user_call) = classify_user_call(statement, &context.functions) {
                 let callee = context
@@ -331,51 +418,56 @@ pub(crate) fn encode_module(
                 let call_regs_expr = build_callee_input_regs_expr(
                     callee,
                     user_call.args(),
-                    "regs",
+                    REGS_CURR_VAR,
                     &function.reg_slots,
                     &context.global_map,
                 )?;
-                let ret_relation = module_ret_relation_name(callee.id);
-                let abort_relation = module_abort_relation_name(callee.id);
+                let ret_relation = module_ret_relation_name(&callee.id);
+                let abort_relation = module_abort_relation_name(&callee.id);
 
-                let mut return_terms = vec![format!("(= regs_call {call_regs_expr})")];
+                smt.push_artifact_comment(format!("user call return edge to ${}", callee.name));
+                let mut return_terms = vec![eq_expr(CALL_REGS_IN_VAR, &call_regs_expr)];
                 return_terms.push(module_ret_relation_app(
                     &ret_relation,
-                    "regs_call",
-                    "mem",
-                    "heap",
-                    "ret_call",
-                    "mem_call",
-                    "heap_call",
+                    CALL_REGS_IN_VAR,
+                    MEM_CURR_VAR,
+                    HEAP_CURR_VAR,
+                    CALL_RET_VAR,
+                    CALL_MEM_OUT_VAR,
+                    CALL_HEAP_OUT_VAR,
                 ));
 
-                let regs_after_call =
-                    regs_after_user_call(statement, "regs", &function.reg_slots, "ret_call")?;
+                let regs_after_call = regs_after_user_call(
+                    statement,
+                    REGS_CURR_VAR,
+                    &function.reg_slots,
+                    CALL_RET_VAR,
+                )?;
                 let call_transition = TransitionExprs {
                     regs_next: regs_after_call,
-                    mem_next: "mem_call".to_string(),
-                    heap_next: "heap_call".to_string(),
-                    exit_next: "exit".to_string(),
+                    mem_next: CALL_MEM_OUT_VAR.to_string(),
+                    heap_next: CALL_HEAP_OUT_VAR.to_string(),
+                    exit_next: EXIT_CURR_VAR.to_string(),
                 };
 
                 if pc + 1 < flat.len() {
                     emit_module_transition_rule(
                         &mut smt,
                         &from_rel,
-                        &module_pc_relation_name(function.id, pc + 1),
+                        &module_pc_relation_name(&function.id, pc + 1),
                         function.uses_pred,
                         phi_guard.clone(),
                         return_terms,
                         &call_transition,
                         function
                             .uses_pred
-                            .then(|| pred_update_expr("pred", pc, pc + 1, pc_to_block_id)),
+                            .then(|| pred_update_expr(PRED_CURR_VAR, pc, pc + 1, pc_to_block_id)),
                     );
                 } else {
                     emit_module_return_rule(
                         &mut smt,
                         &from_rel,
-                        &module_ret_relation_name(function.id),
+                        &module_ret_relation_name(&function.id),
                         function.uses_pred,
                         phi_guard.clone(),
                         return_terms,
@@ -385,59 +477,61 @@ pub(crate) fn encode_module(
                     );
                 }
 
-                let mut abort_terms = vec![format!("(= regs_call {call_regs_expr})")];
+                smt.push_artifact_comment(format!("user call abort edge to ${}", callee.name));
+                let mut abort_terms = vec![eq_expr(CALL_REGS_IN_VAR, &call_regs_expr)];
                 abort_terms.push(module_abort_relation_app(
                     &abort_relation,
-                    "regs_call",
-                    "mem",
-                    "heap",
-                    "code_call",
-                    "mem_call",
-                    "heap_call",
+                    CALL_REGS_IN_VAR,
+                    MEM_CURR_VAR,
+                    HEAP_CURR_VAR,
+                    CALL_CODE_VAR,
+                    CALL_MEM_OUT_VAR,
+                    CALL_HEAP_OUT_VAR,
                 ));
                 emit_module_abort_rule(
                     &mut smt,
                     &from_rel,
-                    &module_abort_relation_name(function.id),
+                    &module_abort_relation_name(&function.id),
                     function.uses_pred,
                     phi_guard,
                     abort_terms,
-                    "code_call",
-                    "mem_call",
-                    "heap_call",
+                    CALL_CODE_VAR,
+                    CALL_MEM_OUT_VAR,
+                    CALL_HEAP_OUT_VAR,
                 );
+                smt.push_blank_line();
                 continue;
             }
 
             let transition = TransitionExprs {
                 regs_next: regs_update_expr(
                     statement,
-                    "regs",
-                    "mem",
-                    "heap",
-                    "pred",
+                    REGS_CURR_VAR,
+                    MEM_CURR_VAR,
+                    HEAP_CURR_VAR,
+                    PRED_CURR_VAR,
                     &function.reg_slots,
                     &context.global_map,
                     label_to_block_id,
                 ),
                 mem_next: memory_update_expr(
                     statement,
-                    "mem",
-                    "regs",
+                    MEM_CURR_VAR,
+                    REGS_CURR_VAR,
                     &function.reg_slots,
                     &context.global_map,
                 ),
                 heap_next: heap_update_expr(
                     statement,
-                    "heap",
-                    "regs",
+                    HEAP_CURR_VAR,
+                    REGS_CURR_VAR,
                     &function.reg_slots,
                     &context.global_map,
                 ),
                 exit_next: exit_update_expr(
                     statement,
-                    "exit",
-                    "regs",
+                    EXIT_CURR_VAR,
+                    REGS_CURR_VAR,
                     &function.reg_slots,
                     &context.global_map,
                 ),
@@ -454,7 +548,7 @@ pub(crate) fn encode_module(
                     emit_module_transition_rule(
                         &mut smt,
                         &from_rel,
-                        &module_pc_relation_name(function.id, target_pc),
+                        &module_pc_relation_name(&function.id, target_pc),
                         function.uses_pred,
                         phi_guard,
                         Vec::new(),
@@ -478,16 +572,20 @@ pub(crate) fn encode_module(
                                 label: if_false.clone(),
                             })?;
 
-                    let cond_expr =
-                        value_to_smt(cond, "regs", &function.reg_slots, &context.global_map);
+                    let cond_expr = value_to_smt(
+                        cond,
+                        REGS_CURR_VAR,
+                        &function.reg_slots,
+                        &context.global_map,
+                    );
                     emit_module_transition_rule(
                         &mut smt,
                         &from_rel,
-                        &module_pc_relation_name(function.id, true_pc),
+                        &module_pc_relation_name(&function.id, true_pc),
                         function.uses_pred,
                         and_optional_guards(
                             phi_guard.clone(),
-                            Some(format!("(distinct {} {})", cond_expr, bv_const_u64(0, 64))),
+                            Some(distinct_expr(&cond_expr, &bv_const_u64(0, 64))),
                         ),
                         Vec::new(),
                         &transition,
@@ -498,11 +596,11 @@ pub(crate) fn encode_module(
                     emit_module_transition_rule(
                         &mut smt,
                         &from_rel,
-                        &module_pc_relation_name(function.id, false_pc),
+                        &module_pc_relation_name(&function.id, false_pc),
                         function.uses_pred,
                         and_optional_guards(
                             phi_guard,
-                            Some(format!("(= {} {})", cond_expr, bv_const_u64(0, 64))),
+                            Some(eq_expr(&cond_expr, &bv_const_u64(0, 64))),
                         ),
                         Vec::new(),
                         &transition,
@@ -516,7 +614,7 @@ pub(crate) fn encode_module(
                     emit_module_return_rule(
                         &mut smt,
                         &from_rel,
-                        &module_ret_relation_name(function.id),
+                        &module_ret_relation_name(&function.id),
                         function.uses_pred,
                         phi_guard,
                         Vec::new(),
@@ -532,7 +630,7 @@ pub(crate) fn encode_module(
                     emit_module_abort_rule(
                         &mut smt,
                         &from_rel,
-                        &module_abort_relation_name(function.id),
+                        &module_abort_relation_name(&function.id),
                         function.uses_pred,
                         phi_guard,
                         Vec::new(),
@@ -546,20 +644,20 @@ pub(crate) fn encode_module(
                         emit_module_transition_rule(
                             &mut smt,
                             &from_rel,
-                            &module_pc_relation_name(function.id, pc + 1),
+                            &module_pc_relation_name(&function.id, pc + 1),
                             function.uses_pred,
                             phi_guard,
                             Vec::new(),
                             &transition,
-                            function
-                                .uses_pred
-                                .then(|| pred_update_expr("pred", pc, pc + 1, pc_to_block_id)),
+                            function.uses_pred.then(|| {
+                                pred_update_expr(PRED_CURR_VAR, pc, pc + 1, pc_to_block_id)
+                            }),
                         );
                     } else {
                         emit_module_return_rule(
                             &mut smt,
                             &from_rel,
-                            &module_ret_relation_name(function.id),
+                            &module_ret_relation_name(&function.id),
                             function.uses_pred,
                             phi_guard,
                             Vec::new(),
@@ -570,6 +668,7 @@ pub(crate) fn encode_module(
                     }
                 }
             }
+            smt.push_blank_line();
         }
     }
 
@@ -578,40 +677,41 @@ pub(crate) fn encode_module(
         .get(&context.entry)
         .expect("entry metadata exists");
 
-    smt.push('\n');
-    smt.push_str(&format!(
-        "(rule (=> (and {} (= exit {})) bad))\n",
+    smt.push_artifact_comment("query: bad if entry returns exit code 1");
+    smt.push_solver_line(&format!(
+        "(rule (=> (and {} {}) bad))",
         module_ret_relation_app(
-            &module_ret_relation_name(entry_function.id),
-            "regs",
-            "mem",
-            "heap",
-            "exit",
-            "mem_next",
-            "heap_next",
+            &module_ret_relation_name(&entry_function.id),
+            REGS_CURR_VAR,
+            MEM_CURR_VAR,
+            HEAP_CURR_VAR,
+            EXIT_CURR_VAR,
+            MEM_NEXT_VAR,
+            HEAP_NEXT_VAR,
         ),
-        bv_const_u64(1, 64),
+        eq_expr(EXIT_CURR_VAR, &bv_const_u64(1, 64)),
     ));
-    smt.push_str(&format!(
-        "(rule (=> (and {} (= exit {})) bad))\n",
+    smt.push_artifact_comment("query: bad if entry aborts with exit code 1");
+    smt.push_solver_line(&format!(
+        "(rule (=> (and {} {}) bad))",
         module_abort_relation_app(
-            &module_abort_relation_name(entry_function.id),
-            "regs",
-            "mem",
-            "heap",
-            "exit",
-            "mem_next",
-            "heap_next",
+            &module_abort_relation_name(&entry_function.id),
+            REGS_CURR_VAR,
+            MEM_CURR_VAR,
+            HEAP_CURR_VAR,
+            EXIT_CURR_VAR,
+            MEM_NEXT_VAR,
+            HEAP_NEXT_VAR,
         ),
-        bv_const_u64(1, 64),
+        eq_expr(EXIT_CURR_VAR, &bv_const_u64(1, 64)),
     ));
-    smt.push_str("(query bad)\n");
+    smt.push_solver_line("(query bad)");
 
-    Ok(smt)
+    Ok(smt.finish())
 }
 
 struct EncodedFunction {
-    id: usize,
+    id: String,
     name: String,
     args: Vec<FunctionArg>,
     flattened: FlattenedFunction,
@@ -659,6 +759,26 @@ struct ModuleEncodingContext {
     max_arg_invariant_assumptions: usize,
     max_entry_precondition_assumptions: usize,
     uses_fp: bool,
+}
+
+fn sanitize_symbol_stem(name: &str) -> String {
+    let sanitized = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+    if sanitized.is_empty() {
+        "anon".to_string()
+    } else {
+        sanitized
+    }
 }
 
 fn build_module_encoding_context(
@@ -909,7 +1029,8 @@ fn build_module_encoding_context(
     let mut functions = HashMap::new();
     let mut globals = BTreeSet::<String>::new();
     let mut uses_fp = false;
-    for (function_id, function_name) in function_order.iter().enumerate() {
+    let mut used_symbol_stems = HashMap::<String, usize>::new();
+    for (_function_id, function_name) in function_order.iter().enumerate() {
         let function = function_map
             .get(function_name)
             .expect("reachable function exists");
@@ -967,10 +1088,23 @@ fn build_module_encoding_context(
             uses_fp = true;
         }
 
+        let base_symbol_stem = sanitize_symbol_stem(function_name);
+        let symbol_stem = match used_symbol_stems.get_mut(&base_symbol_stem) {
+            Some(next_suffix) => {
+                let stem = format!("{base_symbol_stem}__{next_suffix}");
+                *next_suffix += 1;
+                stem
+            }
+            None => {
+                used_symbol_stems.insert(base_symbol_stem.clone(), 1);
+                base_symbol_stem
+            }
+        };
+
         functions.insert(
             function_name.clone(),
             EncodedFunction {
-                id: function_id,
+                id: symbol_stem,
                 name: function_name.clone(),
                 args,
                 flattened,
@@ -1391,7 +1525,7 @@ fn build_function_entry_regs_expr(
                         callee_arg.name, callee.name
                     ),
                 })?;
-        let source_value_expr = format!("(select regs {})", reg_slot_const(source_slot));
+        let source_value_expr = format!("(select {REGS_CURR_VAR} {})", reg_slot_const(source_slot));
         let normalized = normalize_to_assign_type(&source_value_expr, callee_arg.ty);
         regs_expr = format!(
             "(store {regs_expr} {} {normalized})",
@@ -1410,35 +1544,35 @@ fn zero_regs_array_expr() -> String {
 }
 
 fn assumption_regs_var(index: usize) -> String {
-    format!("regs_call_{index}")
+    format!("arg_inv_regs_{index}")
 }
 
 fn assumption_mem_var(index: usize) -> String {
-    format!("mem_call_{index}")
+    format!("arg_inv_mem_{index}")
 }
 
 fn assumption_heap_var(index: usize) -> String {
-    format!("heap_call_{index}")
+    format!("arg_inv_heap_{index}")
 }
 
 fn assumption_ret_var(index: usize) -> String {
-    format!("ret_call_{index}")
+    format!("arg_inv_ret_{index}")
 }
 
 fn precondition_assumption_regs_var(index: usize) -> String {
-    format!("pre_regs_call_{index}")
+    format!("precond_regs_{index}")
 }
 
 fn precondition_assumption_mem_var(index: usize) -> String {
-    format!("pre_mem_call_{index}")
+    format!("precond_mem_{index}")
 }
 
 fn precondition_assumption_heap_var(index: usize) -> String {
-    format!("pre_heap_call_{index}")
+    format!("precond_heap_{index}")
 }
 
 fn precondition_assumption_ret_var(index: usize) -> String {
-    format!("pre_ret_call_{index}")
+    format!("precond_ret_{index}")
 }
 
 const REG_STATE_SORT: &str = "(Array (_ BitVec 32) (_ BitVec 64))";
@@ -1452,6 +1586,7 @@ struct FlattenedFunction {
     label_to_pc: HashMap<String, usize>,
     label_to_block_id: HashMap<String, u32>,
     pc_to_block_id: Vec<u32>,
+    pc_to_block_label: Vec<String>,
 }
 
 fn flatten_reachable_statements(function: &QbeFunction) -> Result<FlattenedFunction, QbeSmtError> {
@@ -1460,6 +1595,7 @@ fn flatten_reachable_statements(function: &QbeFunction) -> Result<FlattenedFunct
     let mut label_to_pc = HashMap::<String, usize>::new();
     let mut label_to_block_id = HashMap::<String, u32>::new();
     let mut pc_to_block_id = Vec::<u32>::new();
+    let mut pc_to_block_label = Vec::<String>::new();
 
     for (idx, block) in function.blocks.iter().enumerate() {
         if !reachable_blocks.contains(&idx) {
@@ -1482,6 +1618,7 @@ fn flatten_reachable_statements(function: &QbeFunction) -> Result<FlattenedFunct
             if let BlockItem::Statement(statement) = item {
                 flat.push(statement.clone());
                 pc_to_block_id.push(block_id);
+                pc_to_block_label.push(block.label.clone());
             }
         }
     }
@@ -1491,6 +1628,7 @@ fn flatten_reachable_statements(function: &QbeFunction) -> Result<FlattenedFunct
         label_to_pc,
         label_to_block_id,
         pc_to_block_id,
+        pc_to_block_label,
     })
 }
 
@@ -1588,18 +1726,185 @@ struct TransitionExprs {
     exit_next: String,
 }
 
-fn and_terms(terms: Vec<String>) -> String {
-    if terms.is_empty() {
-        "true".to_string()
-    } else if terms.len() == 1 {
-        terms[0].clone()
-    } else {
-        format!("(and {})", terms.join(" "))
+struct ScriptBuilder {
+    solver_smt: String,
+    artifact_smt: String,
+}
+
+impl ScriptBuilder {
+    fn new(entry: &str, annotations: &ArtifactAnnotations) -> Self {
+        let mut builder = Self {
+            solver_smt: String::new(),
+            artifact_smt: String::new(),
+        };
+        for comment in &annotations.header_comments {
+            builder.push_artifact_comment(comment);
+        }
+        if !annotations.header_comments.is_empty() {
+            builder.push_artifact_comment("");
+        }
+        builder.push_artifact_comment(format!("entry function: ${entry}"));
+        builder.push_artifact_comment("bad means exit == 1 is reachable");
+        builder.push_artifact_comment(
+            "solver/cache/proof summaries use the comment-free script; comments are artifact-only",
+        );
+        builder.push_artifact_comment("");
+        builder
+    }
+
+    fn push_solver_line(&mut self, line: &str) {
+        self.solver_smt.push_str(line);
+        self.solver_smt.push('\n');
+        self.artifact_smt.push_str(line);
+        self.artifact_smt.push('\n');
+    }
+
+    fn push_blank_line(&mut self) {
+        self.solver_smt.push('\n');
+        self.artifact_smt.push('\n');
+    }
+
+    fn push_artifact_comment(&mut self, comment: impl AsRef<str>) {
+        let comment = comment.as_ref();
+        if comment.is_empty() {
+            self.artifact_smt.push_str(";\n");
+            return;
+        }
+        for line in comment.lines() {
+            self.artifact_smt.push_str("; ");
+            self.artifact_smt.push_str(line);
+            self.artifact_smt.push('\n');
+        }
+    }
+
+    fn finish(self) -> EncodedScripts {
+        EncodedScripts {
+            solver_smt: self.solver_smt,
+            artifact_smt: self.artifact_smt,
+        }
     }
 }
 
-fn module_pc_relation_name(function_id: usize, pc: usize) -> String {
-    format!("f{}_pc_{}", function_id, pc)
+const REGS_CURR_VAR: &str = "regs_curr";
+const MEM_CURR_VAR: &str = "mem_curr";
+const HEAP_CURR_VAR: &str = "heap_curr";
+const EXIT_CURR_VAR: &str = "exit_curr";
+const PRED_CURR_VAR: &str = "pred_curr";
+const REGS_NEXT_VAR: &str = "regs_next";
+const MEM_NEXT_VAR: &str = "mem_next";
+const HEAP_NEXT_VAR: &str = "heap_next";
+const EXIT_NEXT_VAR: &str = "exit_next";
+const PRED_NEXT_VAR: &str = "pred_next";
+const REGS_IN_VAR: &str = "regs_in";
+const MEM_IN_VAR: &str = "mem_in";
+const HEAP_IN_VAR: &str = "heap_in";
+const CALL_REGS_IN_VAR: &str = "call_regs_in";
+const CALL_MEM_OUT_VAR: &str = "call_mem_out";
+const CALL_HEAP_OUT_VAR: &str = "call_heap_out";
+const CALL_RET_VAR: &str = "call_ret";
+const CALL_CODE_VAR: &str = "call_exit_code";
+
+fn and_terms(terms: Vec<String>) -> String {
+    let mut simplified = Vec::new();
+    for term in terms {
+        if term == "true" {
+            continue;
+        }
+        if term == "false" {
+            return "false".to_string();
+        }
+        simplified.push(term);
+    }
+
+    if simplified.is_empty() {
+        "true".to_string()
+    } else if simplified.len() == 1 {
+        simplified[0].clone()
+    } else {
+        format!("(and {})", simplified.join(" "))
+    }
+}
+
+fn or_terms(terms: Vec<String>) -> String {
+    let mut simplified = Vec::new();
+    for term in terms {
+        if term == "false" {
+            continue;
+        }
+        if term == "true" {
+            return "true".to_string();
+        }
+        simplified.push(term);
+    }
+
+    if simplified.is_empty() {
+        "false".to_string()
+    } else if simplified.len() == 1 {
+        simplified[0].clone()
+    } else {
+        format!("(or {})", simplified.join(" "))
+    }
+}
+
+fn eq_expr(lhs: &str, rhs: &str) -> String {
+    if lhs == rhs {
+        "true".to_string()
+    } else {
+        format!("(= {lhs} {rhs})")
+    }
+}
+
+fn distinct_expr(lhs: &str, rhs: &str) -> String {
+    if lhs == rhs {
+        "false".to_string()
+    } else {
+        format!("(distinct {lhs} {rhs})")
+    }
+}
+
+fn ite_expr(cond: &str, on_true: &str, on_false: &str) -> String {
+    if cond == "true" {
+        on_true.to_string()
+    } else if cond == "false" || on_true == on_false {
+        on_false.to_string()
+    } else {
+        format!("(ite {cond} {on_true} {on_false})")
+    }
+}
+
+fn function_args_summary(function: &EncodedFunction) -> String {
+    if function.args.is_empty() {
+        "no args".to_string()
+    } else {
+        function
+            .args
+            .iter()
+            .map(|arg| format!("%{}:{}", arg.name, assign_type_display(arg.ty)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn assign_type_display(ty: AssignType) -> &'static str {
+    match ty {
+        AssignType::Word => "word",
+        AssignType::Long => "long",
+        AssignType::Single => "single",
+        AssignType::Double => "double",
+    }
+}
+
+fn statement_display_text(statement: &QbeStatement) -> String {
+    statement
+        .to_string()
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn module_pc_relation_name(function_id: &str, pc: usize) -> String {
+    format!("pc__{function_id}__{pc}")
 }
 
 fn module_pc_relation_decl(relation: &str, uses_pred: bool) -> String {
@@ -1614,12 +1919,12 @@ fn module_pc_relation_decl(relation: &str, uses_pred: bool) -> String {
     }
 }
 
-fn module_ret_relation_name(function_id: usize) -> String {
-    format!("f{}_ret", function_id)
+fn module_ret_relation_name(function_id: &str) -> String {
+    format!("ret__{function_id}")
 }
 
-fn module_abort_relation_name(function_id: usize) -> String {
-    format!("f{}_abort", function_id)
+fn module_abort_relation_name(function_id: &str) -> String {
+    format!("abort__{function_id}")
 }
 
 fn module_pc_relation_app(
@@ -1666,7 +1971,7 @@ fn module_abort_relation_app(
 }
 
 fn emit_module_transition_rule(
-    smt: &mut String,
+    smt: &mut ScriptBuilder,
     from_relation: &str,
     to_relation: &str,
     uses_pred: bool,
@@ -1677,45 +1982,45 @@ fn emit_module_transition_rule(
 ) {
     let mut body_terms = vec![module_pc_relation_app(
         from_relation,
-        "regs",
-        "mem",
-        "heap",
-        "exit",
-        uses_pred.then_some("pred"),
-        "in_regs",
-        "in_mem",
-        "in_heap",
+        REGS_CURR_VAR,
+        MEM_CURR_VAR,
+        HEAP_CURR_VAR,
+        EXIT_CURR_VAR,
+        uses_pred.then_some(PRED_CURR_VAR),
+        REGS_IN_VAR,
+        MEM_IN_VAR,
+        HEAP_IN_VAR,
     )];
     if let Some(guard) = guard {
         body_terms.push(guard);
     }
     body_terms.append(&mut extra_terms);
-    body_terms.push(format!("(= regs_next {})", next.regs_next));
-    body_terms.push(format!("(= mem_next {})", next.mem_next));
-    body_terms.push(format!("(= heap_next {})", next.heap_next));
-    body_terms.push(format!("(= exit_next {})", next.exit_next));
+    body_terms.push(eq_expr(REGS_NEXT_VAR, &next.regs_next));
+    body_terms.push(eq_expr(MEM_NEXT_VAR, &next.mem_next));
+    body_terms.push(eq_expr(HEAP_NEXT_VAR, &next.heap_next));
+    body_terms.push(eq_expr(EXIT_NEXT_VAR, &next.exit_next));
     if let Some(pred_next_expr) = pred_next_expr {
-        body_terms.push(format!("(= pred_next {pred_next_expr})"));
+        body_terms.push(eq_expr(PRED_NEXT_VAR, &pred_next_expr));
     }
 
     let body = and_terms(body_terms);
     let head = module_pc_relation_app(
         to_relation,
-        "regs_next",
-        "mem_next",
-        "heap_next",
-        "exit_next",
-        uses_pred.then_some("pred_next"),
-        "in_regs",
-        "in_mem",
-        "in_heap",
+        REGS_NEXT_VAR,
+        MEM_NEXT_VAR,
+        HEAP_NEXT_VAR,
+        EXIT_NEXT_VAR,
+        uses_pred.then_some(PRED_NEXT_VAR),
+        REGS_IN_VAR,
+        MEM_IN_VAR,
+        HEAP_IN_VAR,
     );
 
-    smt.push_str(&format!("(rule (=> {body} {head}))\n"));
+    smt.push_solver_line(&format!("(rule (=> {body} {head}))"));
 }
 
 fn emit_module_return_rule(
-    smt: &mut String,
+    smt: &mut ScriptBuilder,
     from_relation: &str,
     to_relation: &str,
     uses_pred: bool,
@@ -1727,45 +2032,39 @@ fn emit_module_return_rule(
 ) {
     let mut body_terms = vec![module_pc_relation_app(
         from_relation,
-        "regs",
-        "mem",
-        "heap",
-        "exit",
-        uses_pred.then_some("pred"),
-        "in_regs",
-        "in_mem",
-        "in_heap",
+        REGS_CURR_VAR,
+        MEM_CURR_VAR,
+        HEAP_CURR_VAR,
+        EXIT_CURR_VAR,
+        uses_pred.then_some(PRED_CURR_VAR),
+        REGS_IN_VAR,
+        MEM_IN_VAR,
+        HEAP_IN_VAR,
     )];
     if let Some(guard) = guard {
         body_terms.push(guard);
     }
     body_terms.append(&mut extra_terms);
-    if ret_expr != "ret_call" {
-        body_terms.push(format!("(= ret_call {ret_expr})"));
-    }
-    if mem_expr != "mem_call" {
-        body_terms.push(format!("(= mem_call {mem_expr})"));
-    }
-    if heap_expr != "heap_call" {
-        body_terms.push(format!("(= heap_call {heap_expr})"));
-    }
+    body_terms.push(eq_expr(CALL_RET_VAR, ret_expr));
+    body_terms.push(eq_expr(CALL_MEM_OUT_VAR, mem_expr));
+    body_terms.push(eq_expr(CALL_HEAP_OUT_VAR, heap_expr));
 
     let body = and_terms(body_terms);
     let head = module_ret_relation_app(
         to_relation,
-        "in_regs",
-        "in_mem",
-        "in_heap",
-        "ret_call",
-        "mem_call",
-        "heap_call",
+        REGS_IN_VAR,
+        MEM_IN_VAR,
+        HEAP_IN_VAR,
+        CALL_RET_VAR,
+        CALL_MEM_OUT_VAR,
+        CALL_HEAP_OUT_VAR,
     );
 
-    smt.push_str(&format!("(rule (=> {body} {head}))\n"));
+    smt.push_solver_line(&format!("(rule (=> {body} {head}))"));
 }
 
 fn emit_module_abort_rule(
-    smt: &mut String,
+    smt: &mut ScriptBuilder,
     from_relation: &str,
     to_relation: &str,
     uses_pred: bool,
@@ -1777,46 +2076,40 @@ fn emit_module_abort_rule(
 ) {
     let mut body_terms = vec![module_pc_relation_app(
         from_relation,
-        "regs",
-        "mem",
-        "heap",
-        "exit",
-        uses_pred.then_some("pred"),
-        "in_regs",
-        "in_mem",
-        "in_heap",
+        REGS_CURR_VAR,
+        MEM_CURR_VAR,
+        HEAP_CURR_VAR,
+        EXIT_CURR_VAR,
+        uses_pred.then_some(PRED_CURR_VAR),
+        REGS_IN_VAR,
+        MEM_IN_VAR,
+        HEAP_IN_VAR,
     )];
     if let Some(guard) = guard {
         body_terms.push(guard);
     }
     body_terms.append(&mut extra_terms);
-    if code_expr != "code_call" {
-        body_terms.push(format!("(= code_call {code_expr})"));
-    }
-    if mem_expr != "mem_call" {
-        body_terms.push(format!("(= mem_call {mem_expr})"));
-    }
-    if heap_expr != "heap_call" {
-        body_terms.push(format!("(= heap_call {heap_expr})"));
-    }
+    body_terms.push(eq_expr(CALL_CODE_VAR, code_expr));
+    body_terms.push(eq_expr(CALL_MEM_OUT_VAR, mem_expr));
+    body_terms.push(eq_expr(CALL_HEAP_OUT_VAR, heap_expr));
 
     let body = and_terms(body_terms);
     let head = module_abort_relation_app(
         to_relation,
-        "in_regs",
-        "in_mem",
-        "in_heap",
-        "code_call",
-        "mem_call",
-        "heap_call",
+        REGS_IN_VAR,
+        MEM_IN_VAR,
+        HEAP_IN_VAR,
+        CALL_CODE_VAR,
+        CALL_MEM_OUT_VAR,
+        CALL_HEAP_OUT_VAR,
     );
 
-    smt.push_str(&format!("(rule (=> {body} {head}))\n"));
+    smt.push_solver_line(&format!("(rule (=> {body} {head}))"));
 }
 
 fn and_optional_guards(lhs: Option<String>, rhs: Option<String>) -> Option<String> {
     match (lhs, rhs) {
-        (Some(lhs), Some(rhs)) => Some(format!("(and {lhs} {rhs})")),
+        (Some(lhs), Some(rhs)) => Some(and_terms(vec![lhs, rhs])),
         (Some(lhs), None) => Some(lhs),
         (None, Some(rhs)) => Some(rhs),
         (None, None) => None,
@@ -1858,11 +2151,10 @@ fn phi_guard_expr(
     let right_id = *label_to_block_id
         .get(label_right)
         .expect("phi predecessor labels are validated");
-    Some(format!(
-        "(or (= {pred_curr} {}) (= {pred_curr} {}))",
-        bv_const_u64(left_id as u64, 32),
-        bv_const_u64(right_id as u64, 32)
-    ))
+    Some(or_terms(vec![
+        eq_expr(pred_curr, &bv_const_u64(left_id as u64, 32)),
+        eq_expr(pred_curr, &bv_const_u64(right_id as u64, 32)),
+    ]))
 }
 
 fn collect_function_args(function: &QbeFunction) -> Result<Vec<FunctionArg>, QbeSmtError> {
@@ -2544,15 +2836,15 @@ fn memory_update_expr(
                 ExternCallModel::Memcpy | ExternCallModel::Memmove => {
                     let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(src_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(len_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     bounded_copy_with_fallback_expr(
                         mem_curr,
@@ -2560,21 +2852,21 @@ fn memory_update_expr(
                         &dst_expr,
                         &len_expr,
                         CLIB_CALL_INLINE_LIMIT,
-                        "mem_next",
+                        MEM_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Memset => {
                     let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(fill_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(len_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let byte_expr = extract_low_bits(&fill_expr, 8);
                     bounded_set_with_fallback_expr(
@@ -2583,85 +2875,86 @@ fn memory_update_expr(
                         &len_expr,
                         &byte_expr,
                         CLIB_CALL_INLINE_LIMIT,
-                        "mem_next",
+                        MEM_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Calloc => {
                     let Some(nmemb_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(size_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let total_expr = format!("(bvmul {nmemb_expr} {size_expr})");
                     bounded_set_with_fallback_expr(
                         mem_curr,
-                        "heap",
+                        HEAP_NEXT_VAR,
                         &total_expr,
                         &bv_const_u64(0, 8),
                         CLIB_CALL_INLINE_LIMIT,
-                        "mem_next",
+                        MEM_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Realloc => {
                     let ptr_expr = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
                         .unwrap_or_else(|| bv_const_u64(0, 64));
-                    format!(
-                        "(ite (= {ptr_expr} {}) {mem_curr} mem_next)",
-                        bv_const_u64(0, 64)
+                    ite_expr(
+                        &eq_expr(&ptr_expr, &bv_const_u64(0, 64)),
+                        mem_curr,
+                        MEM_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Read => {
                     let Some(buf_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(count_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     bounded_havoc_with_fallback_expr(
                         mem_curr,
                         &buf_expr,
                         &count_expr,
                         CLIB_CALL_INLINE_LIMIT,
-                        "mem_next",
+                        MEM_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Strncpy => {
                     let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(count_expr) = call_arg_expr(args, 2, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     bounded_havoc_with_fallback_expr(
                         mem_curr,
                         &dst_expr,
                         &count_expr,
                         CLIB_CALL_INLINE_LIMIT,
-                        "mem_next",
+                        MEM_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Strcpy => {
                     let Some(dst_expr) = call_arg_expr(args, 0, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     let Some(src_expr) = call_arg_expr(args, 1, regs_curr, reg_slots, global_map)
                     else {
-                        return "mem_next".to_string();
+                        return MEM_NEXT_VAR.to_string();
                     };
                     bounded_strcpy_with_fallback_expr(
                         mem_curr,
                         &src_expr,
                         &dst_expr,
                         CLIB_CALL_INLINE_LIMIT,
-                        "mem_next",
+                        MEM_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Malloc
@@ -2722,9 +3015,10 @@ fn heap_update_expr(
                         .unwrap_or_else(|| bv_const_u64(8, 64));
                     let realloc_malloc =
                         format!("(bvadd {heap_curr} {})", non_zero_size_expr(&size_expr));
-                    format!(
-                        "(ite (= {ptr_expr} {}) {realloc_malloc} heap_next)",
-                        bv_const_u64(0, 64)
+                    ite_expr(
+                        &eq_expr(&ptr_expr, &bv_const_u64(0, 64)),
+                        &realloc_malloc,
+                        HEAP_NEXT_VAR,
                     )
                 }
                 ExternCallModel::Exit

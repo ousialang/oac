@@ -22,7 +22,9 @@ Act like a compiler engineer, not a text editor:
 - Prefer coherent, cleaner APIs over compatibility shims when the two conflict.
 - Do not change parser shape without corresponding IR/type-check updates.
 - Do not change IR assumptions without auditing backend lowering paths.
-- When editing stdlib `.oa` files or execution fixtures, prefer receiver method syntax for eligible namespace/specialized helpers; keep static calls only when parameter 0 is not the receiver or when the fixture is explicitly covering namespace-vs-method syntax.
+- When editing stdlib `.oa` files or execution fixtures, prefer receiver method syntax for eligible namespace/specialized helpers, including comptime helper bodies; keep static calls only when parameter 0 is not the receiver or when the fixture is explicitly covering namespace-vs-method syntax.
+- When changing comptime semantics, keep the public source surface as close to ordinary code as possible: prefer namespace/method wrappers in `crates/oac/src/std/std_meta.oa` plus ordinary stdlib helpers over new user-facing global builtins, and audit both comptime evaluator support and runtime rejection/lowerability filtering together.
+- When touching resolve/comptime staging, audit both resolve modes together: bootstrap comptime mode must remain sufficient for normalized resolved-call execution without `main`, while final runtime mode must keep the stricter ownership, runtime-only pruning/rejection, purity, and `main` checks.
 - Runtime backend behavior and verification backend behavior are separate contracts: runtime codegen may use `qbe` or `llvm`, but prove/invariant/loop checks must remain QBE-based unless explicitly redesigned.
 - Keep LLVM runtime lowering as direct `ResolvedProgram` lowering; do not reintroduce production IR->QBE->LLVM translation coupling.
 - Preserve or explicitly migrate snapshot expectations.
@@ -63,6 +65,7 @@ Act like a compiler engineer, not a text editor:
 - Preserve runtime parity semantics across backends (for example struct copy barriers, struct bytewise equality, and LLVM runtime-noop lowering for `prove(...)`).
 - If integer-safety behavior changes, inspect emitted `.oac_integer_site_*` markers in QBE and the generated checker artifacts under `target/oac/integer_safety/`; regressions often come from unexpected marker reachability or from checker CFG branches that were not pruned tightly enough.
 - When touching checker synthesis or CHC schema shape, audit all three site-checker pipelines together (`prove`, integer-safety, struct invariants): target-reachability pruning, entry-function assert-fail rewriting, and per-function `pred` omission are shared proof-cost optimizations and should stay behaviorally aligned across those entrypoints.
+- When touching SMT artifact readability, preserve the dual-script contract: `artifact_smt` may add comments/readable names/safe simplifications, but `solver_smt` must remain the stable input for solver execution, cache hashing, proof summaries, and benchmark-size accounting.
 - Check interop assumptions with std `Clib.*` bindings in `crates/oac/src/std/std_clib.oa` (`namespace`-scoped `extern fun` declarations that resolve to `Clib__*` internal keys while preserving declared link symbols) and helper functions.
 
 ### Interop/bindings behavior change

@@ -1,6 +1,7 @@
 ---
 source: crates/oac/src/tokenizer.rs
 expression: result
+snapshot_kind: text
 ---
 {
   "Ok": {
@@ -9,6 +10,32 @@ expression: result
         "Comment": " Hello, world!"
       },
       "Newline"
+    ],
+    "spans": [
+      {
+        "start": {
+          "absolute_i": 1,
+          "line": 1,
+          "column": 1
+        },
+        "end": {
+          "absolute_i": 16,
+          "line": 1,
+          "column": 16
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 17,
+          "line": 1,
+          "column": 17
+        },
+        "end": {
+          "absolute_i": 17,
+          "line": 1,
+          "column": 17
+        }
+      }
     ]
   }
 }

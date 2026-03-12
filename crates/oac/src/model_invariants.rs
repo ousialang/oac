@@ -129,7 +129,16 @@ pub(crate) fn verify_model_invariants_with_qbe_with_config(
             )
         })?;
 
-        let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+        let mut header_comments = vec![
+            format!("model invariant {}", invariant.display_name),
+            format!("function: {}", invariant.function_name),
+            format!("key: {}", invariant.key),
+            "bad means exit == 1 is reachable".to_string(),
+        ];
+        if let Some(source_span) = &invariant.source_span {
+            header_comments.insert(1, format!("source: {}", source_span.display_compact()));
+        }
+        let scripts = qbe_smt::qbe_module_to_annotated_smt_with_assumptions(
             &checker_module,
             "main",
             &qbe_smt::EncodeOptions {
@@ -137,6 +146,7 @@ pub(crate) fn verify_model_invariants_with_qbe_with_config(
                 first_arg_i32_range: None,
             },
             &assumptions,
+            &qbe_smt::ArtifactAnnotations { header_comments },
         )
         .map_err(|err| {
             anyhow::anyhow!(
@@ -148,7 +158,7 @@ pub(crate) fn verify_model_invariants_with_qbe_with_config(
         })?;
 
         let smt_path = verification_dir.join(&smt_filename);
-        std::fs::write(&smt_path, &smt).with_context(|| {
+        std::fs::write(&smt_path, &scripts.artifact_smt).with_context(|| {
             format!(
                 "failed to write model invariant SMT obligation {}",
                 smt_path.display()
@@ -161,7 +171,7 @@ pub(crate) fn verify_model_invariants_with_qbe_with_config(
             &[VerificationSummaryInput {
                 kind: VerificationKind::ModelInvariant,
                 local_id: invariant.function_name.clone(),
-                smt: smt.clone(),
+                smt: scripts.solver_smt.clone(),
             }],
         );
         let cached_summary_match = if config.cache_reads_enabled() {
@@ -182,7 +192,7 @@ pub(crate) fn verify_model_invariants_with_qbe_with_config(
             continue;
         }
 
-        match solve_chc_with_policy(&smt, config.profile) {
+        match solve_chc_with_policy(&scripts.solver_smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::ModelInvariant,
@@ -802,7 +812,7 @@ fun main() -> I32 {
         );
 
         let smt = std::fs::read_to_string(&artifacts[0]).expect("read smt artifact");
-        let assumption_count = smt.matches("distinct ret_call_").count();
+        let assumption_count = smt.matches("(distinct arg_inv_ret_").count();
         assert!(
             assumption_count >= 2,
             "expected struct invariant assumptions for both Counter parameters, saw {assumption_count}: {smt}"

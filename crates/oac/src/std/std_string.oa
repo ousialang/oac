@@ -24,6 +24,45 @@ invariant normalize_len_is_non_negative "normalize_len must never produce a nega
 	return String.normalize_len(x) >= 0 && String.normalize_len(y) >= 0
 }
 
+fun string_len(s: String) -> I32 {
+	return s.len()
+}
+
+fun slice_len_within_tail(s: String, start: I32, len: I32) -> Bool {
+	if start < 0 {
+		return false
+	}
+
+	n = s.len()
+	if start > n {
+		return false
+	}
+
+	remaining = n - start
+	return len <= remaining
+}
+
+fun slice(s: String, start: I32, len: I32) -> String pre {
+	start >= 0
+	len >= 0
+	start <= s.len()
+	slice_len_within_tail(s, start, len)
+	len < 2147483647
+} {
+	alloc_size = len + 1
+	dst = Clib.malloc(i32_to_i64(alloc_size))
+	src = s.ptr() + i32_to_i64(start)
+	copy_n = i32_to_i64(len)
+	Clib.memcpy(dst, src, copy_n)
+	Clib.memset(dst + copy_n, 0, i32_to_i64(1))
+	return String.from_heap_parts(dst, len)
+}
+
+fun print_str(s: String) -> I32 {
+	Clib.write(1, s.ptr(), i32_to_i64(s.len()))
+	return 0
+}
+
 namespace String {
 	fun normalize_len(len: I32) -> I32 {
 		safe_len = len
@@ -64,6 +103,18 @@ namespace String {
 
 	fun is_empty(s: String) -> Bool {
 		return s.len() == 0
+	}
+
+	fun concat(a: String, b: String) -> String {
+		len_a = a.len()
+		len_b = b.len()
+		total = len_a + len_b
+		alloc_size = total + 1
+		dst = Clib.malloc(i32_to_i64(alloc_size))
+		Clib.memcpy(dst, a.ptr(), i32_to_i64(len_a))
+		Clib.memcpy(dst + i32_to_i64(len_a), b.ptr(), i32_to_i64(len_b))
+		Clib.memset(dst + i32_to_i64(total), 0, i32_to_i64(1))
+		return String.from_heap_parts(dst, total)
 	}
 
 	fun equals(a: String, b: String) -> Bool {

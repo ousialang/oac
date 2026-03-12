@@ -49,6 +49,10 @@ fn build_assumptions_from_function_name_pairs(
 ) -> anyhow::Result<Vec<qbe_smt::FunctionEntryPreconditionAssumption>> {
     let mut out = Vec::new();
     for (checker_name, semantic_name) in function_name_pairs {
+        if !program.function_definitions.contains_key(semantic_name) {
+            continue;
+        }
+
         let Some(sig) = program.function_sigs.get(semantic_name) else {
             return Err(anyhow::anyhow!(
                 "missing signature for function {} while building function-precondition assumptions",
@@ -56,9 +60,6 @@ fn build_assumptions_from_function_name_pairs(
             ));
         };
         if sig.extern_symbol_name.is_some() {
-            continue;
-        }
-        if !program.function_definitions.contains_key(semantic_name) {
             continue;
         }
 
@@ -90,13 +91,24 @@ fn build_assumptions_from_function_name_pairs(
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::build_function_precondition_assumptions_for_names;
+    use super::{
+        build_function_precondition_assumptions, build_function_precondition_assumptions_for_names,
+    };
     use crate::{ir, parser, tokenizer};
 
     fn resolve_program(source: &str) -> ir::ResolvedProgram {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
         let ast = parser::parse(tokens).expect("parse source");
         ir::resolve(ast).expect("resolve source")
+    }
+
+    fn qbe_function(name: &str) -> qbe::Function {
+        qbe::Function::new(
+            qbe::Linkage::private(),
+            name.to_string(),
+            vec![],
+            Some(qbe::Type::Word),
+        )
     }
 
     #[test]
@@ -132,6 +144,36 @@ fun main() -> I32 {
         assert_eq!(
             assumptions[1].precondition_function_name,
             "__pre__guarded__clause_1"
+        );
+    }
+
+    #[test]
+    fn skips_backend_only_helpers_when_building_precondition_assumptions() {
+        let program = resolve_program(
+            r#"
+fun guarded(x: I32) -> I32 pre {
+	x > 5
+} {
+	return x
+}
+
+fun main() -> I32 {
+	return guarded(7)
+}
+"#,
+        );
+
+        let assumptions = build_function_precondition_assumptions(
+            &program,
+            &[qbe_function("__string_data_ptr"), qbe_function("guarded")],
+        )
+        .expect("build assumptions");
+
+        assert_eq!(assumptions.len(), 1);
+        assert_eq!(assumptions[0].function_name, "guarded");
+        assert_eq!(
+            assumptions[0].precondition_function_name,
+            "__pre__guarded__clause_0"
         );
     }
 }

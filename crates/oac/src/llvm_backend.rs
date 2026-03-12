@@ -10,7 +10,6 @@ use crate::symbol_keys::trait_method_key;
 
 const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
 const INTEGER_FMT_GLOBAL: &str = "integer_fmt";
-const PRINT_STR_NEWLINE_GLOBAL: &str = "print_str_newline";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LlvmType {
@@ -217,10 +216,6 @@ impl<'a> ModuleEmitter<'a> {
         out.push_str(&format!(
             "@{} = private unnamed_addr constant [4 x i8] c\"%u\\0A\\00\", align 1\n",
             INTEGER_FMT_GLOBAL
-        ));
-        out.push_str(&format!(
-            "@{} = private unnamed_addr constant [2 x i8] c\"\\0A\\00\", align 1\n",
-            PRINT_STR_NEWLINE_GLOBAL
         ));
 
         let mut string_defs = self.string_literal_defs.clone();
@@ -2000,10 +1995,6 @@ fn is_struct_type(program: &ResolvedProgram, type_ref: &str) -> bool {
 
 fn builtin_names() -> Vec<&'static str> {
     vec![
-        "sum",
-        "sub",
-        "eq",
-        "lt",
         "print",
         "i32_to_i64",
         "load_u8",
@@ -2018,9 +2009,6 @@ fn builtin_names() -> Vec<&'static str> {
         "__string_data_ptr",
         "__string_data_len",
         "char_at",
-        "string_len",
-        "slice",
-        "print_str",
     ]
 }
 
@@ -2028,37 +2016,8 @@ fn emit_builtin_functions(program: &ResolvedProgram) -> anyhow::Result<String> {
     let bytes_struct = runtime_layout::std_bytes_struct(program);
     let bytes_ptr_offset = runtime_layout::struct_field_offset(program, &bytes_struct, "ptr");
     let bytes_len_offset = runtime_layout::struct_field_offset(program, &bytes_struct, "len");
-    let bytes_size = runtime_layout::struct_size_bytes(program, &bytes_struct);
-    let string_enum = runtime_layout::std_string_enum(program);
-    let string_heap_tag = runtime_layout::enum_variant_tag(&string_enum, "Heap");
 
     let mut out = String::new();
-    out.push_str("define i32 @sum(i32 %a, i32 %b) {\n");
-    out.push_str("entry:\n");
-    out.push_str("  %c = add i32 %a, %b\n");
-    out.push_str("  ret i32 %c\n");
-    out.push_str("}\n\n");
-
-    out.push_str("define i32 @sub(i32 %a, i32 %b) {\n");
-    out.push_str("entry:\n");
-    out.push_str("  %c = sub i32 %a, %b\n");
-    out.push_str("  ret i32 %c\n");
-    out.push_str("}\n\n");
-
-    out.push_str("define i32 @eq(i32 %a, i32 %b) {\n");
-    out.push_str("entry:\n");
-    out.push_str("  %c = icmp eq i32 %a, %b\n");
-    out.push_str("  %w = zext i1 %c to i32\n");
-    out.push_str("  ret i32 %w\n");
-    out.push_str("}\n\n");
-
-    out.push_str("define i32 @lt(i32 %a, i32 %b) {\n");
-    out.push_str("entry:\n");
-    out.push_str("  %c = icmp slt i32 %a, %b\n");
-    out.push_str("  %w = zext i1 %c to i32\n");
-    out.push_str("  ret i32 %w\n");
-    out.push_str("}\n\n");
-
     out.push_str("define i32 @print(i32 %a) {\n");
     out.push_str("entry:\n");
     out.push_str(&format!(
@@ -2174,75 +2133,6 @@ fn emit_builtin_functions(program: &ResolvedProgram) -> anyhow::Result<String> {
     out.push_str("  %wch = zext i8 %ch to i32\n");
     out.push_str("  ret i32 %wch\n");
     out.push_str("}\n\n");
-
-    out.push_str("define i32 @string_len(i64 %s) {\n");
-    out.push_str("entry:\n");
-    out.push_str("  %len = call i32 @__string_data_len(i64 %s)\n");
-    out.push_str("  ret i32 %len\n");
-    out.push_str("}\n\n");
-
-    out.push_str("define i64 @slice(i64 %s, i32 %start, i32 %len) {\n");
-    out.push_str("entry:\n");
-    out.push_str("  %src_base = call i64 @__string_data_ptr(i64 %s)\n");
-    out.push_str("  %len_plus_one = add i32 %len, 1\n");
-    out.push_str("  %alloc_size = call i64 @i32_to_i64(i32 %len_plus_one)\n");
-    out.push_str("  %dst = call i64 @malloc(i64 %alloc_size)\n");
-    out.push_str("  %start_i64 = call i64 @i32_to_i64(i32 %start)\n");
-    out.push_str("  %src = add i64 %src_base, %start_i64\n");
-    out.push_str("  %copy_n = call i64 @i32_to_i64(i32 %len)\n");
-    out.push_str("  %_cp = call i64 @memcpy(i64 %dst, i64 %src, i64 %copy_n)\n");
-    out.push_str("  %nul_addr = add i64 %dst, %copy_n\n");
-    out.push_str("  %nul_ptr = inttoptr i64 %nul_addr to ptr\n");
-    out.push_str("  store i8 0, ptr %nul_ptr, align 1\n");
-
-    out.push_str(&format!(
-        "  %bytes_ptr = call i64 @malloc(i64 {})\n",
-        bytes_size
-    ));
-    out.push_str(&format!(
-        "  %bytes_ptr_addr = add i64 %bytes_ptr, {}\n",
-        bytes_ptr_offset
-    ));
-    out.push_str("  %bytes_ptr_ptr = inttoptr i64 %bytes_ptr_addr to ptr\n");
-    out.push_str("  store i64 %dst, ptr %bytes_ptr_ptr, align 8\n");
-    out.push_str(&format!(
-        "  %bytes_len_addr = add i64 %bytes_ptr, {}\n",
-        bytes_len_offset
-    ));
-    out.push_str("  %bytes_len_ptr = inttoptr i64 %bytes_len_addr to ptr\n");
-    out.push_str("  store i32 %len, ptr %bytes_len_ptr, align 4\n");
-
-    out.push_str(&format!(
-        "  %string_ptr = call i64 @malloc(i64 {})\n",
-        runtime_layout::TAGGED_UNION_SIZE_BYTES
-    ));
-    out.push_str("  %string_tag_ptr = inttoptr i64 %string_ptr to ptr\n");
-    out.push_str(&format!(
-        "  store i32 {}, ptr %string_tag_ptr, align 4\n",
-        string_heap_tag
-    ));
-    out.push_str(&format!(
-        "  %payload_addr = add i64 %string_ptr, {}\n",
-        runtime_layout::TAGGED_UNION_PAYLOAD_OFFSET_BYTES
-    ));
-    out.push_str("  %payload_ptr = inttoptr i64 %payload_addr to ptr\n");
-    out.push_str("  store i64 %bytes_ptr, ptr %payload_ptr, align 8\n");
-    out.push_str("  ret i64 %string_ptr\n");
-    out.push_str("}\n\n");
-
-    out.push_str("define i32 @print_str(i64 %s) {\n");
-    out.push_str("entry:\n");
-    out.push_str("  %ptr = call i64 @__string_data_ptr(i64 %s)\n");
-    out.push_str("  %len = call i32 @__string_data_len(i64 %s)\n");
-    out.push_str("  %len_i64 = call i64 @i32_to_i64(i32 %len)\n");
-    out.push_str("  %_w = call i64 @write(i32 1, i64 %ptr, i64 %len_i64)\n");
-    out.push_str(&format!(
-        "  %nl = ptrtoint ptr @{} to i64\n",
-        PRINT_STR_NEWLINE_GLOBAL
-    ));
-    out.push_str("  %_wn = call i64 @write(i32 1, i64 %nl, i64 1)\n");
-    out.push_str("  ret i32 0\n");
-    out.push_str("}\n");
 
     Ok(out)
 }

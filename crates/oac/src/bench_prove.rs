@@ -740,11 +740,15 @@ fn smt2_dir_stats(dir: &Path) -> anyhow::Result<ArtifactStats> {
         if ext != "smt2" {
             continue;
         }
-        let metadata = entry
-            .metadata()
-            .with_context(|| format!("failed to inspect artifact {}", path.display()))?;
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read artifact {}", path.display()))?;
         count = count.saturating_add(1);
-        bytes = bytes.saturating_add(metadata.len());
+        let stripped_bytes = contents
+            .lines()
+            .filter(|line| !line.trim_start().starts_with(';'))
+            .map(|line| line.len() as u64 + 1)
+            .sum::<u64>();
+        bytes = bytes.saturating_add(stripped_bytes);
     }
     Ok(ArtifactStats { count, bytes })
 }

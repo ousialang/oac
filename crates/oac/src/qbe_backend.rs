@@ -1,10 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::vec;
 
 use qbe::*;
 use tracing::trace;
 
+use crate::ast_paths::{
+    bin_left_segment, bin_right_segment, expression_statement_segment, if_else_statement_segment,
+    if_then_statement_segment, join_path, local_statement_key, marker_path_id,
+    match_arm_expression_segment, match_arm_statement_segment, struct_field_segment, unary_segment,
+    while_body_statement_segment, AstPathStyle,
+};
 use crate::builtins::BuiltInType;
 use crate::ir::{self, ResolvedProgram};
 use crate::parser::{self, Op, StructDef, UnaryOp};
@@ -17,6 +23,10 @@ pub(crate) const PROVE_MARKER_PREFIX: &str = ".oac_prove_site_";
 pub(crate) const INTEGER_SAFETY_MARKER_PREFIX: &str = ".oac_integer_site_";
 pub(crate) const ASSERT_FAILURE_EXIT_CODE: u64 = 242;
 
+fn numbered_segment(prefix: &str, index: usize) -> String {
+    format!("{prefix}.{index}")
+}
+
 struct CodegenCtx {
     module: qbe::Module,
     resolved: Arc<ResolvedProgram>,
@@ -25,111 +35,6 @@ struct CodegenCtx {
 }
 
 fn add_builtins(ctx: &mut CodegenCtx) {
-    {
-        let mut sum = qbe::Function::new(
-            qbe::Linkage::public(),
-            "sum".to_string(),
-            vec![
-                (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
-                (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
-            ],
-            Some(qbe::Type::Word),
-        );
-
-        sum.add_block("start".to_string());
-
-        sum.assign_instr(
-            Value::Temporary("c".to_string()),
-            Type::Word,
-            Instr::Add(
-                Value::Temporary("a".to_string()),
-                Value::Temporary("b".to_string()),
-            ),
-        );
-        sum.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
-
-        ctx.module.add_function(sum);
-    }
-
-    {
-        let mut sub = Function::new(
-            qbe::Linkage::public(),
-            "sub".to_string(),
-            vec![
-                (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
-                (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
-            ],
-            Some(qbe::Type::Word),
-        );
-
-        sub.add_block("start".to_string());
-
-        sub.assign_instr(
-            Value::Temporary("c".to_string()),
-            Type::Word,
-            Instr::Sub(
-                Value::Temporary("a".to_string()),
-                Value::Temporary("b".to_string()),
-            ),
-        );
-        sub.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
-        ctx.module.add_function(sub);
-    }
-
-    {
-        let mut eq = Function::new(
-            qbe::Linkage::public(),
-            "eq".to_string(),
-            vec![
-                (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
-                (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
-            ],
-            Some(qbe::Type::Word),
-        );
-
-        eq.add_block("start".to_string());
-
-        eq.assign_instr(
-            Value::Temporary("c".to_string()),
-            Type::Word,
-            Instr::Cmp(
-                Type::Word,
-                qbe::Cmp::Eq,
-                Value::Temporary("a".to_string()),
-                Value::Temporary("b".to_string()),
-            ),
-        );
-        eq.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
-        ctx.module.add_function(eq);
-    }
-
-    {
-        let mut lt = Function::new(
-            qbe::Linkage::public(),
-            "lt".to_string(),
-            vec![
-                (qbe::Type::Word, qbe::Value::Temporary("a".to_string())),
-                (qbe::Type::Word, qbe::Value::Temporary("b".to_string())),
-            ],
-            Some(qbe::Type::Word),
-        );
-
-        lt.add_block("start".to_string());
-
-        lt.assign_instr(
-            Value::Temporary("c".to_string()),
-            Type::Word,
-            Instr::Cmp(
-                Type::Word,
-                qbe::Cmp::Slt,
-                Value::Temporary("a".to_string()),
-                Value::Temporary("b".to_string()),
-            ),
-        );
-        lt.add_instr(Instr::Ret(Some(Value::Temporary("c".to_string()))));
-        ctx.module.add_function(lt);
-    }
-
     {
         ctx.module.add_data(qbe::DataDef::new(
             Linkage::private(),
@@ -498,252 +403,6 @@ fn add_builtins(ctx: &mut CodegenCtx) {
         ctx.module.add_function(char_at);
     }
 
-    {
-        let mut string_len = Function::new(
-            Linkage::public(),
-            "string_len".to_string(),
-            vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
-            Some(Type::Word),
-        );
-        string_len.add_block("start".to_string());
-        let len = new_id(&["string", "len"]);
-        string_len.assign_instr(
-            Value::Temporary(len.clone()),
-            qbe::Type::Word,
-            Instr::Call(
-                "__string_data_len".to_string(),
-                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
-                None,
-            ),
-        );
-        string_len.add_instr(Instr::Ret(Some(Value::Temporary(len))));
-        ctx.module.add_function(string_len);
-    }
-
-    {
-        let bytes_struct = std_bytes_struct(ctx);
-        let bytes_len_offset = calculate_struct_field_offset(ctx, &bytes_struct, "len");
-        let bytes_size = struct_size_bytes(ctx, &bytes_struct);
-        let string_enum = std_string_enum(ctx);
-        let string_heap_tag = enum_variant_tag(&string_enum, "Heap");
-
-        let mut slice = Function::new(
-            Linkage::public(),
-            "slice".to_string(),
-            vec![
-                (qbe::Type::Long, qbe::Value::Temporary("s".to_string())),
-                (qbe::Type::Word, qbe::Value::Temporary("start".to_string())),
-                (qbe::Type::Word, qbe::Value::Temporary("len".to_string())),
-            ],
-            Some(Type::Long),
-        );
-        slice.add_block("start".to_string());
-
-        let src_base = new_id(&["slice", "src", "base"]);
-        slice.assign_instr(
-            Value::Temporary(src_base.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "__string_data_ptr".to_string(),
-                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
-                None,
-            ),
-        );
-
-        let len_plus_one = new_id(&["len", "plus", "one"]);
-        slice.assign_instr(
-            Value::Temporary(len_plus_one.clone()),
-            qbe::Type::Word,
-            Instr::Add(Value::Temporary("len".to_string()), Value::Const(1)),
-        );
-        let alloc_size_i64 = new_id(&["alloc", "size", "i64"]);
-        slice.assign_instr(
-            Value::Temporary(alloc_size_i64.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "i32_to_i64".to_string(),
-                vec![(qbe::Type::Word, qbe::Value::Temporary(len_plus_one))],
-                None,
-            ),
-        );
-
-        let dst = new_id(&["slice", "dst"]);
-        slice.assign_instr(
-            Value::Temporary(dst.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "malloc".to_string(),
-                vec![(qbe::Type::Long, qbe::Value::Temporary(alloc_size_i64))],
-                None,
-            ),
-        );
-
-        let start_i64 = new_id(&["start", "i64"]);
-        slice.assign_instr(
-            Value::Temporary(start_i64.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "i32_to_i64".to_string(),
-                vec![(qbe::Type::Word, qbe::Value::Temporary("start".to_string()))],
-                None,
-            ),
-        );
-        let src = new_id(&["slice", "src"]);
-        slice.assign_instr(
-            Value::Temporary(src.clone()),
-            qbe::Type::Long,
-            Instr::Add(Value::Temporary(src_base), Value::Temporary(start_i64)),
-        );
-
-        let copy_n_i64 = new_id(&["copy", "n", "i64"]);
-        slice.assign_instr(
-            Value::Temporary(copy_n_i64.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "i32_to_i64".to_string(),
-                vec![(qbe::Type::Word, qbe::Value::Temporary("len".to_string()))],
-                None,
-            ),
-        );
-        slice.add_instr(Instr::Call(
-            "memcpy".to_string(),
-            vec![
-                (qbe::Type::Long, qbe::Value::Temporary(dst.clone())),
-                (qbe::Type::Long, qbe::Value::Temporary(src)),
-                (qbe::Type::Long, qbe::Value::Temporary(copy_n_i64.clone())),
-            ],
-            None,
-        ));
-
-        let nul_addr = new_id(&["nul", "addr"]);
-        slice.assign_instr(
-            Value::Temporary(nul_addr.clone()),
-            qbe::Type::Long,
-            Instr::Add(Value::Temporary(dst.clone()), Value::Temporary(copy_n_i64)),
-        );
-        slice.add_instr(Instr::Store(
-            Type::Byte,
-            Value::Temporary(nul_addr),
-            Value::Const(0),
-        ));
-
-        let bytes_ptr = new_id(&["slice", "bytes", "alloc"]);
-        slice.assign_instr(
-            Value::Temporary(bytes_ptr.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "malloc".to_string(),
-                vec![(qbe::Type::Long, Value::Const(bytes_size))],
-                None,
-            ),
-        );
-        slice.add_instr(Instr::Store(
-            qbe::Type::Long,
-            Value::Temporary(bytes_ptr.clone()),
-            Value::Temporary(dst),
-        ));
-        let bytes_len_addr = new_id(&["slice", "bytes", "len", "addr"]);
-        slice.assign_instr(
-            Value::Temporary(bytes_len_addr.clone()),
-            qbe::Type::Long,
-            Instr::Add(
-                Value::Temporary(bytes_ptr.clone()),
-                Value::Const(bytes_len_offset),
-            ),
-        );
-        slice.add_instr(Instr::Store(
-            qbe::Type::Word,
-            Value::Temporary(bytes_len_addr),
-            Value::Temporary("len".to_string()),
-        ));
-
-        let string_ptr = new_id(&["slice", "string", "alloc"]);
-        slice.assign_instr(
-            Value::Temporary(string_ptr.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "malloc".to_string(),
-                vec![(
-                    qbe::Type::Long,
-                    Value::Const(runtime_layout::TAGGED_UNION_SIZE_BYTES),
-                )],
-                None,
-            ),
-        );
-        slice.add_instr(Instr::Store(
-            qbe::Type::Word,
-            Value::Temporary(string_ptr.clone()),
-            Value::Const(string_heap_tag as u64),
-        ));
-        let payload_addr = new_id(&["slice", "string", "payload", "addr"]);
-        slice.assign_instr(
-            Value::Temporary(payload_addr.clone()),
-            qbe::Type::Long,
-            Instr::Add(
-                Value::Temporary(string_ptr.clone()),
-                Value::Const(runtime_layout::TAGGED_UNION_PAYLOAD_OFFSET_BYTES),
-            ),
-        );
-        slice.add_instr(Instr::Store(
-            qbe::Type::Long,
-            Value::Temporary(payload_addr),
-            Value::Temporary(bytes_ptr),
-        ));
-        slice.add_instr(Instr::Ret(Some(Value::Temporary(string_ptr))));
-        ctx.module.add_function(slice);
-    }
-
-    {
-        let mut print_str = Function::new(
-            qbe::Linkage::public(),
-            "print_str".to_string(),
-            vec![(Type::Long, Value::Temporary("s".to_string()))],
-            Some(Type::Word),
-        );
-        print_str.add_block("start".to_string());
-        let ptr = new_id(&["print_str", "ptr"]);
-        print_str.assign_instr(
-            Value::Temporary(ptr.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "__string_data_ptr".to_string(),
-                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
-                None,
-            ),
-        );
-        let len = new_id(&["print_str", "len"]);
-        print_str.assign_instr(
-            Value::Temporary(len.clone()),
-            qbe::Type::Word,
-            Instr::Call(
-                "__string_data_len".to_string(),
-                vec![(qbe::Type::Long, qbe::Value::Temporary("s".to_string()))],
-                None,
-            ),
-        );
-        let len_i64 = new_id(&["print_str", "len", "i64"]);
-        print_str.assign_instr(
-            Value::Temporary(len_i64.clone()),
-            qbe::Type::Long,
-            Instr::Call(
-                "i32_to_i64".to_string(),
-                vec![(qbe::Type::Word, qbe::Value::Temporary(len))],
-                None,
-            ),
-        );
-        print_str.add_instr(Instr::Call(
-            "write".to_string(),
-            vec![
-                (qbe::Type::Word, Value::Const(1)),
-                (qbe::Type::Long, Value::Temporary(ptr)),
-                (qbe::Type::Long, Value::Temporary(len_i64)),
-            ],
-            None,
-        ));
-        print_str.add_instr(Instr::Ret(Some(Value::Const(0))));
-        ctx.module.add_function(print_str);
-    }
-
     ctx.qbe_types_by_name
         .insert("Int".to_string(), qbe::Type::Word);
     ctx.qbe_types_by_name
@@ -826,6 +485,55 @@ fn compile_type(ctx: &mut CodegenCtx, type_def: &ir::TypeDef) {
     }
 }
 
+fn type_ref_is_runtime_lowerable(
+    type_ref: &str,
+    program: &ResolvedProgram,
+    memo: &mut HashMap<String, bool>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if let Some(cached) = memo.get(type_ref) {
+        return *cached;
+    }
+    if !visiting.insert(type_ref.to_string()) {
+        return true;
+    }
+
+    let result = match program.type_definitions.get(type_ref) {
+        Some(ir::TypeDef::BuiltIn(BuiltInType::Semantic)) => false,
+        Some(ir::TypeDef::BuiltIn(_)) => true,
+        Some(ir::TypeDef::Struct(struct_def)) => struct_def
+            .struct_fields
+            .iter()
+            .all(|field| type_ref_is_runtime_lowerable(&field.ty, program, memo, visiting)),
+        Some(ir::TypeDef::Enum(enum_def)) => enum_def.variants.iter().all(|variant| {
+            variant
+                .payload_ty
+                .as_ref()
+                .map(|ty| type_ref_is_runtime_lowerable(ty, program, memo, visiting))
+                .unwrap_or(true)
+        }),
+        None => false,
+    };
+
+    visiting.remove(type_ref);
+    memo.insert(type_ref.to_string(), result);
+    result
+}
+
+fn function_is_runtime_lowerable(
+    func_def: &ir::FunctionDefinition,
+    program: &ResolvedProgram,
+    memo: &mut HashMap<String, bool>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    func_def
+        .sig
+        .parameters
+        .iter()
+        .all(|param| type_ref_is_runtime_lowerable(&param.ty, program, memo, visiting))
+        && type_ref_is_runtime_lowerable(&func_def.sig.return_type, program, memo, visiting)
+}
+
 fn type_ref_to_qbe(ctx: &CodegenCtx, type_name: &str) -> qbe::Type {
     let ty = ctx
         .resolved
@@ -840,9 +548,10 @@ fn compile_match_subject(
     qbe_func: &mut qbe::Function,
     subject: &parser::Expression,
     variables: &mut Variables,
+    subject_path: &str,
     label_root: &str,
 ) -> (QbeAssignName, ir::TypeRef, ir::EnumTypeDef, QbeAssignName) {
-    let (subject_var, subject_ty) = compile_expr(ctx, qbe_func, subject, variables);
+    let (subject_var, subject_ty) = compile_expr(ctx, qbe_func, subject, variables, subject_path);
     let enum_def = match ctx.resolved.type_definitions.get(&subject_ty) {
         Some(ir::TypeDef::Enum(enum_def)) => enum_def.clone(),
         _ => panic!("match subject must be enum"),
@@ -936,7 +645,8 @@ fn lower_match_dispatch<Arm, PatternOf, CompileArm>(
 ) -> String
 where
     PatternOf: Fn(&Arm) -> &parser::MatchPattern,
-    CompileArm: FnMut(&mut CodegenCtx, &mut qbe::Function, &mut Variables, &Arm) -> MatchArmOutcome,
+    CompileArm:
+        FnMut(&mut CodegenCtx, &mut qbe::Function, &mut Variables, usize, &Arm) -> MatchArmOutcome,
 {
     let end_label = new_id(&[label_root, "end"]);
     let mut any_arm_falls_through = false;
@@ -980,7 +690,7 @@ where
             label_root,
         );
 
-        let outcome = compile_arm(ctx, qbe_func, &mut arm_variables, arm);
+        let outcome = compile_arm(ctx, qbe_func, &mut arm_variables, i, arm);
         if matches!(outcome, MatchArmOutcome::FallsThrough) {
             any_arm_falls_through = true;
             qbe_func.add_instr(qbe::Instr::Jmp(end_label.clone()));
@@ -1002,6 +712,7 @@ fn compile_statement(
     qbe_func: &mut qbe::Function,
     statement: &parser::Statement,
     variables: &mut Variables,
+    statement_path: &str,
     prove_site_counter: &mut usize,
 ) {
     match statement {
@@ -1012,8 +723,14 @@ fn compile_statement(
             }
         }
         parser::Statement::Match { subject, arms } => {
-            let (subject_var, subject_ty, enum_def, tag_var) =
-                compile_match_subject(ctx, qbe_func, subject, variables, "match");
+            let (subject_var, subject_ty, enum_def, tag_var) = compile_match_subject(
+                ctx,
+                qbe_func,
+                subject,
+                variables,
+                &join_path(statement_path, "match.subject", AstPathStyle::Ir),
+                "match",
+            );
             lower_match_dispatch(
                 ctx,
                 qbe_func,
@@ -1026,13 +743,22 @@ fn compile_statement(
                 |arm| &arm.pattern,
                 "match",
                 false,
-                |ctx, qbe_func, arm_variables, arm| {
-                    for statement in &arm.body {
+                |ctx, qbe_func, arm_variables, arm_index, arm| {
+                    for (statement_index, statement) in arm.body.iter().enumerate() {
                         compile_statement(
                             ctx,
                             qbe_func,
                             statement,
                             arm_variables,
+                            &join_path(
+                                statement_path,
+                                &match_arm_statement_segment(
+                                    AstPathStyle::Ir,
+                                    arm_index,
+                                    statement_index,
+                                ),
+                                AstPathStyle::Ir,
+                            ),
                             prove_site_counter,
                         );
                     }
@@ -1055,6 +781,7 @@ fn compile_statement(
             body,
             else_body.as_deref(),
             variables,
+            statement_path,
             prove_site_counter,
         ),
         parser::Statement::While { condition, body } => {
@@ -1064,28 +791,75 @@ fn compile_statement(
                 condition,
                 body,
                 variables,
+                statement_path,
                 prove_site_counter,
             );
         }
         parser::Statement::Return { expr } => {
-            let (expr_var, _expr_ty) = compile_expr(ctx, qbe_func, &expr, variables);
+            let (expr_var, _expr_ty) = compile_expr(
+                ctx,
+                qbe_func,
+                &expr,
+                variables,
+                &join_path(statement_path, "return.expr", AstPathStyle::Ir),
+            );
             trace!(%expr_var, "Emitting return instruction");
             qbe_func.add_instr(qbe::Instr::Ret(Some(qbe::Value::Temporary(expr_var))));
         }
         parser::Statement::Expression { expr } => {
-            if compile_void_call_statement(ctx, qbe_func, expr, variables) {
+            if compile_void_call_statement(
+                ctx,
+                qbe_func,
+                expr,
+                variables,
+                &join_path(
+                    statement_path,
+                    expression_statement_segment(AstPathStyle::Ir),
+                    AstPathStyle::Ir,
+                ),
+            ) {
                 return;
             }
-            compile_expr(ctx, qbe_func, &expr, variables);
+            compile_expr(
+                ctx,
+                qbe_func,
+                &expr,
+                variables,
+                &join_path(
+                    statement_path,
+                    expression_statement_segment(AstPathStyle::Ir),
+                    AstPathStyle::Ir,
+                ),
+            );
         }
         parser::Statement::Prove { condition } => {
-            compile_prove_statement(ctx, qbe_func, condition, variables, prove_site_counter);
+            compile_prove_statement(
+                ctx,
+                qbe_func,
+                condition,
+                variables,
+                &join_path(statement_path, "prove.cond", AstPathStyle::Ir),
+                prove_site_counter,
+            );
         }
         parser::Statement::Assert { condition } => {
-            compile_assert_statement(ctx, qbe_func, condition, variables);
+            compile_assert_statement(
+                ctx,
+                qbe_func,
+                condition,
+                variables,
+                &join_path(statement_path, "assert.cond", AstPathStyle::Ir),
+            );
         }
         parser::Statement::Assign { variable, value } => {
-            compile_assign_statement(ctx, qbe_func, variable, value, variables);
+            compile_assign_statement(
+                ctx,
+                qbe_func,
+                variable,
+                value,
+                variables,
+                &join_path(statement_path, "assign.value", AstPathStyle::Ir),
+            );
         }
     }
 }
@@ -1097,13 +871,21 @@ fn compile_conditional_statement(
     body: &[parser::Statement],
     else_body: Option<&[parser::Statement]>,
     variables: &mut Variables,
+    statement_path: &str,
     prove_site_counter: &mut usize,
 ) {
     let then_label = new_id(&["cond", "then"]);
     let else_label = new_id(&["cond", "else"]);
     let end_block_label = new_id(&["cond", "end"]);
 
-    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+    let condition_var = compile_expr(
+        ctx,
+        qbe_func,
+        condition,
+        variables,
+        &join_path(statement_path, "if.cond", AstPathStyle::Ir),
+    )
+    .0;
 
     qbe_func.add_instr(qbe::Instr::Jnz(
         qbe::Value::Temporary(condition_var),
@@ -1116,8 +898,19 @@ fn compile_conditional_statement(
     ));
 
     qbe_func.add_block(&then_label);
-    for statement in body {
-        compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
+    for (statement_index, statement) in body.iter().enumerate() {
+        compile_statement(
+            ctx,
+            qbe_func,
+            statement,
+            variables,
+            &join_path(
+                statement_path,
+                &if_then_statement_segment(AstPathStyle::Ir, statement_index),
+                AstPathStyle::Ir,
+            ),
+            prove_site_counter,
+        );
     }
     let then_falls_through = !qbe_func.blocks.last().unwrap().jumps();
     if then_falls_through {
@@ -1127,8 +920,19 @@ fn compile_conditional_statement(
     let mut else_falls_through = false;
     if let Some(else_body) = else_body {
         qbe_func.add_block(&else_label);
-        for statement in else_body {
-            compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
+        for (statement_index, statement) in else_body.iter().enumerate() {
+            compile_statement(
+                ctx,
+                qbe_func,
+                statement,
+                variables,
+                &join_path(
+                    statement_path,
+                    &if_else_statement_segment(AstPathStyle::Ir, statement_index),
+                    AstPathStyle::Ir,
+                ),
+                prove_site_counter,
+            );
         }
         else_falls_through = !qbe_func.blocks.last().unwrap().jumps();
         if else_falls_through {
@@ -1148,6 +952,7 @@ fn compile_while_statement(
     condition: &parser::Expression,
     body: &[parser::Statement],
     variables: &mut Variables,
+    statement_path: &str,
     prove_site_counter: &mut usize,
 ) {
     let condition_label = new_id(&["while", "cond"]);
@@ -1155,7 +960,14 @@ fn compile_while_statement(
     let end_block_label = new_id(&["while", "end"]);
 
     qbe_func.add_block(condition_label.clone());
-    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+    let condition_var = compile_expr(
+        ctx,
+        qbe_func,
+        condition,
+        variables,
+        &join_path(statement_path, "while.cond", AstPathStyle::Ir),
+    )
+    .0;
 
     qbe_func.add_instr(qbe::Instr::Jnz(
         qbe::Value::Temporary(condition_var),
@@ -1164,8 +976,19 @@ fn compile_while_statement(
     ));
 
     qbe_func.add_block(&start_label);
-    for statement in body {
-        compile_statement(ctx, qbe_func, statement, variables, prove_site_counter);
+    for (statement_index, statement) in body.iter().enumerate() {
+        compile_statement(
+            ctx,
+            qbe_func,
+            statement,
+            variables,
+            &join_path(
+                statement_path,
+                &while_body_statement_segment(AstPathStyle::Ir, statement_index),
+                AstPathStyle::Ir,
+            ),
+            prove_site_counter,
+        );
     }
     qbe_func.add_instr(qbe::Instr::Jmp(condition_label));
 
@@ -1177,10 +1000,11 @@ fn compile_prove_statement(
     qbe_func: &mut qbe::Function,
     condition: &parser::Expression,
     variables: &mut Variables,
+    condition_path: &str,
     prove_site_counter: &mut usize,
 ) {
-    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
-    let marker_temp = format!("{PROVE_MARKER_PREFIX}{}", *prove_site_counter);
+    let condition_var = compile_expr(ctx, qbe_func, condition, variables, condition_path).0;
+    let marker_temp = format!("{PROVE_MARKER_PREFIX}{}", marker_path_id(condition_path));
     *prove_site_counter += 1;
     qbe_func.assign_instr(
         qbe::Value::Temporary(marker_temp),
@@ -1194,8 +1018,9 @@ fn compile_assert_statement(
     qbe_func: &mut qbe::Function,
     condition: &parser::Expression,
     variables: &mut Variables,
+    condition_path: &str,
 ) {
-    let condition_var = compile_expr(ctx, qbe_func, condition, variables).0;
+    let condition_var = compile_expr(ctx, qbe_func, condition, variables, condition_path).0;
     let assert_pass_label = new_id(&["assert", "pass"]);
     let assert_fail_label = new_id(&["assert", "fail"]);
 
@@ -1222,10 +1047,11 @@ fn compile_assign_statement(
     variable: &str,
     value: &parser::Expression,
     variables: &mut Variables,
+    value_path: &str,
 ) {
     trace!(%variable, "Compiling assignment");
 
-    let value_var = compile_expr(ctx, qbe_func, value, variables);
+    let value_var = compile_expr(ctx, qbe_func, value, variables, value_path);
     if let Some((existing_var, existing_ty)) = variables.get(variable).cloned() {
         let existing_type_def = ctx
             .resolved
@@ -1288,12 +1114,13 @@ fn compile_function(ctx: &mut CodegenCtx, func_def: ir::FunctionDefinition) {
         variables.insert(param.name.clone(), (param.name.clone(), param.ty.clone()));
     }
 
-    for statement in &func_def.body {
+    for (statement_index, statement) in func_def.body.iter().enumerate() {
         compile_statement(
             ctx,
             &mut qbe_func,
             statement,
             &mut variables,
+            &local_statement_key(statement_index),
             &mut prove_site_counter,
         );
     }
@@ -1314,12 +1141,28 @@ pub fn compile(ir: ResolvedProgram) -> qbe::Module {
 
     add_builtins(&mut ctx);
 
-    for type_def in ctx.resolved.clone().type_definitions.values() {
-        compile_type(&mut ctx, type_def);
+    let mut runtime_lowerable_types = HashMap::new();
+    let mut visiting = HashSet::new();
+    for (type_name, type_def) in &ctx.resolved.clone().type_definitions {
+        if type_ref_is_runtime_lowerable(
+            type_name,
+            &ctx.resolved,
+            &mut runtime_lowerable_types,
+            &mut visiting,
+        ) {
+            compile_type(&mut ctx, type_def);
+        }
     }
 
     for func_def in ctx.resolved.clone().function_definitions.values() {
-        compile_function(&mut ctx, func_def.clone());
+        if function_is_runtime_lowerable(
+            func_def,
+            &ctx.resolved,
+            &mut runtime_lowerable_types,
+            &mut visiting,
+        ) {
+            compile_function(&mut ctx, func_def.clone());
+        }
     }
 
     ctx.module
@@ -1373,6 +1216,7 @@ fn emit_integer_safety_markers(
     left_var: &str,
     right_var: &str,
     out_var: &str,
+    expr_path: &str,
 ) {
     let Some(type_label) = integer_safety_type_label(ty) else {
         return;
@@ -1381,7 +1225,7 @@ fn emit_integer_safety_markers(
         return;
     };
 
-    let site_id = ctx.integer_site_counter;
+    let site_id = marker_path_id(expr_path);
     ctx.integer_site_counter += 1;
 
     let base = format!("{INTEGER_SAFETY_MARKER_PREFIX}{type_label}__{op_label}__{site_id}");
@@ -1671,14 +1515,30 @@ fn compile_void_call_statement(
     func: &mut qbe::Function,
     expr: &parser::Expression,
     variables: &mut Variables,
+    expr_path: &str,
 ) -> bool {
     let Some((function_name, args)) = resolve_void_call_target(ctx, expr) else {
         return false;
     };
 
+    let arg_prefix = match expr {
+        parser::Expression::Call(_, _) => "call.arg",
+        parser::Expression::PostfixCall { .. } => "postfix.arg",
+        _ => unreachable!("void call target must be call-like"),
+    };
     let mut lowered_args = vec![];
-    for arg in args {
-        let (arg_var, arg_ty) = compile_expr(ctx, func, arg, variables);
+    for (index, arg) in args.iter().enumerate() {
+        let (arg_var, arg_ty) = compile_expr(
+            ctx,
+            func,
+            arg,
+            variables,
+            &join_path(
+                expr_path,
+                &numbered_segment(arg_prefix, index),
+                AstPathStyle::Ir,
+            ),
+        );
         let arg_type_def = ctx
             .resolved
             .type_definitions
@@ -1712,11 +1572,23 @@ fn compile_named_call(
     function_name: &str,
     args: &[parser::Expression],
     variables: &mut Variables,
+    expr_path: &str,
+    arg_prefix: &str,
 ) -> (QbeAssignName, ir::TypeRef) {
     let id = new_id(&["call", function_name]);
     let mut arg_vars = vec![];
-    for arg in args {
-        let (arg_var, arg_ty) = compile_expr(ctx, func, arg, variables);
+    for (index, arg) in args.iter().enumerate() {
+        let (arg_var, arg_ty) = compile_expr(
+            ctx,
+            func,
+            arg,
+            variables,
+            &join_path(
+                expr_path,
+                &numbered_segment(arg_prefix, index),
+                AstPathStyle::Ir,
+            ),
+        );
         arg_vars.push((arg_var, arg_ty));
     }
 
@@ -1764,14 +1636,36 @@ fn compile_builtin_trait_operator_call(
     operator: ir::BuiltinTraitOperator,
     args: &[parser::Expression],
     variables: &mut Variables,
+    expr_path: &str,
+    arg_prefix: &str,
 ) -> (QbeAssignName, ir::TypeRef) {
     assert_eq!(
         args.len(),
         2,
         "builtin operator trait calls currently require exactly two arguments"
     );
-    let (left_var, left_ty) = compile_expr(ctx, func, &args[0], variables);
-    let (right_var, _right_ty) = compile_expr(ctx, func, &args[1], variables);
+    let (left_var, left_ty) = compile_expr(
+        ctx,
+        func,
+        &args[0],
+        variables,
+        &join_path(
+            expr_path,
+            &numbered_segment(arg_prefix, 0),
+            AstPathStyle::Ir,
+        ),
+    );
+    let (right_var, _right_ty) = compile_expr(
+        ctx,
+        func,
+        &args[1],
+        variables,
+        &join_path(
+            expr_path,
+            &numbered_segment(arg_prefix, 1),
+            AstPathStyle::Ir,
+        ),
+    );
     let operand_qbe_ty = type_ref_to_qbe(ctx, &left_ty);
     let use_unsigned_int_cmp = left_ty == "U8";
     let use_ordered_float_cmp = matches!(operand_qbe_ty, qbe::Type::Single | qbe::Type::Double);
@@ -1874,6 +1768,7 @@ fn compile_expr(
     func: &mut qbe::Function,
     expr: &parser::Expression,
     variables: &mut Variables,
+    expr_path: &str,
 ) -> (QbeAssignName, ir::TypeRef) {
     trace!(?expr, "Compiling expression");
 
@@ -1908,8 +1803,14 @@ fn compile_expr(
                 qbe::Instr::Alloc8(8),
             );
 
-            let (subject_var, subject_ty, enum_def, tag_var) =
-                compile_match_subject(ctx, func, subject, variables, "match_expr");
+            let (subject_var, subject_ty, enum_def, tag_var) = compile_match_subject(
+                ctx,
+                func,
+                subject,
+                variables,
+                &join_path(expr_path, "match.subject", AstPathStyle::Ir),
+                "match_expr",
+            );
             lower_match_dispatch(
                 ctx,
                 func,
@@ -1922,9 +1823,18 @@ fn compile_expr(
                 |arm| &arm.pattern,
                 "match_expr",
                 true,
-                |ctx, func, arm_variables, arm| {
-                    let (arm_value, arm_value_ty) =
-                        compile_expr(ctx, func, &arm.value, arm_variables);
+                |ctx, func, arm_variables, arm_index, arm| {
+                    let (arm_value, arm_value_ty) = compile_expr(
+                        ctx,
+                        func,
+                        &arm.value,
+                        arm_variables,
+                        &join_path(
+                            expr_path,
+                            &match_arm_expression_segment(AstPathStyle::Ir, arm_index),
+                            AstPathStyle::Ir,
+                        ),
+                    );
                     assert_eq!(
                         arm_value_ty, match_ty,
                         "match expression arm type mismatch in codegen"
@@ -2069,7 +1979,13 @@ fn compile_expr(
                             1,
                             "enum payload constructors currently support a single argument"
                         );
-                        let (arg_var, arg_ty) = compile_expr(ctx, func, &args[0], variables);
+                        let (arg_var, arg_ty) = compile_expr(
+                            ctx,
+                            func,
+                            &args[0],
+                            variables,
+                            &join_path(expr_path, "postfix.arg.0", AstPathStyle::Ir),
+                        );
                         let enum_ptr = new_id(&["enum", "alloc"]);
                         func.assign_instr(
                             qbe::Value::Temporary(enum_ptr.clone()),
@@ -2133,12 +2049,24 @@ fn compile_expr(
                         )
                     });
                     return match target {
-                        ir::TraitCallTarget::Function(target_function) => {
-                            compile_named_call(ctx, func, &target_function, args, variables)
-                        }
+                        ir::TraitCallTarget::Function(target_function) => compile_named_call(
+                            ctx,
+                            func,
+                            &target_function,
+                            args,
+                            variables,
+                            expr_path,
+                            "postfix.arg",
+                        ),
                         ir::TraitCallTarget::BuiltinOperator(operator) => {
                             compile_builtin_trait_operator_call(
-                                ctx, func, operator, args, variables,
+                                ctx,
+                                func,
+                                operator,
+                                args,
+                                variables,
+                                expr_path,
+                                "postfix.arg",
                             )
                         }
                     };
@@ -2147,7 +2075,15 @@ fn compile_expr(
                 let namespaced_call =
                     parser::qualify_namespace_function_name(struct_variable, field);
                 if ctx.resolved.function_sigs.contains_key(&namespaced_call) {
-                    return compile_named_call(ctx, func, &namespaced_call, args, variables);
+                    return compile_named_call(
+                        ctx,
+                        func,
+                        &namespaced_call,
+                        args,
+                        variables,
+                        expr_path,
+                        "postfix.arg",
+                    );
                 }
 
                 panic!("unsupported postfix call target")
@@ -2165,8 +2101,18 @@ fn compile_expr(
             };
             let id = alloc_struct_zeroed(func, struct_size_bytes(ctx, structdef));
 
-            for (field_name, field_value) in field_values {
-                let (field_var, _) = compile_expr(ctx, func, field_value, variables);
+            for (index, (field_name, field_value)) in field_values.iter().enumerate() {
+                let (field_var, _) = compile_expr(
+                    ctx,
+                    func,
+                    field_value,
+                    variables,
+                    &join_path(
+                        expr_path,
+                        &struct_field_segment(AstPathStyle::Ir, index, field_name),
+                        AstPathStyle::Ir,
+                    ),
+                );
                 let field = structdef
                     .struct_fields
                     .iter()
@@ -2345,7 +2291,13 @@ fn compile_expr(
         }
         parser::Expression::UnaryOp(op, expr) => {
             let id = new_id(&["unary_op"]);
-            let (expr_var, _expr_ty) = compile_expr(ctx, func, expr, variables);
+            let (expr_var, _expr_ty) = compile_expr(
+                ctx,
+                func,
+                expr,
+                variables,
+                &join_path(expr_path, unary_segment(AstPathStyle::Ir), AstPathStyle::Ir),
+            );
 
             match op {
                 UnaryOp::Not => {
@@ -2365,15 +2317,35 @@ fn compile_expr(
             (id, "Bool".to_string())
         }
         parser::Expression::Call(name, args) => {
-            compile_named_call(ctx, func, name, args, variables)
+            compile_named_call(ctx, func, name, args, variables, expr_path, "call.arg")
         }
         parser::Expression::MethodCall { .. } => {
             panic!("method calls must be normalized before QBE codegen")
         }
         parser::Expression::BinOp(op, left, right) => {
             let id = new_id(&["bin_op"]);
-            let (left_var, left_ty) = compile_expr(ctx, func, left, variables);
-            let (right_var, _right_ty) = compile_expr(ctx, func, right, variables);
+            let (left_var, left_ty) = compile_expr(
+                ctx,
+                func,
+                left,
+                variables,
+                &join_path(
+                    expr_path,
+                    bin_left_segment(AstPathStyle::Ir),
+                    AstPathStyle::Ir,
+                ),
+            );
+            let (right_var, _right_ty) = compile_expr(
+                ctx,
+                func,
+                right,
+                variables,
+                &join_path(
+                    expr_path,
+                    bin_right_segment(AstPathStyle::Ir),
+                    AstPathStyle::Ir,
+                ),
+            );
             if matches!(op, Op::Eq | Op::Neq)
                 && matches!(
                     ctx.resolved.type_definitions.get(&left_ty),
@@ -2509,7 +2481,9 @@ fn compile_expr(
             func.assign_instr(qbe::Value::Temporary(id.clone()), result_qbe_ty, instr);
 
             if matches!(op, Op::Add | Op::Sub | Op::Mul | Op::Div) {
-                emit_integer_safety_markers(ctx, func, *op, &left_ty, &left_var, &right_var, &id);
+                emit_integer_safety_markers(
+                    ctx, func, *op, &left_ty, &left_var, &right_var, &id, expr_path,
+                );
             }
 
             let out_ty = match op {
@@ -2539,7 +2513,10 @@ mod tests {
     use crate::parser::parse;
     use crate::tokenizer::tokenize;
     use crate::{compile, ir, Build, RuntimeBackend};
-    const EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
+    // Nextest runs other heavy verification tests in parallel, so the
+    // execution-fixture runtime budget needs enough slack to avoid
+    // load-dependent flakes.
+    const EXECUTION_TIMEOUT: Duration = Duration::from_secs(15);
     const EXECUTION_SNAPSHOT_PREFIX: &str = "oac__qbe_backend__tests__execution_tests__";
     const SNAPSHOT_EXTENSION: &str = ".snap";
 

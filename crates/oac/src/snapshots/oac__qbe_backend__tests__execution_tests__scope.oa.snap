@@ -3,6 +3,7 @@ source: crates/oac/src/qbe_backend.rs
 expression: snapshot_content
 snapshot_kind: text
 ---
-1
-3
-4
+COMPILATION ERROR
+
+[OAC-PROVE-001] Error: prove obligation verification failed: integer safety verification failed (SAT counterexamples found):
+main#sum_wrapper#i32#.oac_integer_site_i32__add__stmt_0_assign_value (root=main, caller=sum_wrapper, op=add, semantic_type=I32, qbe_artifact=site_main_sum_wrapper_i32__oac_integer_site_i32__add__stmt_0_assign_value.qbe, smt_artifact=site_main_sum_wrapper_i32__oac_integer_site_i32__add__stmt_0_assign_value.smt2)

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::parser::{Ast, Expression, Function, Literal, Statement};
 
@@ -55,6 +55,9 @@ pub fn lower_tests_to_program(mut ast: Ast) -> anyhow::Result<LoweredTestProgram
             return_type: "I32".to_string(),
             is_comptime: false,
             is_extern: false,
+            source_span: None,
+            local_source_spans: HashMap::new(),
+            precondition_source_spans: Vec::new(),
         });
         test_names.push(test.name);
     }
@@ -89,6 +92,9 @@ pub fn lower_tests_to_program(mut ast: Ast) -> anyhow::Result<LoweredTestProgram
         return_type: "I32".to_string(),
         is_comptime: false,
         is_extern: false,
+        source_span: None,
+        local_source_spans: HashMap::new(),
+        precondition_source_spans: Vec::new(),
     });
 
     Ok(LoweredTestProgram { ast, test_names })

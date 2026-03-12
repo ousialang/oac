@@ -44,6 +44,7 @@ Editor tooling in this repository:
 - `crates/oac/src/tokenizer.rs`: eager tokenizer and syntax error model.
 - `crates/oac/src/parser.rs`: AST definitions and parser.
 - `crates/oac/src/test_framework.rs`: isolated lowering for `test "..." { ... }` declarations into runnable generated functions/main used by `oac test`.
+- `crates/oac/src/comptime.rs`: bootstrap-resolved comptime evaluator and iterative `comptime apply` execution/AST merge loop.
 - `crates/oac/src/ir.rs`: type resolution, semantic checks, and resolved IR.
 - `crates/oac/src/qbe_backend.rs`: code generation to QBE IR and end-to-end execution tests.
 - `crates/oac/src/builtins.rs`: built-in scalar types (including `U8`/`Void`) and builtin type parsing.
@@ -59,7 +60,7 @@ Editor tooling in this repository:
 - `crates/oac/src/std/std_comptime.oa`: stdlib comptime-only helpers (currently including enum-tag derivation over enum reflection/emission builtins).
 - `crates/oac/src/std/std_traits.oa`: core trait declarations/impls (`Hash`, operator traits, `Equality`, `Copy`, `Drop`) used by bounded generics and infix operator resolution.
 - `crates/oac/src/std/std_option_result.oa`: core generic sum types (`Option[T]`, `Result[T,E]`) and helper methods.
-- `crates/oac/src/std/std_string.oa`: std-owned `Bytes` + `String` representation (`String` enum with literal/heap variants).
+- `crates/oac/src/std/std_string.oa`: std-owned `Bytes` + `String` representation (`String` enum with literal/heap variants) plus top-level string helpers (`string_len`, `slice`, `print_str`) and `String.*` namespaced convenience APIs.
 - `crates/oac/src/std/std_ref.oa`: pointer wrappers (`Ref[T]`, `Mut[T]`) and typed read/write helper specializations.
 - `crates/oac/src/std/std_set.oa`: generic persistent `HashSet[K: Hash + Equality]` operations and set algebra helpers.
 - `crates/oac/src/std/std_vec.oa`: generic persistent `Vec[T]` API (`push`/`pop`/`get`/`set`/`reserve`/`clear`).

@@ -281,11 +281,14 @@ fun main() -> I32 {
         let first_session =
             prepare_ordinary_verification_session(&program, &qbe_module, tempdir.path(), &config)
                 .expect("prepare first session");
+        let first_stage_solver_runs = first_session.prepared_preconditions.len()
+            + first_session.prepared_prove.len()
+            + first_session.prepared_integer.len()
+            + first_session.prepared_struct.len();
         test_support::with_mock_solver_runs(
-            vec![
-                Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")),
-                Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")),
-            ],
+            std::iter::repeat_with(|| Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")))
+                .take(first_stage_solver_runs)
+                .collect(),
             || {
                 first_session
                     .verify_prove_stage(&config)
@@ -293,7 +296,10 @@ fun main() -> I32 {
                 first_session
                     .verify_struct_stage(&config)
                     .expect("struct stage should succeed");
-                assert_eq!(test_support::observed_timeouts().len(), 2);
+                assert_eq!(
+                    test_support::observed_timeouts().len(),
+                    first_stage_solver_runs
+                );
             },
         );
         assert_eq!(ordinary_cache_entry_count(&config.cache_root), 1);
@@ -333,11 +339,14 @@ fun main() -> I32 {
             &trust_config,
         )
         .expect("prepare warm session");
+        let warm_stage_solver_runs = warm_session.prepared_preconditions.len()
+            + warm_session.prepared_prove.len()
+            + warm_session.prepared_integer.len()
+            + warm_session.prepared_struct.len();
         test_support::with_mock_solver_runs(
-            vec![
-                Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")),
-                Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")),
-            ],
+            std::iter::repeat_with(|| Ok(run(qbe_smt::SolverResult::Unsat, "unsat", "")))
+                .take(warm_stage_solver_runs)
+                .collect(),
             || {
                 warm_session
                     .verify_prove_stage(&trust_config)
@@ -356,8 +365,13 @@ fun main() -> I32 {
             &strict_config,
         )
         .expect("prepare strict session");
+        let strict_prove_stage_solver_runs = strict_session.prepared_preconditions.len()
+            + strict_session.prepared_prove.len()
+            + strict_session.prepared_integer.len();
         test_support::with_mock_solver_runs(
-            vec![Ok(run(qbe_smt::SolverResult::Sat, "sat", ""))],
+            std::iter::repeat_with(|| Ok(run(qbe_smt::SolverResult::Sat, "sat", "")))
+                .take(strict_prove_stage_solver_runs.max(1))
+                .collect(),
             || {
                 let err = strict_session
                     .verify_prove_stage(&strict_config)

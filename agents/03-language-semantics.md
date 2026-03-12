@@ -46,8 +46,9 @@ Observed in parser/IR implementation:
 - Struct declarations and struct literals accept an optional trailing comma after the last field.
 - Leading newlines before opening braces in braced declaration/block headers are treated as whitespace (`enum Name` newline `{`, `trait Name` newline `{`, `if cond` newline `{`, and similar forms remain valid).
 - Statement-only builtins with call syntax: `prove(cond)` and `assert(cond)`.
-- Ordinary runtime functions may also declare verification-only `pre { ... }` blocks between the return type and body; clauses are anonymous multiline Bool expressions, conjuncted together, and rejected on `extern fun`, `comptime fun`, and trait methods in v1.
+- Non-extern functions may also declare `pre { ... }` blocks between the return type and body; clauses are anonymous multiline Bool expressions and are conjuncted together. For runtime functions they remain verification-only, while comptime function preconditions are checked at comptime call sites. `pre` blocks are still rejected on `extern fun` and trait methods in v1.
 - Runtime pointer-memory builtins: `load_u8(addr: PtrInt) -> U8`, `load_i32(addr: PtrInt) -> I32`, `load_i64(addr: PtrInt) -> I64`, `load_bool(addr: PtrInt) -> Bool`, `store_u8(addr: PtrInt, value: U8) -> Void`, `store_i32(addr: PtrInt, value: I32) -> Void`, `store_i64(addr: PtrInt, value: I64) -> Void`, and `store_bool(addr: PtrInt, value: Bool) -> Void`.
+- Legacy runtime helper builtins `sum`, `sub`, `eq`, `lt`, `string_len`, `slice`, and `print_str` are removed; arithmetic uses operators, while `string_len`, `slice`, and `print_str` are ordinary stdlib functions.
 - Top-level test declarations: `test "Name" { ... }`.
 - Legacy syntax `template` / `instantiate` is hard-cut and rejected with migration diagnostics.
 
@@ -78,7 +79,7 @@ Observed in parser/IR implementation:
 - `U8` relational operators (`<`, `>`, `<=`, `>=`) use unsigned comparisons in codegen.
 - `U8` division lowers to unsigned integer division in codegen.
 - Function names `prove` and `assert` are reserved and cannot be user-defined.
-- Namespace bodies accept `fun` and `extern fun` declarations; `comptime` declarations inside namespace blocks are rejected.
+- Namespace bodies accept `fun`, `comptime fun`, and `extern fun` declarations; `comptime apply` remains top-level only.
 - `extern fun` declarations cannot be marked `comptime` and must not define a body.
 - In v2 ABI, `extern fun` declarations cannot use struct parameter types or struct return types; use `PtrInt` wrappers for manual ABI bridging.
 - `Void` cannot be used as a function parameter type.
@@ -89,6 +90,8 @@ Observed in parser/IR implementation:
 - Receiver method calls are call-only sugar: `value.helper(args...)` lowers through the receiver's resolved type namespace and prepends the receiver as argument 0; bare-identifier syntax `TypeName.helper(...)` remains the existing static namespace/trait/enum surface.
 - Plain field access rules are unchanged: non-variable field access is still rejected, so `(expr).field` is invalid even though `(expr).helper(...)` is accepted.
 - Namespace call lowering also applies to generic-specialized helpers when matching mangled symbols exist (`Alias.helper(...)` -> `Alias__helper`).
+- The comptime evaluator now runs against a bootstrap `ResolvedProgram`, not an AST-only eval world. It reuses the same stdlib loading, generic expansion, signature/type resolution, receiver-method normalization, operator-trait lowering, and semantic-expression metadata indexing as ordinary resolve before executing `comptime apply`.
+- The comptime evaluator supports the same public receiver/namespace surface used by ordinary code where the helpers are pure and available in that bootstrap resolved world, including semantic option chains such as `T.as_enum_opt().is_some()`, `Option.unwrap()`, `String.concat()`, `match`, struct literals/field access, enum payload matching, recursion under fuel/stack limits, scalar values/operators beyond `I32`, and ordinary pure helper/operator-impl paths that resolve to normalized calls.
 - Project source style now prefers receiver method syntax in stdlib/runtime fixtures when that lowering is available from parameter 0 ownership (`value.helper(...)` over `TypeName.helper(value, ...)`), while keeping static syntax for constructors, non-receiver-first helpers, trait calls, and explicit namespace-vs-method equivalence coverage.
 - Traits are static-only in v1: method calls use `Trait.method(value, ...)` and are resolved to concrete impl symbols (`Trait__Type__method`) before backend lowering.
 - Trait method signatures must take `Self` as the first parameter type in v1.
@@ -98,11 +101,12 @@ Observed in parser/IR implementation:
 - Impl coherence is global: exactly one `impl Trait for Type` is allowed in a program.
 - Impl method sets/signatures must match trait declarations exactly (arity, parameter types after `Self` substitution, return type); missing/extra methods are compile errors.
 - `impl` methods cannot be `extern` or `comptime` in v1.
-- Comptime semantic reflection is compiler-provided and `Type`-driven: struct helpers are `is_struct`, `as_struct_opt`, `struct_field_count`, `struct_field_at`, `field_name`, `field_type`; enum helpers are `is_enum`, `as_enum_opt`, `enum_variant_count`, `enum_variant_at`, `variant_name`, `variant_payload_type_opt`; supporting semantic pseudo-types include `Type`, `DeclSet`, `SemanticExpr`, `SourceSpan`, `StructInfo`, `FieldInfo`, `EnumInfo`, and `VariantInfo`.
-- Comptime declaration emission is compiler-provided through `DeclSet`: `declset_new`, `declset_add_empty_enum`, `declset_add_enum_tag_variant`, `declset_add_enum_payload_variant`, `declset_add_derived_struct`, and `declset_add_invariant_field_gt_i32`. Enum emission is incremental in v1: create an emitted enum first, then append variants by emitted enum name.
-- User-defined comptime utilities can live either in the current file or in same-directory flat imports, because imports are merged before comptime execution; stdlib comptime helpers are also callable from user `comptime apply` because the evaluator preloads `crates/oac/src/std/std.oa` into its comptime function/type world before executing applies.
+- Comptime semantic reflection/emission is compiler-provided, but the public surface is now ordinary-looking stdlib API from `crates/oac/src/std/std_meta.oa`: `Type.name/resolve/is_struct/is_enum/as_struct_opt/as_enum_opt`, `StructInfo.field_count/field_at`, `EnumInfo.variant_count/variant_at`, `FieldInfo.name/ty`, `VariantInfo.name/payload_type_opt`, `DeclSet.new/add_empty_enum/add_enum_tag_variant/add_enum_payload_variant/add_derived_struct/add_invariant_field_gt_i32`, `SemanticExpr.definition_location_opt`, and `SourceSpan.display_compact`. Supporting semantic pseudo-types include `Type`, `DeclSet`, `SemanticExpr`, `SourceSpan`, `StructInfo`, `FieldInfo`, `EnumInfo`, and `VariantInfo`, with canonical option aliases such as `EnumInfoOpt` and `SourceSpanOpt`.
+- `Meta.expr_opt(x)` remains the one compiler-backed public exception: user code calls it as a namespace helper, but the call boundary is still synthesized internally because the source type system cannot express “accept any expression” directly.
+- User-defined comptime utilities can live either in the current file or in same-directory flat imports, because imports are merged before comptime execution; stdlib comptime helpers are also callable from user `comptime apply` because the evaluator runs after bootstrap resolve over the flat-merged program plus stdlib. After each emitted `DeclSet`, the new declarations are merged back into the AST and bootstrap resolve runs again, so later applies can observe earlier emitted declarations.
 - The split stdlib includes `crates/oac/src/std/std_comptime.oa`, which currently exposes `derive_enum_tags(T: Type) -> DeclSet` to emit a `<TypeName>Tags` tag-only enum from an input enum.
-- These semantic reflection/emission builtins are comptime-only; runtime functions are rejected if they call `declset_*` or any of the struct/enum/type metadata helpers.
+- These semantic reflection/emission APIs remain comptime-only; runtime functions are rejected if they call `Type.*`, `DeclSet.*`, `SemanticExpr.definition_location_opt`, `Meta.expr_opt`, or related struct/enum/type metadata helpers.
+- Comptime still fails closed on runtime-only operations the evaluator cannot model, including extern calls, pointer load/store builtins, `print`, and transitive helper paths that require those operations.
 - Generic specialization enforces trait bounds fail-closed: missing `impl Trait for ConcreteType` required by a bound is a compile error.
 - Generic bodies may declare local specialization aliases (`specialize LocalAlias = Name[TypeArgs...]`), and generic expansion resolves those aliases recursively into concrete type/function/invariant declarations using the parent specialization substitutions.
 - Generic expansion is ahead-of-type-checking and ahead-of-codegen: backend/proving/invariant passes still operate on concrete non-generic IR/function symbols.
@@ -116,6 +120,7 @@ Observed in parser/IR implementation:
 - The split stdlib now also defines generic `Vec[T]` (in `crates/oac/src/std/std_vec.oa`) as a persistent vector-style container with `push`/`pop`/`get`/`set`/`reserve`/`clear` APIs and explicit result payloads (`PopResult`, `Lookup`, `SetResult`).
 - `String` is std-defined (in `crates/oac/src/std/std_string.oa`) as `enum String { Literal: Bytes, Heap: Bytes }` with `Bytes { ptr: PtrInt, len: I32 }`; it is no longer a compiler primitive, and `Bytes` has an invariant requiring `len >= 0`.
 - `String.make_bytes` normalizes `Bytes.len` fail-closed (`len < 0` clamps to `0`) and is used by `String.from_literal_parts` / `String.from_heap_parts`; `String.bytes` performs equivalent inline normalization through `String.normalize_len` before constructing `Bytes` so payload invariants remain provable at call sites.
+- Top-level std string helpers now include `string_len(s) -> I32`, `slice(s, start, len) -> String`, and `print_str(s) -> I32`; `slice` carries explicit preconditions (`start >= 0`, `len >= 0`, `start <= s.len()`, guarded tail-fit check, `len < 2147483647`) and `print_str` writes exactly the string bytes with no implicit newline.
 - `String` namespaced helpers include structural accessors (`bytes`, `ptr`, `len`) and convenience operations (`is_empty`, `equals`, `starts_with`, `ends_with`, `char_at_or`, `slice_clamped`).
 - Stdlib now includes a small set of global model invariants (2+ args) chosen for solver stability:
   - `Char.from_code_roundtrip`: `Char.code(Char.from_code(x)) == x` for multiple inputs
@@ -157,7 +162,7 @@ Observed in parser/IR implementation:
 - `prove(...)` checker synthesis instruments QBE marker assignments (`.oac_prove_site_*`), prunes the cloned caller CFG to blocks that can still reach the targeted site before checker-module closure, and rewrites checker return to `1` when the proved condition is false at the targeted site.
 - Integer-safety checker synthesis instruments QBE marker assignments emitted by codegen (`.oac_integer_site_<type>__<op>__<id>__{lhs,rhs,out}`), clones the marker’s caller as checker `main`, prunes CFG branches that cannot reach the marker, and rewrites checker return to `1` when the operator’s safety predicate is false at that site.
 - Model-invariant checker synthesis rewrites invariant returns to checker `bad` (`ret == 0`) and queries reachability of `exit == 1`.
-- Model invariants are resolve-validated as a strict pure subset over transitive user calls: reject `prove(...)`, `assert(...)`, extern calls, pointer load/store builtins, and side-effect builtins (`print`, `print_str`).
+- Model invariants are resolve-validated as a strict pure subset over transitive user calls: reject `prove(...)`, `assert(...)`, extern calls, pointer load/store builtins, and side-effect builtins (`print`). Std `print_str` is rejected transitively because it calls extern `Clib.write`.
 - Checker construction is interprocedural: the checker artifact includes entry + reachable user callees, and CHC encoding models user calls through function summary relations (`*_ret` / `*_abort`) instead of checker-time inlining.
 - Checker reachable-callee discovery now traverses only entry-reachable CFG blocks per QBE function (and stops scanning a block after terminators), so dead instrumentation blocks do not contribute spurious call targets/argument-invariant assumptions.
 - Struct-invariant checker synthesis also prunes the cloned caller CFG to blocks that can still reach the targeted call site before checker-module closure, so post-site branches do not contribute extra callees to the obligation.
@@ -169,12 +174,13 @@ Observed in parser/IR implementation:
 - Shared recursion-cycle analysis lives in `verification_cycles.rs` and uses SCCs over the combined verification graph with deterministic cycle witness reconstruction for fail-closed diagnostics.
 - Runtime `assert(cond)` lowers to a branch that exits the process with code `242` and halts on failure.
 - Comptime `I32` arithmetic is checked instead of panicking-through-Rust: `+/-/*` overflow and `/` divide-by-zero or `MIN / -1` produce deterministic comptime diagnostics.
-- String literals lower to std `String.Literal` values by allocating `Bytes` + tagged union wrapper in codegen; runtime string helpers (`char_at`, `string_len`, `slice`, `print_str`) read `Bytes.ptr`/`Bytes.len` from that layout.
+- String literals lower to std `String.Literal` values by allocating `Bytes` + tagged union wrapper in codegen; builtin `char_at` and std string helpers (`string_len`, `slice`, `print_str`) operate over that `Bytes.ptr`/`Bytes.len` layout.
 - Runtime `i32_to_i64` helper lowering uses signed extension (`extsw`) so values above `255` are not truncated in pointer/length conversion paths.
 - Solver assumptions include `argc >= 0` when `main` uses the `(argc: I32, argv: I64)` or `(argc: I32, argv: PtrInt)` form.
 - `oac test <file.oa>` is fail-fast: each `test` block is lowered to a generated zero-arg `I32` function, and a generated `main` executes tests in declaration order. A failing runtime `assert` exits immediately with code `242`.
 - `oac test` requires at least one `test` declaration and rejects source files that already define `main` (because `main` is synthesized by the test runner).
 - `oac build` does not lower or execute `test` declarations; test lowering is isolated to the `oac test` command path.
+- `oac test` runs parse/import/bootstrap-resolve/comptime before lowering tests, so bootstrap comptime does not require a user-defined `main`; generated `main` appears only after test lowering.
 - Call-only recursion cycles are allowed for struct-invariant/prove/model-invariant/function-precondition verification; cycles containing checker entry-assumption edges (argument invariants or function preconditions) are rejected fail-closed on the combined verification graph.
 - Unsupported proving constructs at QBE level fail closed through `qbe-smt` (hard `Unsupported` encoding errors).
 - Struct-invariant proof obligations are encoded by `qbe-smt` as CHC/fixedpoint Horn rules over QBE transitions and queried via reachability of a `bad` relation (`exit == 1` at halt).
@@ -198,7 +204,7 @@ Observed in parser/IR implementation:
 - `qbe-smt` flattens only entry-reachable blocks; unreachable unsupported instructions do not affect encoding.
 - When a struct-invariant obligation is SAT, diagnostics include a control-flow witness summary over the synthesized checker (`cfg_path` and branch decisions).
 - `oac build` does not emit a general-purpose QBE SMT sidecar; SMT artifacts are produced under `target/oac/prove/`, `target/oac/struct_invariants/`, and `target/oac/model_invariants/` when obligations exist.
-- `oac build` runs a conservative non-termination classifier over QBE `main` loops and rejects builds only when non-termination is proven (current proof shape: canonical while-loop with initially true guard and identity body update on guard variable, including simple `sub(x, 0)` forms). Unproven loops are treated as unknown and allowed.
+- `oac build` runs a conservative non-termination classifier over QBE `main` loops and rejects builds only when non-termination is proven (current proof shape: canonical while-loop with initially true guard and identity body update on guard variable, including simple zero-subtraction forms in lowered QBE). Unproven loops are treated as unknown and allowed.
 
 ## Notes on Specs vs Reality
 

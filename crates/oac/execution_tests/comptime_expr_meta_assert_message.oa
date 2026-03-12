@@ -3,11 +3,11 @@ struct Counter {
 }
 
 comptime fun meta_probe(T: Type) -> DeclSet {
-	meta_from_param = expr_meta_opt(T)
-	meta_from_expr = expr_meta_opt(resolve_type("I32"))
-	assert(!is_some(meta_from_param))
-	assert(is_some(meta_from_expr))
-	return declset_new()
+	meta_from_param = Meta.expr_opt(T)
+	meta_from_expr = Meta.expr_opt(Type.resolve("I32"))
+	assert(!meta_from_param.is_some())
+	assert(meta_from_expr.is_some())
+	return DeclSet.new()
 }
 
 comptime apply meta_probe(Counter)

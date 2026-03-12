@@ -1,87 +1,10 @@
+pub(crate) use crate::ast_paths::AstPathStyle;
+use crate::ast_paths::{
+    bin_left_segment, bin_right_segment, expression_statement_segment, if_else_statement_segment,
+    if_then_statement_segment, join_path, match_arm_expression_segment,
+    match_arm_statement_segment, struct_field_segment, unary_segment, while_body_statement_segment,
+};
 use crate::parser::{qualify_namespace_function_name, Expression, Statement};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AstPathStyle {
-    Ir,
-    StructInvariants,
-}
-
-fn separator(style: AstPathStyle) -> &'static str {
-    match style {
-        AstPathStyle::Ir => "/",
-        AstPathStyle::StructInvariants => ".",
-    }
-}
-
-fn join_path(prefix: &str, segment: &str, style: AstPathStyle) -> String {
-    if prefix.is_empty() {
-        segment.to_string()
-    } else {
-        format!("{prefix}{}{segment}", separator(style))
-    }
-}
-
-fn expression_statement_segment(style: AstPathStyle) -> &'static str {
-    match style {
-        AstPathStyle::Ir => "expr",
-        AstPathStyle::StructInvariants => "expr.expr",
-    }
-}
-
-fn if_then_statement_segment(style: AstPathStyle, index: usize) -> String {
-    match style {
-        AstPathStyle::Ir => format!("if.body.{index}"),
-        AstPathStyle::StructInvariants => format!("if.then.{index}"),
-    }
-}
-
-fn if_else_statement_segment(_style: AstPathStyle, index: usize) -> String {
-    format!("if.else.{index}")
-}
-
-fn while_body_statement_segment(_style: AstPathStyle, index: usize) -> String {
-    format!("while.body.{index}")
-}
-
-fn match_arm_statement_segment(
-    _style: AstPathStyle,
-    arm_index: usize,
-    statement_index: usize,
-) -> String {
-    format!("match.arm.{arm_index}.{statement_index}")
-}
-
-fn match_arm_expression_segment(_style: AstPathStyle, arm_index: usize) -> String {
-    format!("match.arm.{arm_index}")
-}
-
-fn bin_left_segment(style: AstPathStyle) -> &'static str {
-    match style {
-        AstPathStyle::Ir => "bin.left",
-        AstPathStyle::StructInvariants => "bin.lhs",
-    }
-}
-
-fn bin_right_segment(style: AstPathStyle) -> &'static str {
-    match style {
-        AstPathStyle::Ir => "bin.right",
-        AstPathStyle::StructInvariants => "bin.rhs",
-    }
-}
-
-fn unary_segment(style: AstPathStyle) -> &'static str {
-    match style {
-        AstPathStyle::Ir => "unary",
-        AstPathStyle::StructInvariants => "unary.expr",
-    }
-}
-
-fn struct_field_segment(style: AstPathStyle, index: usize, field_name: &str) -> String {
-    match style {
-        AstPathStyle::Ir => format!("struct.field.{index}"),
-        AstPathStyle::StructInvariants => format!("struct.field.{field_name}"),
-    }
-}
 
 pub(crate) fn walk_statement_expressions(
     statement: &Statement,
@@ -202,6 +125,15 @@ pub(crate) fn walk_statement_expressions(
             }
         }
     }
+}
+
+pub(crate) fn walk_expression_tree(
+    expression: &Expression,
+    expression_path: &str,
+    style: AstPathStyle,
+    on_expression: &mut impl FnMut(&str, &Expression),
+) {
+    walk_expression(expression, expression_path, style, on_expression);
 }
 
 fn walk_expression(

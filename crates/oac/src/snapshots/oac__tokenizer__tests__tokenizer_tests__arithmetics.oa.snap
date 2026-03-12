@@ -1,6 +1,7 @@
 ---
 source: crates/oac/src/tokenizer.rs
 expression: result
+snapshot_kind: text
 ---
 {
   "Ok": {
@@ -27,6 +28,104 @@ expression: result
         "Number": 0
       },
       "Newline"
+    ],
+    "spans": [
+      {
+        "start": {
+          "absolute_i": 1,
+          "line": 1,
+          "column": 1
+        },
+        "end": {
+          "absolute_i": 1,
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 3,
+          "line": 1,
+          "column": 3
+        },
+        "end": {
+          "absolute_i": 3,
+          "line": 1,
+          "column": 3
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 5,
+          "line": 1,
+          "column": 5
+        },
+        "end": {
+          "absolute_i": 5,
+          "line": 1,
+          "column": 5
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 7,
+          "line": 1,
+          "column": 7
+        },
+        "end": {
+          "absolute_i": 7,
+          "line": 1,
+          "column": 7
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 9,
+          "line": 1,
+          "column": 9
+        },
+        "end": {
+          "absolute_i": 10,
+          "line": 1,
+          "column": 10
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 12,
+          "line": 1,
+          "column": 12
+        },
+        "end": {
+          "absolute_i": 13,
+          "line": 1,
+          "column": 13
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 15,
+          "line": 1,
+          "column": 15
+        },
+        "end": {
+          "absolute_i": 15,
+          "line": 1,
+          "column": 15
+        }
+      },
+      {
+        "start": {
+          "absolute_i": 16,
+          "line": 1,
+          "column": 16
+        },
+        "end": {
+          "absolute_i": 16,
+          "line": 1,
+          "column": 16
+        }
+      }
     ]
   }
 }

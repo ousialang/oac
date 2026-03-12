@@ -5,10 +5,12 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use tracing::trace;
 
+use crate::ast_paths::{local_precondition_key, local_statement_key};
 use crate::ast_walk::{self, AstPathStyle};
 use crate::builtins::BuiltInType;
 use crate::flat_imports;
 use crate::parser::{self, Ast, Expression, Literal, StructDef, UnaryOp};
+pub use crate::source_span::SourceSpan;
 use crate::symbol_keys::{
     trait_impl_function_name, trait_impl_method_key, trait_impl_target_key, trait_method_key,
 };
@@ -17,7 +19,7 @@ const LEGACY_INVARIANT_PREFIX: &str = "__struct__";
 const LEGACY_INVARIANT_SUFFIX: &str = "__invariant";
 const LEGACY_INVARIANT_KEY: &str = "legacy";
 const MODEL_INVARIANT_PREFIX: &str = "__model__invariant__";
-const MODEL_INVARIANT_SIDE_EFFECT_BUILTINS: [&str; 10] = [
+const MODEL_INVARIANT_SIDE_EFFECT_BUILTINS: [&str; 9] = [
     "load_u8",
     "load_i32",
     "load_i64",
@@ -27,7 +29,6 @@ const MODEL_INVARIANT_SIDE_EFFECT_BUILTINS: [&str; 10] = [
     "store_i64",
     "store_bool",
     "print",
-    "print_str",
 ];
 const RESERVED_BUILTIN_FUNCTION_NAMES: [&str; 2] = ["prove", "assert"];
 const SEMANTIC_BUILTIN_TYPES: [&str; 8] = [
@@ -40,34 +41,59 @@ const SEMANTIC_BUILTIN_TYPES: [&str; 8] = [
     "EnumInfo",
     "VariantInfo",
 ];
+const META_EXPR_OPT_FUNCTION: &str = "Meta__expr_opt";
+const META_TYPE_NAME_INTRINSIC: &str = "__intrinsic__meta__type_name";
+const META_RESOLVE_TYPE_INTRINSIC: &str = "__intrinsic__meta__resolve_type";
+const META_EXPR_METADATA_INTRINSIC: &str = "__intrinsic__meta__expr_opt";
+const META_DEFINITION_LOCATION_INTRINSIC: &str = "__intrinsic__meta__definition_location_opt";
+const META_IS_STRUCT_INTRINSIC: &str = "__intrinsic__meta__is_struct";
+const META_IS_ENUM_INTRINSIC: &str = "__intrinsic__meta__is_enum";
+const META_AS_STRUCT_OPT_INTRINSIC: &str = "__intrinsic__meta__as_struct_opt";
+const META_AS_ENUM_OPT_INTRINSIC: &str = "__intrinsic__meta__as_enum_opt";
+const META_STRUCT_FIELD_COUNT_INTRINSIC: &str = "__intrinsic__meta__struct_field_count";
+const META_STRUCT_FIELD_AT_INTRINSIC: &str = "__intrinsic__meta__struct_field_at";
+const META_ENUM_VARIANT_COUNT_INTRINSIC: &str = "__intrinsic__meta__enum_variant_count";
+const META_ENUM_VARIANT_AT_INTRINSIC: &str = "__intrinsic__meta__enum_variant_at";
+const META_FIELD_NAME_INTRINSIC: &str = "__intrinsic__meta__field_name";
+const META_FIELD_TYPE_INTRINSIC: &str = "__intrinsic__meta__field_type";
+const META_VARIANT_NAME_INTRINSIC: &str = "__intrinsic__meta__variant_name";
+const META_VARIANT_PAYLOAD_TYPE_OPT_INTRINSIC: &str = "__intrinsic__meta__variant_payload_type_opt";
+const META_SOURCE_SPAN_DISPLAY_INTRINSIC: &str = "__intrinsic__meta__source_span_display_compact";
+const EMIT_DECLSET_NEW_INTRINSIC: &str = "__intrinsic__emit__declset_new";
+const EMIT_ADD_EMPTY_ENUM_INTRINSIC: &str = "__intrinsic__emit__declset_add_empty_enum";
+const EMIT_ADD_ENUM_TAG_VARIANT_INTRINSIC: &str = "__intrinsic__emit__declset_add_enum_tag_variant";
+const EMIT_ADD_ENUM_PAYLOAD_VARIANT_INTRINSIC: &str =
+    "__intrinsic__emit__declset_add_enum_payload_variant";
+const EMIT_ADD_DERIVED_STRUCT_INTRINSIC: &str = "__intrinsic__emit__declset_add_derived_struct";
+const EMIT_ADD_INVARIANT_FIELD_GT_I32_INTRINSIC: &str =
+    "__intrinsic__emit__declset_add_invariant_field_gt_i32";
 const SEMANTIC_EMISSION_BUILTINS: [&str; 6] = [
-    "declset_new",
-    "declset_add_empty_enum",
-    "declset_add_enum_tag_variant",
-    "declset_add_enum_payload_variant",
-    "declset_add_derived_struct",
-    "declset_add_invariant_field_gt_i32",
+    EMIT_DECLSET_NEW_INTRINSIC,
+    EMIT_ADD_EMPTY_ENUM_INTRINSIC,
+    EMIT_ADD_ENUM_TAG_VARIANT_INTRINSIC,
+    EMIT_ADD_ENUM_PAYLOAD_VARIANT_INTRINSIC,
+    EMIT_ADD_DERIVED_STRUCT_INTRINSIC,
+    EMIT_ADD_INVARIANT_FIELD_GT_I32_INTRINSIC,
 ];
-const SEMANTIC_INTROSPECTION_BUILTINS: [&str; 19] = [
-    "expr_meta_opt",
-    "definition_location_opt",
-    "is_struct",
-    "is_enum",
-    "as_struct_opt",
-    "as_enum_opt",
-    "struct_field_count",
-    "struct_field_at",
-    "enum_variant_count",
-    "enum_variant_at",
-    "field_name",
-    "field_type",
-    "variant_name",
-    "variant_payload_type_opt",
-    "type_name",
-    "resolve_type",
-    "is_some",
-    "unwrap",
-    "concat",
+const SEMANTIC_INTROSPECTION_BUILTINS: [&str; 18] = [
+    META_EXPR_OPT_FUNCTION,
+    META_TYPE_NAME_INTRINSIC,
+    META_RESOLVE_TYPE_INTRINSIC,
+    META_EXPR_METADATA_INTRINSIC,
+    META_DEFINITION_LOCATION_INTRINSIC,
+    META_IS_STRUCT_INTRINSIC,
+    META_IS_ENUM_INTRINSIC,
+    META_AS_STRUCT_OPT_INTRINSIC,
+    META_AS_ENUM_OPT_INTRINSIC,
+    META_STRUCT_FIELD_COUNT_INTRINSIC,
+    META_STRUCT_FIELD_AT_INTRINSIC,
+    META_ENUM_VARIANT_COUNT_INTRINSIC,
+    META_ENUM_VARIANT_AT_INTRINSIC,
+    META_FIELD_NAME_INTRINSIC,
+    META_FIELD_TYPE_INTRINSIC,
+    META_VARIANT_NAME_INTRINSIC,
+    META_VARIANT_PAYLOAD_TYPE_OPT_INTRINSIC,
+    META_SOURCE_SPAN_DISPLAY_INTRINSIC,
 ];
 
 fn normalize_numeric_alias(ty: &str) -> &str {
@@ -500,13 +526,10 @@ pub struct ResolvedProgram {
     pub semantic_expr_metadata: HashMap<String, SemanticExprMetadata>,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub struct SourceSpan {
-    pub file: Option<String>,
-    pub start_line: Option<u32>,
-    pub start_column: Option<u32>,
-    pub end_line: Option<u32>,
-    pub end_column: Option<u32>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResolveMode {
+    BootstrapComptime,
+    FinalRuntime,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -523,6 +546,7 @@ pub struct StructInvariantDefinition {
     pub key: String,
     pub identifier: Option<String>,
     pub display_name: String,
+    pub source_span: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -531,6 +555,7 @@ pub struct ModelInvariantDefinition {
     pub key: String,
     pub identifier: Option<String>,
     pub display_name: String,
+    pub source_span: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -538,6 +563,7 @@ pub struct FunctionPreconditionDefinition {
     pub owner_function_name: String,
     pub helper_function_name: String,
     pub clause_ordinal: usize,
+    pub source_span: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -575,6 +601,18 @@ impl ResolvedProgram {
         {
             for type_name in self.type_definitions.keys() {
                 var_types.insert(type_name.clone(), "Type".to_string());
+            }
+        }
+
+        for (clause_ordinal, clause) in func_def.preconditions.iter().enumerate() {
+            let clause_type = self.expression_type(clause, &var_types)?;
+            if clause_type != "Bool" {
+                return Err(anyhow::anyhow!(
+                    "function {} precondition {} must be Bool, got {}",
+                    func_def.name,
+                    clause_ordinal,
+                    clause_type
+                ));
             }
         }
 
@@ -810,8 +848,18 @@ pub type TypeRef = String;
 #[derive(Clone, Debug, Serialize)]
 pub struct FunctionDefinition {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<parser::Expression>,
     pub body: Vec<parser::Statement>,
     pub sig: FunctionSignature,
+    #[serde(skip)]
+    #[allow(dead_code)]
+    pub source_span: Option<SourceSpan>,
+    #[serde(skip)]
+    pub local_source_spans: HashMap<String, SourceSpan>,
+    #[serde(skip)]
+    #[allow(dead_code)]
+    pub precondition_source_spans: Vec<SourceSpan>,
 }
 
 #[derive(Clone, Debug)]
@@ -867,21 +915,31 @@ impl ResolvedProgram {
             .cloned()
             .collect::<Vec<_>>();
         for function_name in function_names {
-            let (sig, body) = {
+            let (sig, preconditions, body) = {
                 let definition =
                     self.function_definitions
                         .get(&function_name)
                         .ok_or_else(|| {
                             anyhow::anyhow!("missing function definition {}", function_name)
                         })?;
-                (definition.sig.clone(), definition.body.clone())
+                (
+                    definition.sig.clone(),
+                    definition.preconditions.clone(),
+                    definition.body.clone(),
+                )
             };
+            let normalized_preconditions = self.normalize_method_calls_in_preconditions(
+                &preconditions,
+                &sig.parameters,
+                false,
+            )?;
             let normalized_body =
                 self.normalize_method_calls_in_body(&body, &sig.parameters, false)?;
             let definition = self
                 .function_definitions
                 .get_mut(&function_name)
                 .ok_or_else(|| anyhow::anyhow!("missing function definition {}", function_name))?;
+            definition.preconditions = normalized_preconditions;
             definition.body = normalized_body;
         }
 
@@ -891,15 +949,24 @@ impl ResolvedProgram {
             .cloned()
             .collect::<Vec<_>>();
         for function_name in comptime_function_names {
-            let (sig, body) = {
+            let (sig, preconditions, body) = {
                 let definition = self
                     .comptime_function_definitions
                     .get(&function_name)
                     .ok_or_else(|| {
                         anyhow::anyhow!("missing comptime function definition {}", function_name)
                     })?;
-                (definition.sig.clone(), definition.body.clone())
+                (
+                    definition.sig.clone(),
+                    definition.preconditions.clone(),
+                    definition.body.clone(),
+                )
             };
+            let normalized_preconditions = self.normalize_method_calls_in_preconditions(
+                &preconditions,
+                &sig.parameters,
+                true,
+            )?;
             let normalized_body =
                 self.normalize_method_calls_in_body(&body, &sig.parameters, true)?;
             let definition = self
@@ -908,18 +975,18 @@ impl ResolvedProgram {
                 .ok_or_else(|| {
                     anyhow::anyhow!("missing comptime function definition {}", function_name)
                 })?;
+            definition.preconditions = normalized_preconditions;
             definition.body = normalized_body;
         }
 
         Ok(())
     }
 
-    fn normalize_method_calls_in_body(
+    fn build_method_normalization_var_types(
         &self,
-        body: &[parser::Statement],
         parameters: &[FunctionParameter],
         include_type_names: bool,
-    ) -> anyhow::Result<Vec<parser::Statement>> {
+    ) -> HashMap<String, TypeRef> {
         let mut var_types = HashMap::new();
         for parameter in parameters {
             var_types.insert(parameter.name.clone(), parameter.ty.clone());
@@ -929,6 +996,30 @@ impl ResolvedProgram {
                 var_types.insert(type_name.clone(), "Type".to_string());
             }
         }
+        var_types
+    }
+
+    fn normalize_method_calls_in_preconditions(
+        &self,
+        preconditions: &[parser::Expression],
+        parameters: &[FunctionParameter],
+        include_type_names: bool,
+    ) -> anyhow::Result<Vec<parser::Expression>> {
+        let var_types = self.build_method_normalization_var_types(parameters, include_type_names);
+        preconditions
+            .iter()
+            .map(|expr| self.normalize_method_calls_in_expression(expr, &var_types))
+            .collect()
+    }
+
+    fn normalize_method_calls_in_body(
+        &self,
+        body: &[parser::Statement],
+        parameters: &[FunctionParameter],
+        include_type_names: bool,
+    ) -> anyhow::Result<Vec<parser::Statement>> {
+        let mut var_types =
+            self.build_method_normalization_var_types(parameters, include_type_names);
 
         body.iter()
             .map(|statement| self.normalize_method_calls_in_statement(statement, &mut var_types))
@@ -1862,7 +1953,10 @@ impl ResolvedProgram {
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
+pub(crate) fn resolve_with_mode(
+    mut ast: Ast,
+    mode: ResolveMode,
+) -> anyhow::Result<ResolvedProgram> {
     let mut ownership_target_functions = ast
         .top_level_functions
         .iter()
@@ -1986,98 +2080,6 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     }
 
     // Built-in functions
-
-    program
-        .function_sigs
-        .insert(
-            "sub".to_string(),
-            FunctionSignature {
-                parameters: vec![
-                    FunctionParameter {
-                        name: "a".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                    FunctionParameter {
-                        name: "b".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                ],
-                return_type: "I32".to_string(),
-                extern_symbol_name: None,
-            },
-        )
-        .map_or(Ok(()), |_| {
-            Err(anyhow::anyhow!("failed to insert sub function signature"))
-        })?;
-
-    program
-        .function_sigs
-        .insert(
-            "eq".to_string(),
-            FunctionSignature {
-                parameters: vec![
-                    FunctionParameter {
-                        name: "a".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                    FunctionParameter {
-                        name: "b".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                ],
-                return_type: "Bool".to_string(),
-                extern_symbol_name: None,
-            },
-        )
-        .map_or(Ok(()), |_| {
-            Err(anyhow::anyhow!("failed to insert eq function signature"))
-        })?;
-
-    program
-        .function_sigs
-        .insert(
-            "sum".to_string(),
-            FunctionSignature {
-                parameters: vec![
-                    FunctionParameter {
-                        name: "a".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                    FunctionParameter {
-                        name: "b".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                ],
-                return_type: "I32".to_string(),
-                extern_symbol_name: None,
-            },
-        )
-        .map_or(Ok(()), |_| {
-            Err(anyhow::anyhow!("failed to insert sum function signature"))
-        })?;
-
-    program
-        .function_sigs
-        .insert(
-            "lt".to_string(),
-            FunctionSignature {
-                parameters: vec![
-                    FunctionParameter {
-                        name: "a".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                    FunctionParameter {
-                        name: "b".to_string(),
-                        ty: "I32".to_string(),
-                    },
-                ],
-                return_type: "Bool".to_string(),
-                extern_symbol_name: None,
-            },
-        )
-        .map_or(Ok(()), |_| {
-            Err(anyhow::anyhow!("failed to insert lt function signature"))
-        })?;
 
     program.function_sigs.insert(
         "print".to_string(),
@@ -2220,39 +2222,6 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         },
     );
     program.function_sigs.insert(
-        "string_len".to_string(),
-        FunctionSignature {
-            parameters: vec![FunctionParameter {
-                name: "s".to_string(),
-                ty: "String".to_string(),
-            }],
-            return_type: "I32".to_string(),
-            extern_symbol_name: None,
-        },
-    );
-    program.function_sigs.insert(
-        "slice".to_string(),
-        FunctionSignature {
-            parameters: vec![
-                FunctionParameter {
-                    name: "s".to_string(),
-                    ty: "String".to_string(),
-                },
-                FunctionParameter {
-                    name: "start".to_string(),
-                    ty: "I32".to_string(),
-                },
-                FunctionParameter {
-                    name: "len".to_string(),
-                    ty: "I32".to_string(),
-                },
-            ],
-            return_type: "String".to_string(),
-            extern_symbol_name: None,
-        },
-    );
-
-    program.function_sigs.insert(
         "i32_to_i64".to_string(),
         FunctionSignature {
             parameters: vec![FunctionParameter {
@@ -2263,25 +2232,6 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
             extern_symbol_name: None,
         },
     );
-
-    program
-        .function_sigs
-        .insert(
-            "print_str".to_string(),
-            FunctionSignature {
-                parameters: vec![FunctionParameter {
-                    name: "a".to_string(),
-                    ty: "String".to_string(),
-                }],
-                return_type: "I32".to_string(),
-                extern_symbol_name: None,
-            },
-        )
-        .map_or(Ok(()), |_| {
-            Err(anyhow::anyhow!(
-                "failed to insert print_str function signature"
-            ))
-        })?;
 
     for type_def in ast.type_definitions.iter() {
         match type_def {
@@ -2367,6 +2317,24 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         .filter(|f| f.is_comptime && !f.is_extern)
         .cloned()
         .collect::<Vec<_>>();
+
+    if program.function_sigs.contains_key(META_EXPR_OPT_FUNCTION) {
+        return Err(anyhow::anyhow!(
+            "function name {} is reserved for compiler metadata introspection",
+            META_EXPR_OPT_FUNCTION
+        ));
+    }
+    program.function_sigs.insert(
+        META_EXPR_OPT_FUNCTION.to_string(),
+        FunctionSignature {
+            parameters: vec![FunctionParameter {
+                name: "expr".to_string(),
+                ty: "Type".to_string(),
+            }],
+            return_type: "SemanticExprOpt".to_string(),
+            extern_symbol_name: None,
+        },
+    );
 
     for function in &user_extern_functions {
         if function.is_comptime {
@@ -2496,8 +2464,12 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
             .clone();
         let func_def = FunctionDefinition {
             name: function.name.clone(),
+            preconditions: function.preconditions.clone(),
             sig,
             body: function.body.clone(),
+            source_span: function.source_span.clone(),
+            local_source_spans: function.local_source_spans.clone(),
+            precondition_source_spans: function.precondition_source_spans.clone(),
         };
 
         program
@@ -2526,8 +2498,12 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
         };
         let definition = FunctionDefinition {
             name: function.name.clone(),
+            preconditions: function.preconditions.clone(),
             body: function.body.clone(),
             sig,
+            source_span: function.source_span.clone(),
+            local_source_spans: function.local_source_spans.clone(),
+            precondition_source_spans: function.precondition_source_spans.clone(),
         };
         program
             .comptime_function_definitions
@@ -2548,28 +2524,134 @@ pub fn resolve(mut ast: Ast) -> anyhow::Result<ResolvedProgram> {
     )?;
 
     // Pass 3: type-check with all signatures available.
-    for func_def in program.function_definitions.values() {
-        program.type_check(func_def)?;
-    }
+    type_check_program_functions(&program, true)?;
     program.normalize_method_calls()?;
-    for func_def in program.function_definitions.values() {
-        program.type_check(func_def)?;
-    }
-    program.apply_ownership_model(&ownership_target_functions)?;
-    for func_def in program.function_definitions.values() {
-        program.type_check(func_def)?;
-    }
+    type_check_program_functions(&program, true)?;
 
-    reject_runtime_semantic_builtin_usage(&program)?;
-    reject_model_invariant_impurity(&program)?;
+    if mode == ResolveMode::FinalRuntime {
+        program.apply_ownership_model(&ownership_target_functions)?;
+        type_check_program_functions(&program, false)?;
+
+        prune_compile_time_only_runtime_artifacts(&mut program);
+        reject_runtime_semantic_builtin_usage(&program)?;
+        reject_model_invariant_impurity(&program)?;
+
+        if !program.function_definitions.contains_key("main") {
+            return Err(anyhow::anyhow!("main function not defined"));
+        }
+        validate_main_signature(&program)?;
+    }
     program.semantic_expr_metadata = index_semantic_expression_metadata(&program);
 
-    if !program.function_definitions.contains_key("main") {
-        return Err(anyhow::anyhow!("main function not defined"));
-    }
-    validate_main_signature(&program)?;
-
     Ok(program)
+}
+
+#[tracing::instrument(level = "trace", skip_all)]
+pub fn resolve(ast: Ast) -> anyhow::Result<ResolvedProgram> {
+    resolve_with_mode(ast, ResolveMode::FinalRuntime)
+}
+
+fn type_check_program_functions(
+    program: &ResolvedProgram,
+    include_comptime_functions: bool,
+) -> anyhow::Result<()> {
+    for func_def in program.function_definitions.values() {
+        program.type_check(func_def)?;
+    }
+    if include_comptime_functions {
+        for func_def in program.comptime_function_definitions.values() {
+            program.type_check(func_def)?;
+        }
+    }
+    Ok(())
+}
+
+fn type_ref_is_runtime_lowerable(
+    type_ref: &str,
+    program: &ResolvedProgram,
+    memo: &mut HashMap<String, bool>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if let Some(cached) = memo.get(type_ref) {
+        return *cached;
+    }
+    if !visiting.insert(type_ref.to_string()) {
+        return true;
+    }
+
+    let result = match program.type_definitions.get(type_ref) {
+        Some(TypeDef::BuiltIn(BuiltInType::Semantic)) => false,
+        Some(TypeDef::BuiltIn(_)) => true,
+        Some(TypeDef::Struct(struct_def)) => struct_def
+            .struct_fields
+            .iter()
+            .all(|field| type_ref_is_runtime_lowerable(&field.ty, program, memo, visiting)),
+        Some(TypeDef::Enum(enum_def)) => enum_def.variants.iter().all(|variant| {
+            variant
+                .payload_ty
+                .as_ref()
+                .map(|ty| type_ref_is_runtime_lowerable(ty, program, memo, visiting))
+                .unwrap_or(true)
+        }),
+        None => false,
+    };
+
+    visiting.remove(type_ref);
+    memo.insert(type_ref.to_string(), result);
+    result
+}
+
+fn function_signature_is_runtime_lowerable(
+    sig: &FunctionSignature,
+    program: &ResolvedProgram,
+    memo: &mut HashMap<String, bool>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    sig.parameters
+        .iter()
+        .all(|param| type_ref_is_runtime_lowerable(&param.ty, program, memo, visiting))
+        && type_ref_is_runtime_lowerable(&sig.return_type, program, memo, visiting)
+}
+
+fn prune_compile_time_only_runtime_artifacts(program: &mut ResolvedProgram) {
+    let mut memo = HashMap::new();
+    let mut visiting = HashSet::new();
+    let removed_functions = program
+        .function_definitions
+        .iter()
+        .filter_map(|(name, definition)| {
+            if function_signature_is_runtime_lowerable(
+                &definition.sig,
+                program,
+                &mut memo,
+                &mut visiting,
+            ) {
+                None
+            } else {
+                Some(name.clone())
+            }
+        })
+        .collect::<HashSet<_>>();
+
+    if removed_functions.is_empty() {
+        return;
+    }
+
+    for function_name in &removed_functions {
+        program.function_definitions.remove(function_name);
+        program.function_sigs.remove(function_name);
+        program.function_preconditions.remove(function_name);
+    }
+
+    for definitions in program.struct_invariants.values_mut() {
+        definitions.retain(|definition| !removed_functions.contains(&definition.function_name));
+    }
+    program
+        .struct_invariants
+        .retain(|_, definitions| !definitions.is_empty());
+    program
+        .model_invariants
+        .retain(|definition| !removed_functions.contains(&definition.function_name));
 }
 
 fn type_def_name(type_def: &parser::TypeDefDecl) -> &str {
@@ -2878,19 +2960,44 @@ fn index_semantic_expression_metadata(
 ) -> HashMap<String, SemanticExprMetadata> {
     let mut out = HashMap::new();
     for (name, function) in &program.function_definitions {
+        for (precondition_index, expression) in function.preconditions.iter().enumerate() {
+            index_expression_metadata(
+                expression,
+                &format!("fn:{name}/{}", local_precondition_key(precondition_index)),
+                &local_precondition_key(precondition_index),
+                &function.local_source_spans,
+                &mut out,
+            );
+        }
         for (statement_index, statement) in function.body.iter().enumerate() {
             index_statement_expression_metadata(
                 statement,
-                &format!("fn:{name}/stmt:{statement_index}"),
+                &format!("fn:{name}"),
+                &local_statement_key(statement_index),
+                &function.local_source_spans,
                 &mut out,
             );
         }
     }
     for (name, function) in &program.comptime_function_definitions {
+        for (precondition_index, expression) in function.preconditions.iter().enumerate() {
+            index_expression_metadata(
+                expression,
+                &format!(
+                    "comptime_fn:{name}/{}",
+                    local_precondition_key(precondition_index)
+                ),
+                &local_precondition_key(precondition_index),
+                &function.local_source_spans,
+                &mut out,
+            );
+        }
         for (statement_index, statement) in function.body.iter().enumerate() {
             index_statement_expression_metadata(
                 statement,
-                &format!("comptime_fn:{name}/stmt:{statement_index}"),
+                &format!("comptime_fn:{name}"),
+                &local_statement_key(statement_index),
+                &function.local_source_spans,
                 &mut out,
             );
         }
@@ -2898,21 +3005,61 @@ fn index_semantic_expression_metadata(
     out
 }
 
-fn index_statement_expression_metadata(
-    statement: &parser::Statement,
-    path: &str,
+fn index_expression_metadata(
+    expression: &parser::Expression,
+    full_expr_path: &str,
+    local_expr_path: &str,
+    local_source_spans: &HashMap<String, SourceSpan>,
     out: &mut HashMap<String, SemanticExprMetadata>,
 ) {
-    ast_walk::walk_statement_expressions(statement, path, AstPathStyle::Ir, &mut |expr_path, _| {
-        out.insert(
-            expr_path.to_string(),
-            SemanticExprMetadata {
-                id: expr_path.to_string(),
-                ty: None,
-                source_span: None,
-            },
-        );
-    });
+    ast_walk::walk_expression_tree(
+        expression,
+        local_expr_path,
+        AstPathStyle::Ir,
+        &mut |local_expr_path, _| {
+            let expr_path = format!(
+                "{}/{}",
+                full_expr_path
+                    .rsplit_once('/')
+                    .map(|(prefix, _)| prefix)
+                    .unwrap_or_default(),
+                local_expr_path
+            );
+            out.insert(
+                expr_path.clone(),
+                SemanticExprMetadata {
+                    id: expr_path,
+                    ty: None,
+                    source_span: local_source_spans.get(local_expr_path).cloned(),
+                },
+            );
+        },
+    );
+}
+
+fn index_statement_expression_metadata(
+    statement: &parser::Statement,
+    function_prefix: &str,
+    local_statement_path: &str,
+    local_source_spans: &HashMap<String, SourceSpan>,
+    out: &mut HashMap<String, SemanticExprMetadata>,
+) {
+    ast_walk::walk_statement_expressions(
+        statement,
+        local_statement_path,
+        AstPathStyle::Ir,
+        &mut |local_expr_path, _| {
+            let expr_path = format!("{function_prefix}/{local_expr_path}");
+            out.insert(
+                expr_path.clone(),
+                SemanticExprMetadata {
+                    id: expr_path,
+                    ty: None,
+                    source_span: local_source_spans.get(local_expr_path).cloned(),
+                },
+            );
+        },
+    );
 }
 
 fn parse_legacy_invariant_name(name: &str) -> Option<&str> {
@@ -3014,6 +3161,10 @@ fn synthesize_precondition_functions(
                 owner_function_name: function.name.clone(),
                 helper_function_name: helper_function_name.clone(),
                 clause_ordinal,
+                source_span: function
+                    .precondition_source_spans
+                    .get(clause_ordinal)
+                    .cloned(),
             });
             out.push(parser::Function {
                 name: helper_function_name,
@@ -3026,6 +3177,12 @@ fn synthesize_precondition_functions(
                 return_type: "Bool".to_string(),
                 is_comptime: false,
                 is_extern: false,
+                source_span: function
+                    .precondition_source_spans
+                    .get(clause_ordinal)
+                    .cloned(),
+                local_source_spans: HashMap::new(),
+                precondition_source_spans: Vec::new(),
             });
         }
     }
@@ -3126,6 +3283,7 @@ fn synthesize_invariant_functions(
                 key: key.clone(),
                 identifier: invariant.identifier.clone(),
                 display_name: invariant.display_name.clone(),
+                source_span: invariant.source_span.clone(),
             });
         } else {
             key = if let Some(identifier) = &invariant.identifier {
@@ -3164,6 +3322,7 @@ fn synthesize_invariant_functions(
                 key: key.clone(),
                 identifier: invariant.identifier.clone(),
                 display_name: invariant.display_name.clone(),
+                source_span: invariant.source_span.clone(),
             });
         }
 
@@ -3176,6 +3335,9 @@ fn synthesize_invariant_functions(
             return_type: "Bool".to_string(),
             is_comptime: false,
             is_extern: false,
+            source_span: invariant.source_span.clone(),
+            local_source_spans: invariant.local_source_spans.clone(),
+            precondition_source_spans: Vec::new(),
         });
     }
     Ok(out)
@@ -3253,6 +3415,7 @@ fn register_legacy_struct_invariants(
             key: LEGACY_INVARIANT_KEY.to_string(),
             identifier: None,
             display_name: function.name.clone(),
+            source_span: function.source_span.clone(),
         });
     }
     Ok(())
@@ -3634,6 +3797,9 @@ fn collect_trait_metadata(
                 return_type: method.return_type.clone(),
                 is_comptime: false,
                 is_extern: false,
+                source_span: method.source_span.clone(),
+                local_source_spans: method.local_source_spans.clone(),
+                precondition_source_spans: method.precondition_source_spans.clone(),
             });
         }
 
@@ -4326,6 +4492,9 @@ fn expand_one_generic_specialization(
             ),
             is_comptime: function.is_comptime,
             is_extern: function.is_extern,
+            source_span: function.source_span.clone(),
+            local_source_spans: function.local_source_spans.clone(),
+            precondition_source_spans: function.precondition_source_spans.clone(),
         });
     }
 
@@ -4357,6 +4526,8 @@ fn expand_one_generic_specialization(
                     )
                 })
                 .collect(),
+            source_span: invariant.source_span.clone(),
+            local_source_spans: invariant.local_source_spans.clone(),
         });
     }
 
@@ -4764,91 +4935,11 @@ pub(crate) fn get_expression_type(
                     function
                 ));
             }
-            if function == "is_some" {
+            if function == META_TYPE_NAME_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "is_some expects exactly one argument, got {}",
-                        arguments.len()
-                    ));
-                }
-                let arg_type = get_expression_type(
-                    &arguments[0],
-                    var_types,
-                    fns,
-                    type_definitions,
-                    trait_method_signatures,
-                    trait_impl_methods,
-                )?;
-                if !arg_type.starts_with("Option[") || !arg_type.ends_with(']') {
-                    return Err(anyhow::anyhow!(
-                        "is_some expects an Option[T] argument, got {}",
-                        arg_type
-                    ));
-                }
-                return Ok("Bool".to_string());
-            }
-            if function == "unwrap" {
-                if arguments.len() != 1 {
-                    return Err(anyhow::anyhow!(
-                        "unwrap expects exactly one argument, got {}",
-                        arguments.len()
-                    ));
-                }
-                let arg_type = get_expression_type(
-                    &arguments[0],
-                    var_types,
-                    fns,
-                    type_definitions,
-                    trait_method_signatures,
-                    trait_impl_methods,
-                )?;
-                let Some(inner) = arg_type
-                    .strip_prefix("Option[")
-                    .and_then(|s| s.strip_suffix(']'))
-                else {
-                    return Err(anyhow::anyhow!(
-                        "unwrap expects an Option[T] argument, got {}",
-                        arg_type
-                    ));
-                };
-                return Ok(inner.to_string());
-            }
-            if function == "concat" {
-                if arguments.len() != 2 {
-                    return Err(anyhow::anyhow!(
-                        "concat expects exactly two String arguments, got {}",
-                        arguments.len()
-                    ));
-                }
-                let left = get_expression_type(
-                    &arguments[0],
-                    var_types,
-                    fns,
-                    type_definitions,
-                    trait_method_signatures,
-                    trait_impl_methods,
-                )?;
-                let right = get_expression_type(
-                    &arguments[1],
-                    var_types,
-                    fns,
-                    type_definitions,
-                    trait_method_signatures,
-                    trait_impl_methods,
-                )?;
-                if left != "String" || right != "String" {
-                    return Err(anyhow::anyhow!(
-                        "concat expects (String, String), got ({}, {})",
-                        left,
-                        right
-                    ));
-                }
-                return Ok("String".to_string());
-            }
-            if function == "type_name" {
-                if arguments.len() != 1 {
-                    return Err(anyhow::anyhow!(
-                        "type_name expects exactly one Type argument, got {}",
+                        "{} expects exactly one Type argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -4862,16 +4953,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
-                        "type_name expects Type argument, got {}",
+                        "{} expects Type argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("String".to_string());
             }
-            if function == "resolve_type" {
+            if function == META_RESOLVE_TYPE_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "resolve_type expects exactly one String argument, got {}",
+                        "{} expects exactly one String argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -4885,34 +4978,38 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "String" {
                     return Err(anyhow::anyhow!(
-                        "resolve_type expects String argument, got {}",
+                        "{} expects String argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("Type".to_string());
             }
-            if function == "expr_meta_opt" {
+            if function == META_EXPR_OPT_FUNCTION || function == META_EXPR_METADATA_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "expr_meta_opt expects exactly one argument, got {}",
+                        "{} expects exactly one argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
-                return Ok("Option[SemanticExpr]".to_string());
+                return Ok("SemanticExprOpt".to_string());
             }
-            if function == "definition_location_opt" {
+            if function == META_DEFINITION_LOCATION_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "definition_location_opt expects exactly one argument, got {}",
+                        "{} expects exactly one argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
-                return Ok("Option[SourceSpan]".to_string());
+                return Ok("SourceSpanOpt".to_string());
             }
-            if function == "is_struct" {
+            if function == META_IS_STRUCT_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "is_struct expects exactly one Type argument, got {}",
+                        "{} expects exactly one Type argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -4926,16 +5023,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
-                        "is_struct expects Type argument, got {}",
+                        "{} expects Type argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("Bool".to_string());
             }
-            if function == "is_enum" {
+            if function == META_IS_ENUM_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "is_enum expects exactly one Type argument, got {}",
+                        "{} expects exactly one Type argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -4949,16 +5048,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
-                        "is_enum expects Type argument, got {}",
+                        "{} expects Type argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("Bool".to_string());
             }
-            if function == "as_struct_opt" {
+            if function == META_AS_STRUCT_OPT_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "as_struct_opt expects exactly one Type argument, got {}",
+                        "{} expects exactly one Type argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -4972,16 +5073,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
-                        "as_struct_opt expects Type argument, got {}",
+                        "{} expects Type argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
-                return Ok("Option[StructInfo]".to_string());
+                return Ok("StructInfoOpt".to_string());
             }
-            if function == "as_enum_opt" {
+            if function == META_AS_ENUM_OPT_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "as_enum_opt expects exactly one Type argument, got {}",
+                        "{} expects exactly one Type argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -4995,16 +5098,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "Type" {
                     return Err(anyhow::anyhow!(
-                        "as_enum_opt expects Type argument, got {}",
+                        "{} expects Type argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
-                return Ok("Option[EnumInfo]".to_string());
+                return Ok("EnumInfoOpt".to_string());
             }
-            if function == "struct_field_count" {
+            if function == META_STRUCT_FIELD_COUNT_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "struct_field_count expects exactly one StructInfo argument, got {}",
+                        "{} expects exactly one StructInfo argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5018,16 +5123,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "StructInfo" {
                     return Err(anyhow::anyhow!(
-                        "struct_field_count expects StructInfo argument, got {}",
+                        "{} expects StructInfo argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("I32".to_string());
             }
-            if function == "enum_variant_count" {
+            if function == META_ENUM_VARIANT_COUNT_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "enum_variant_count expects exactly one EnumInfo argument, got {}",
+                        "{} expects exactly one EnumInfo argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5041,16 +5148,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "EnumInfo" {
                     return Err(anyhow::anyhow!(
-                        "enum_variant_count expects EnumInfo argument, got {}",
+                        "{} expects EnumInfo argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("I32".to_string());
             }
-            if function == "struct_field_at" {
+            if function == META_STRUCT_FIELD_AT_INTRINSIC {
                 if arguments.len() != 2 {
                     return Err(anyhow::anyhow!(
-                        "struct_field_at expects (StructInfo, I32), got {} arguments",
+                        "{} expects (StructInfo, I32), got {} arguments",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5072,17 +5181,19 @@ pub(crate) fn get_expression_type(
                 )?;
                 if a != "StructInfo" || b != "I32" {
                     return Err(anyhow::anyhow!(
-                        "struct_field_at expects (StructInfo, I32), got ({}, {})",
+                        "{} expects (StructInfo, I32), got ({}, {})",
+                        function,
                         a,
                         b
                     ));
                 }
-                return Ok("Option[FieldInfo]".to_string());
+                return Ok("FieldInfoOpt".to_string());
             }
-            if function == "enum_variant_at" {
+            if function == META_ENUM_VARIANT_AT_INTRINSIC {
                 if arguments.len() != 2 {
                     return Err(anyhow::anyhow!(
-                        "enum_variant_at expects (EnumInfo, I32), got {} arguments",
+                        "{} expects (EnumInfo, I32), got {} arguments",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5104,17 +5215,19 @@ pub(crate) fn get_expression_type(
                 )?;
                 if a != "EnumInfo" || b != "I32" {
                     return Err(anyhow::anyhow!(
-                        "enum_variant_at expects (EnumInfo, I32), got ({}, {})",
+                        "{} expects (EnumInfo, I32), got ({}, {})",
+                        function,
                         a,
                         b
                     ));
                 }
-                return Ok("Option[VariantInfo]".to_string());
+                return Ok("VariantInfoOpt".to_string());
             }
-            if function == "field_name" {
+            if function == META_FIELD_NAME_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "field_name expects exactly one FieldInfo argument, got {}",
+                        "{} expects exactly one FieldInfo argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5128,16 +5241,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "FieldInfo" {
                     return Err(anyhow::anyhow!(
-                        "field_name expects FieldInfo argument, got {}",
+                        "{} expects FieldInfo argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("String".to_string());
             }
-            if function == "variant_name" {
+            if function == META_VARIANT_NAME_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "variant_name expects exactly one VariantInfo argument, got {}",
+                        "{} expects exactly one VariantInfo argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5151,16 +5266,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "VariantInfo" {
                     return Err(anyhow::anyhow!(
-                        "variant_name expects VariantInfo argument, got {}",
+                        "{} expects VariantInfo argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("String".to_string());
             }
-            if function == "field_type" {
+            if function == META_FIELD_TYPE_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "field_type expects exactly one FieldInfo argument, got {}",
+                        "{} expects exactly one FieldInfo argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5174,16 +5291,18 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "FieldInfo" {
                     return Err(anyhow::anyhow!(
-                        "field_type expects FieldInfo argument, got {}",
+                        "{} expects FieldInfo argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
                 return Ok("Type".to_string());
             }
-            if function == "variant_payload_type_opt" {
+            if function == META_VARIANT_PAYLOAD_TYPE_OPT_INTRINSIC {
                 if arguments.len() != 1 {
                     return Err(anyhow::anyhow!(
-                        "variant_payload_type_opt expects exactly one VariantInfo argument, got {}",
+                        "{} expects exactly one VariantInfo argument, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5197,25 +5316,53 @@ pub(crate) fn get_expression_type(
                 )?;
                 if arg_ty != "VariantInfo" {
                     return Err(anyhow::anyhow!(
-                        "variant_payload_type_opt expects VariantInfo argument, got {}",
+                        "{} expects VariantInfo argument, got {}",
+                        function,
                         arg_ty
                     ));
                 }
-                return Ok("Option[Type]".to_string());
+                return Ok("TypeOpt".to_string());
             }
-            if function == "declset_new" {
+            if function == META_SOURCE_SPAN_DISPLAY_INTRINSIC {
+                if arguments.len() != 1 {
+                    return Err(anyhow::anyhow!(
+                        "{} expects exactly one SourceSpan argument, got {}",
+                        function,
+                        arguments.len()
+                    ));
+                }
+                let arg_ty = get_expression_type(
+                    &arguments[0],
+                    var_types,
+                    fns,
+                    type_definitions,
+                    trait_method_signatures,
+                    trait_impl_methods,
+                )?;
+                if arg_ty != "SourceSpan" {
+                    return Err(anyhow::anyhow!(
+                        "{} expects SourceSpan argument, got {}",
+                        function,
+                        arg_ty
+                    ));
+                }
+                return Ok("String".to_string());
+            }
+            if function == EMIT_DECLSET_NEW_INTRINSIC {
                 if !arguments.is_empty() {
                     return Err(anyhow::anyhow!(
-                        "declset_new expects zero arguments, got {}",
+                        "{} expects zero arguments, got {}",
+                        function,
                         arguments.len()
                     ));
                 }
                 return Ok("DeclSet".to_string());
             }
-            if function == "declset_add_empty_enum" {
+            if function == EMIT_ADD_EMPTY_ENUM_INTRINSIC {
                 if arguments.len() != 2 {
                     return Err(anyhow::anyhow!(
-                        "declset_add_empty_enum expects (DeclSet, String), got {} arguments",
+                        "{} expects (DeclSet, String), got {} arguments",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5237,17 +5384,19 @@ pub(crate) fn get_expression_type(
                 )?;
                 if a != "DeclSet" || b != "String" {
                     return Err(anyhow::anyhow!(
-                        "declset_add_empty_enum expects (DeclSet, String), got ({}, {})",
+                        "{} expects (DeclSet, String), got ({}, {})",
+                        function,
                         a,
                         b
                     ));
                 }
                 return Ok("DeclSet".to_string());
             }
-            if function == "declset_add_enum_tag_variant" {
+            if function == EMIT_ADD_ENUM_TAG_VARIANT_INTRINSIC {
                 if arguments.len() != 3 {
                     return Err(anyhow::anyhow!(
-                        "declset_add_enum_tag_variant expects (DeclSet, String, String), got {} arguments",
+                        "{} expects (DeclSet, String, String), got {} arguments",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5277,7 +5426,8 @@ pub(crate) fn get_expression_type(
                 )?;
                 if a != "DeclSet" || b != "String" || c != "String" {
                     return Err(anyhow::anyhow!(
-                        "declset_add_enum_tag_variant expects (DeclSet, String, String), got ({}, {}, {})",
+                        "{} expects (DeclSet, String, String), got ({}, {}, {})",
+                        function,
                         a,
                         b,
                         c
@@ -5285,10 +5435,11 @@ pub(crate) fn get_expression_type(
                 }
                 return Ok("DeclSet".to_string());
             }
-            if function == "declset_add_enum_payload_variant" {
+            if function == EMIT_ADD_ENUM_PAYLOAD_VARIANT_INTRINSIC {
                 if arguments.len() != 4 {
                     return Err(anyhow::anyhow!(
-                        "declset_add_enum_payload_variant expects (DeclSet, String, String, Type), got {} arguments",
+                        "{} expects (DeclSet, String, String, Type), got {} arguments",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5326,7 +5477,8 @@ pub(crate) fn get_expression_type(
                 )?;
                 if a != "DeclSet" || b != "String" || c != "String" || d != "Type" {
                     return Err(anyhow::anyhow!(
-                        "declset_add_enum_payload_variant expects (DeclSet, String, String, Type), got ({}, {}, {}, {})",
+                        "{} expects (DeclSet, String, String, Type), got ({}, {}, {}, {})",
+                        function,
                         a,
                         b,
                         c,
@@ -5335,10 +5487,11 @@ pub(crate) fn get_expression_type(
                 }
                 return Ok("DeclSet".to_string());
             }
-            if function == "declset_add_derived_struct" {
+            if function == EMIT_ADD_DERIVED_STRUCT_INTRINSIC {
                 if arguments.len() != 3 {
                     return Err(anyhow::anyhow!(
-                        "declset_add_derived_struct expects (DeclSet, StructInfo, String), got {} arguments",
+                        "{} expects (DeclSet, StructInfo, String), got {} arguments",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5368,7 +5521,8 @@ pub(crate) fn get_expression_type(
                 )?;
                 if a != "DeclSet" || b != "StructInfo" || c != "String" {
                     return Err(anyhow::anyhow!(
-                        "declset_add_derived_struct expects (DeclSet, StructInfo, String), got ({}, {}, {})",
+                        "{} expects (DeclSet, StructInfo, String), got ({}, {}, {})",
+                        function,
                         a,
                         b,
                         c
@@ -5376,10 +5530,11 @@ pub(crate) fn get_expression_type(
                 }
                 return Ok("DeclSet".to_string());
             }
-            if function == "declset_add_invariant_field_gt_i32" {
+            if function == EMIT_ADD_INVARIANT_FIELD_GT_I32_INTRINSIC {
                 if arguments.len() != 5 {
                     return Err(anyhow::anyhow!(
-                        "declset_add_invariant_field_gt_i32 expects (DeclSet, Type, String, String, I32), got {} arguments",
+                        "{} expects (DeclSet, Type, String, String, I32), got {} arguments",
+                        function,
                         arguments.len()
                     ));
                 }
@@ -5425,7 +5580,8 @@ pub(crate) fn get_expression_type(
                 )?;
                 if a != "DeclSet" || b != "Type" || c != "String" || d != "String" || e != "I32" {
                     return Err(anyhow::anyhow!(
-                        "declset_add_invariant_field_gt_i32 expects (DeclSet, Type, String, String, I32), got ({}, {}, {}, {}, {})",
+                        "{} expects (DeclSet, Type, String, String, I32), got ({}, {}, {}, {}, {})",
+                        function,
                         a,
                         b,
                         c,
@@ -5699,6 +5855,18 @@ fun main() -> I32 {
         assert!(
             resolved.function_sigs.contains_key("String__slice_clamped"),
             "missing String__slice_clamped function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("string_len"),
+            "missing string_len top-level function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("slice"),
+            "missing slice top-level function from split stdlib"
+        );
+        assert!(
+            resolved.function_sigs.contains_key("print_str"),
+            "missing print_str top-level function from split stdlib"
         );
         assert!(
             resolved
@@ -6628,7 +6796,7 @@ fun main() -> I32 {
         let err = resolve(ast).expect_err("print_str in model invariants should fail");
         assert!(err
             .to_string()
-            .contains("calls side-effect builtin print_str"));
+            .contains("calls extern function Clib__write"));
     }
 
     #[test]
@@ -6676,7 +6844,7 @@ fun main() -> I32 {
         let source = r#"
 invariant "extern calls are disallowed" for (fd: I32, value: I32) {
 	code = Clib.close(fd)
-	return code == 0 || code == sub(0, 1)
+	return code == 0 || code == (0 - 1)
 }
 
 fun main() -> I32 {
@@ -6720,7 +6888,7 @@ fun main() -> I32 {
         let source = r#"
 fun helper(fd: I32) -> Bool {
 	code = Clib.close(fd)
-	return code == 0 || code == sub(0, 1)
+	return code == 0 || code == (0 - 1)
 }
 
 invariant "transitive extern calls are disallowed" for (fd: I32, value: I32) {
@@ -6803,7 +6971,7 @@ struct Counter {
 }
 
 comptime fun build_counter(T: Type) -> DeclSet {
-	return declset_new()
+	return DeclSet.new()
 }
 
 comptime apply build_counter(Counter)
@@ -7734,35 +7902,26 @@ enum Token {
 }
 
 comptime fun reflect(T: Type) -> DeclSet {
-	enum_opt = as_enum_opt(T)
-	if is_some(enum_opt) {
-		info = unwrap(enum_opt)
-		ds = declset_add_empty_enum(declset_new(), concat(type_name(T), "Clone"))
+	enum_opt = T.as_enum_opt()
+	if enum_opt.is_some() {
+		info = enum_opt.unwrap()
+		ds = DeclSet.new().add_empty_enum(T.name().concat("Clone"))
 		i = 0
-		while i < enum_variant_count(info) {
-			variant = unwrap(enum_variant_at(info, i))
-			payload_opt = variant_payload_type_opt(variant)
-			if is_some(payload_opt) {
-				payload_ty = unwrap(payload_opt)
+		while i < info.variant_count() {
+			variant = info.variant_at(i).unwrap()
+			payload_opt = variant.payload_type_opt()
+			if payload_opt.is_some() {
+				payload_ty = payload_opt.unwrap()
 				same = payload_ty == I32
-				ds = declset_add_enum_payload_variant(
-					ds,
-					concat(type_name(T), "Clone"),
-					variant_name(variant),
-					payload_ty
-				)
+				ds = ds.add_enum_payload_variant(T.name().concat("Clone"), variant.name(), payload_ty)
 			} else {
-				ds = declset_add_enum_tag_variant(
-					ds,
-					concat(type_name(T), "Clone"),
-					variant_name(variant)
-				)
+				ds = ds.add_enum_tag_variant(T.name().concat("Clone"), variant.name())
 			}
 			i = i + 1
 		}
 		return ds
 	}
-	return declset_new()
+	return DeclSet.new()
 }
 
 comptime apply reflect(Token)
@@ -7787,7 +7946,7 @@ enum Token {
 }
 
 fun main() -> I32 {
-	info = as_enum_opt(resolve_type("Token"))
+	info = Type.resolve("Token").as_enum_opt()
 	return 0
 }
 "#
@@ -7798,7 +7957,7 @@ fun main() -> I32 {
         let err = resolve(ast).expect_err("resolve should fail");
         assert!(
             err.to_string()
-                .contains("cannot call semantic introspection builtin as_enum_opt"),
+                .contains("runtime function main cannot call comptime function Type__"),
             "unexpected error: {err}"
         );
     }
@@ -7807,7 +7966,7 @@ fun main() -> I32 {
     fn resolve_rejects_runtime_enum_semantic_emission_builtin_call() {
         let source = r#"
 fun main() -> I32 {
-	ds = declset_add_empty_enum(declset_new(), "TokenTags")
+	ds = DeclSet.new().add_empty_enum("TokenTags")
 	return 0
 }
 "#
@@ -7818,7 +7977,7 @@ fun main() -> I32 {
         let err = resolve(ast).expect_err("resolve should fail");
         assert!(
             err.to_string()
-                .contains("cannot call semantic emission builtin declset_add_empty_enum"),
+                .contains("runtime function main cannot call comptime function DeclSet__"),
             "unexpected error: {err}"
         );
     }
@@ -7827,7 +7986,7 @@ fun main() -> I32 {
     fn resolve_rejects_runtime_semantic_emission_builtin_call() {
         let source = r#"
 fun main() -> I32 {
-	ds = declset_new()
+	ds = DeclSet.new()
 	return 0
 }
 "#
@@ -7838,7 +7997,7 @@ fun main() -> I32 {
         let err = resolve(ast).expect_err("resolve should fail");
         assert!(
             err.to_string()
-                .contains("cannot call semantic emission builtin declset_new"),
+                .contains("runtime function main cannot call comptime function DeclSet__new"),
             "unexpected error: {err}"
         );
     }
@@ -7847,7 +8006,7 @@ fun main() -> I32 {
     fn resolve_rejects_runtime_calling_comptime_function() {
         let source = r#"
 comptime fun build_counter(name: String) -> DeclSet {
-	return declset_new()
+	return DeclSet.new()
 }
 
 fun main() -> I32 {

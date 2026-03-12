@@ -9,8 +9,9 @@ use crate::{parser, tokenizer};
 pub fn parse_and_resolve_file(source_path: &Path) -> anyhow::Result<parser::Ast> {
     let source = std::fs::read_to_string(source_path)
         .with_context(|| format!("failed to read source {}", source_path.display()))?;
-    let tokens = tokenizer::tokenize(source)
-        .with_context(|| format!("failed to tokenize source {}", source_path.display()))?;
+    let tokens =
+        tokenizer::tokenize_with_source_name(source, Some(source_path.display().to_string()))
+            .with_context(|| format!("failed to tokenize source {}", source_path.display()))?;
     let root_ast = parser::parse(tokens)
         .with_context(|| format!("failed to parse source {}", source_path.display()))?;
     resolve_ast(root_ast, source_path)
@@ -59,8 +60,11 @@ fn resolve_ast_inner(
         let import_path = resolve_import_path(source_dir, &import.path)?;
         let import_source = std::fs::read_to_string(&import_path)
             .with_context(|| format!("failed to read import {}", import_path.display()))?;
-        let import_tokens = tokenizer::tokenize(import_source)
-            .with_context(|| format!("failed to tokenize import {}", import_path.display()))?;
+        let import_tokens = tokenizer::tokenize_with_source_name(
+            import_source,
+            Some(import_path.display().to_string()),
+        )
+        .with_context(|| format!("failed to tokenize import {}", import_path.display()))?;
         let import_ast = parser::parse(import_tokens)
             .with_context(|| format!("failed to parse import {}", import_path.display()))?;
         let resolved_import_ast = resolve_ast_inner(import_ast, &import_path, visited, loading)?;
@@ -253,16 +257,16 @@ fun main() -> I32 {
             &helper_path,
             r#"
 comptime fun derive_tags(T: Type) -> DeclSet {
-	ds = declset_new()
-	enum_opt = as_enum_opt(T)
-	if is_some(enum_opt) {
-		info = unwrap(enum_opt)
-		out_name = concat(type_name(T), "Tags")
-		ds = declset_add_empty_enum(ds, out_name)
+	ds = DeclSet.new()
+	enum_opt = T.as_enum_opt()
+	if enum_opt.is_some() {
+		info = enum_opt.unwrap()
+		out_name = T.name().concat("Tags")
+		ds = ds.add_empty_enum(out_name)
 		i = 0
-		while i < enum_variant_count(info) {
-			variant = unwrap(enum_variant_at(info, i))
-			ds = declset_add_enum_tag_variant(ds, out_name, variant_name(variant))
+		while i < info.variant_count() {
+			variant = info.variant_at(i).unwrap()
+			ds = ds.add_enum_tag_variant(out_name, variant.name())
 			i = i + 1
 		}
 	}
@@ -297,7 +301,11 @@ fun main() -> I32 {
         let main_ast = parser::parse(main_tokens).expect("parse main");
 
         let mut merged = resolve_ast(main_ast, &main_path).expect("resolve imports");
-        comptime::execute_comptime_applies(&mut merged).expect("execute comptime applies");
+        let bootstrap =
+            crate::ir::resolve_with_mode(merged.clone(), crate::ir::ResolveMode::BootstrapComptime)
+                .expect("bootstrap resolve");
+        comptime::execute_comptime_applies(&mut merged, bootstrap)
+            .expect("execute comptime applies");
 
         let emitted = merged
             .type_definitions

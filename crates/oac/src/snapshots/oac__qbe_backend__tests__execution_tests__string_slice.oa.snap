@@ -3,8 +3,6 @@ source: crates/oac/src/qbe_backend.rs
 expression: snapshot_content
 snapshot_kind: text
 ---
-3
-98
-99
-100
-0
+COMPILATION ERROR
+
+[OAC-PRE-001] Error: function precondition verification failed: solver returned unknown for function precondition obligation main#main#1#0#pre_3 (root=main, caller=main, callee=slice, clause=3, qbe_artifact=site_main_main_1_0_pre_3.qbe, smt_artifact=site_main_main_1_0_pre_3.smt2, attempts=[10s:unknown(timeout), 30s:unknown(timeout)]). verification is fail-closed until this obligation is proven unsat

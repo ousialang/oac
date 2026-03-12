@@ -9,27 +9,33 @@ Defined in `crates/oac/src/main.rs` (`compile` function):
 3. Parse with `parser::parse`.
 4. Resolve flat imports (`import "file.oa"`) from the same directory via `flat_imports` and merge declarations into one AST scope.
    - CLI `build`/`test`/`bench-prove` share this front-end staging path through `main.rs::parse_source_to_ast_with_artifacts` and `main.rs::compile_source_with_artifacts` to keep tokenize/parse/import/comptime behavior and diagnostics aligned.
-5. Execute comptime applies with `comptime::execute_comptime_applies`.
-   - The evaluator sees the already-flat-merged user/imported AST plus a preloaded stdlib comptime context from `crates/oac/src/std/std.oa`, so user `comptime apply` can call both imported user helpers and stdlib comptime helpers before `resolve()`.
-6. Resolve/type-check with `ir::resolve`.
-   - After the initial function-body type check, resolve normalizes receiver method syntax (`value.helper(...)`) into ordinary calls (`TypeName__helper(value, ...)`) or enum-constructor postfix forms before ownership rewriting, purity checks, call indexing, and codegen.
-   - The same normalization pass also rewrites non-builtin infix operators into ordinary calls to resolved operator-trait impls (`Addition`, `Subtraction`, `Multiplication`, `Division`, `Equality`, `Comparison`), while keeping compiler-owned primitive scalar operators as builtin `BinOp` nodes.
-6. Lower to QBE with `qbe_backend::compile`.
+   - Tokenization/parsing also retain verification-only provenance side data: exact token source spans plus parser-local span maps keyed by shared AST paths (`stmt:<n>/...`, `pre:<n>`), and flat-import loading rewrites those spans to the original imported file path so verification artifacts can cite real source locations.
+5. Bootstrap-resolve with `ir::resolve_with_mode(..., ResolveMode::BootstrapComptime)`.
+   - This mode loads stdlib, expands generics, collects type/function metadata, type-checks runtime+comptime bodies, normalizes receiver method syntax (`value.helper(...)`) into ordinary calls (`TypeName__helper(value, ...)`) or enum-constructor postfix forms, rewrites non-builtin infix operators into resolved operator-trait calls, and indexes semantic-expression metadata.
+   - Bootstrap resolve intentionally stops before ownership rewriting, runtime-only semantic pruning/rejection, model-invariant purity validation, and `main` validation so comptime and `oac test` can run before a runtime `main` exists.
+6. Execute comptime applies with `comptime::execute_comptime_applies`.
+   - The evaluator runs against that bootstrap `ResolvedProgram`, dispatching through normalized resolved calls rather than an AST-only eval world.
+   - After each apply emits a `DeclSet`, the new parser declarations are merged back into the source AST and the compiler bootstrap-resolves again so later applies can observe earlier emitted declarations.
+   - `comptime apply` targets still must be declared as `comptime fun`, but those functions may now call imported user helpers, stdlib semantic wrappers, ordinary pure helpers with `pre` blocks, receiver methods, operator-trait lowered helper paths, `match`, struct literals/field access, enum payload matching, and recursion (fuel-limited); runtime-only operations that the evaluator cannot model still fail closed.
+7. Final resolve/type-check with `ir::resolve` (`ResolveMode::FinalRuntime` internally).
+   - Final runtime resolve reuses the same shared staged builder, then performs ownership rewriting, runtime-only semantic artifact pruning/rejection, model-invariant purity checks, `main` validation, and the runtime-facing call/indexing state needed by backends and verification.
+8. Lower to QBE with `qbe_backend::compile`.
 7. Prepare function-precondition + prove + integer-safety + struct-invariant checker artifacts, group ordinary-root obligations into repo-local summary candidates, and consult proof-cache policy from `VerificationConfig` / `--proof-cache`.
    - Function-precondition, prove, integer-safety, and struct-invariant site checkers first prune the cloned caller CFG to blocks that can still reach the targeted site before reachable-callee closure is computed.
    - Assembled checker entry functions rewrite only compiler-generated assert-fail exits (`call $exit(w 242)` + `hlt`) to safe `ret 0` before CHC encoding; helper callees keep terminal assert exits so callers do not continue past impossible states, and other exits remain aborts.
-8. Verify function-precondition obligations with `function_preconditions::verify_prepared_function_preconditions` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable user-defined call sites from `main`, generated precondition helpers, struct-invariant helpers, and model-invariant roots).
-9. Verify `prove(...)` obligations with `prove::verify_prepared_prove_obligations` (SMT-based, fail-closed, trust mode skips solver only when the combined ordinary-function summary matches a cached `unsat` entry).
-10. Verify source-level integer arithmetic obligations with `integer_safety::verify_prepared_integer_safety_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable integer `+/-/*//` sites from `main` plus all struct/model-invariant roots and generated precondition helpers).
-11. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as precondition/prove/int-safety checking); after all ordinary-root obligations succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
-12. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe_with_config` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module, and uses one summary candidate per model-invariant checker root).
-13. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
-14. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
+   - Each prepared site now carries both `solver_smt` and `artifact_smt`: the former is the comment-free/hash-stable script used for solving and cache summaries, while the latter is the human-readable `.smt2` written under `target/oac/.../`.
+9. Verify function-precondition obligations with `function_preconditions::verify_prepared_function_preconditions` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable user-defined call sites from `main`, generated precondition helpers, struct-invariant helpers, and model-invariant roots).
+10. Verify `prove(...)` obligations with `prove::verify_prepared_prove_obligations` (SMT-based, fail-closed, trust mode skips solver only when the combined ordinary-function summary matches a cached `unsat` entry).
+11. Verify source-level integer arithmetic obligations with `integer_safety::verify_prepared_integer_safety_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as `prove(...)`, covering reachable integer `+/-/*//` sites from `main` plus all struct/model-invariant roots and generated precondition helpers).
+12. Verify struct invariants with `struct_invariants::verify_prepared_struct_invariant_obligations` (SMT-based, fail-closed, same ordinary-function summary trust boundary as precondition/prove/int-safety checking); after all ordinary-root obligations succeed, new `unsat` summaries are persisted for uncached ordinary roots when cache writes are enabled.
+13. Verify model invariants with `model_invariants::verify_model_invariants_with_qbe_with_config` (SMT-based, fail-closed, global per-declaration checking, consumes in-memory QBE module, and uses one summary candidate per model-invariant checker root).
+14. Run best-effort loop non-termination classification on in-memory QBE `main` (`qbe::Function`) via `qbe_smt::classify_simple_loops`; if a loop is proven non-terminating, fail build before runtime backend toolchain calls.
+15. Select runtime backend via CLI flags (`--backend qbe|llvm`, default `qbe`) and emit backend artifacts through `codegen_runtime`:
     - QBE runtime backend: emit `target/oac/ir.qbe`, run `qbe`, emit `target/oac/assembly.s`.
     - LLVM runtime backend: emit `target/oac/ir.ll`, run `clang -x ir -c`, emit `target/oac/object.o`.
-15. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
-16. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
-17. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
+16. Invoke C linker/compiler driver attempts to link executable (`target/oac/app`) from backend linker input (`assembly.s` for QBE, `object.o` for LLVM): default `cc` (plus `--target=<triple>` when requested/derived), then fallbacks (`clang --target=<triple>`, target-prefixed `*-gcc` for known QBE arches, plain `cc`). Respect `OAC_CC` (single explicit command), `CC` (preferred first attempt), `OAC_CC_TARGET`, and `OAC_CC_FLAGS` overrides, and fail compilation if all attempts fail.
+17. Map stage failures into shared compiler diagnostics (`crates/oac/src/diagnostics.rs`) and render Ariadne reports for CLI users.
+18. `oac build` emits compact staged progress rows to `stderr` with program-facing labels (`prepare source`, `check program`, `check proofs`, `check data rules`, `check global rules`, `check loops`, `generate backend`, `link executable`) plus command header/summary; `--quiet` suppresses those rows and `--no-color` disables ANSI styling for both progress rows and diagnostics.
 
 Artifacts emitted during build:
 - `target/oac/tokens.json`
@@ -59,9 +65,9 @@ Defined in `crates/oac/src/main.rs` (`run_tests` function):
 1. Read source file.
 2. Tokenize with `tokenizer::tokenize`.
 3. Parse with `parser::parse`.
-4. Resolve flat imports via `flat_imports` and execute comptime applies.
+4. Resolve flat imports, bootstrap-resolve with `ResolveMode::BootstrapComptime`, and execute comptime applies against that resolved program. This stage does not require a user-defined `main`, so comptime can emit declarations before test lowering.
 5. Lower top-level `test "..." { ... }` declarations via `test_framework::lower_tests_to_program` into generated test functions plus a generated `main`.
-6. Resolve/type-check with `ir::resolve`.
+6. Final resolve/type-check with `ir::resolve`.
 7. Lower to QBE, run prove/struct-invariant/model-invariant checks, run non-termination classification, emit runtime backend artifacts (`qbe` or `llvm`), and link executable (same backend path as `oac build`).
 8. Execute `target/oac/test/app` and treat non-zero exit status as test failure.
 9. Map failures into shared compiler diagnostics and render Ariadne reports for CLI users.
@@ -78,6 +84,7 @@ Artifacts emitted during test runs:
 - `target/oac/test/app`
 - proof debug artifacts under `target/oac/test/preconditions/`, `target/oac/test/prove/`, `target/oac/test/struct_invariants/`, and `target/oac/test/model_invariants/` when obligations exist
 - shared repo-local proof summaries under `target/oac/verification_cache/` when `--proof-cache` is not `off`
+  - `.smt2` artifacts are the annotated `artifact_smt` form; solver/cache behavior still uses the parallel comment-free `solver_smt`.
 
 ## End-to-End Bench Flow
 
@@ -86,6 +93,7 @@ Defined in `crates/oac/src/bench_prove.rs` (`run` / `run_with_runner`):
 1. Select fixture corpus (`full` or `quick`) and iteration count.
 2. For each fixture+iteration, compile through the same front-end+backend path as `oac build` into isolated targets under `target/oac/bench/runs/<fixture>/iter_<n>/`.
 3. Record elapsed wall time per iteration and collect checker artifact metrics (`prove/*.smt2` plus `preconditions/*.smt2` in proof-stage totals, and `struct_invariants/*.smt2` plus `model_invariants/*.smt2` aggregated for invariant stats).
+   - Benchmark byte metrics count comment-stripped solver bytes from those artifacts, not raw on-disk artifact size, so readability comments do not skew proof-size regressions.
 4. Use median elapsed time per fixture as the reported value.
 5. Compare fixture medians against committed baseline (`crates/oac/bench/prove_baseline.json`) with regression policy `delta_ms >= 200 && delta_pct >= 20.0`.
 6. Emit JSON report (`target/oac/bench/prove/latest.json` by default) plus compact console table.
@@ -105,6 +113,7 @@ Notes:
 - Supports escaped string chars (`\\`, `\"`, `\n`, `\t`, `\r`).
 - Word tokenization follows `[A-Za-z_][A-Za-z0-9_]*` and is EOF-safe (for example a file ending in `identifier` or `_` no longer panics during lexing).
 - Produces `SyntaxError` with position metadata.
+- `TokenList` now also stores exact `TokenSpan`s plus optional `source_name`; parser/provenance consumers use that side data, but serialized token artifacts remain behaviorally unchanged.
 
 ### Parser (`parser.rs`)
 
@@ -115,30 +124,32 @@ Core AST includes:
 - Enum payload variants use `Variant: Type` declarations, while unit variants stay bare.
 - Flat import declarations (`import "file.oa"`) for same-directory file inclusion.
 - Top-level test declarations (`test "Name" { ... }`).
-- Top-level namespaces (`namespace Name { ... }`) support `fun` and `extern fun`; declarations are flattened to mangled internal function keys (`Name__fn`).
+- Top-level namespaces (`namespace Name { ... }`) support `fun`, `comptime fun`, and `extern fun`; declarations are flattened to mangled internal function keys (`Name__fn`).
 - External declarations (`extern fun name(...) -> Type`) are signature-only AST nodes and may appear at top-level or inside namespace blocks.
-- Optional function `pre { ... }` blocks are parsed after the return type and before the body on ordinary `fun` definitions; clauses are multiline Bool expressions and the block must contain at least one clause.
+- Optional function `pre { ... }` blocks are parsed after the return type and before the body on non-extern `fun` definitions, including `comptime fun`; clauses are multiline Bool expressions and the block must contain at least one clause.
 - Statements: assign, return, expression, `prove(...)`, `assert(...)`, while, if/else, match
 - Expressions: literals, vars, calls, method calls, postfix calls, unary/binary ops, field access, struct values, match-expr (`receiver.fn(args)` parses as a method call; resolve preserves `Name.fn(args)` as static namespace/trait/enum syntax and rewrites value receivers to ordinary calls)
 - Char literals are parsed from single quotes (for example `'x'`, `'\n'`) and lowered to a namespaced constructor call (`Char.from_code(<i32>)`).
 - Legacy `template` / `instantiate` are hard-cut parser errors with migration hints to `generic` / `specialize`.
+- Parser-local provenance maps are stored on function/invariant AST nodes (non-serialized via serde skip) and use the same shared AST-path vocabulary consumed later by verification site collectors and QBE marker naming.
 
 Operator precedence is explicitly encoded in parser.
 
 ## Semantic Resolution (`ir.rs`)
 
-`resolve(ast)` performs:
-- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_comptime.oa`, `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
-- deterministic comptime evaluation, including checked `I32` arithmetic in `comptime.rs` (`+/-/*` overflow and `/` divide-by-zero or `MIN / -1` now produce deterministic comptime errors instead of Rust panics)
-- comptime semantic reflection builtins over `Type`, now covering both struct metadata (`is_struct`, `as_struct_opt`, `struct_field_count`, `struct_field_at`, `field_name`, `field_type`) and enum metadata (`is_enum`, `as_enum_opt`, `enum_variant_count`, `enum_variant_at`, `variant_name`, `variant_payload_type_opt`) together with existing semantic helpers (`type_name`, `resolve_type`, `expr_meta_opt`, `definition_location_opt`, `is_some`, `unwrap`, `concat`)
-- comptime `DeclSet` emission builtins for derived declarations, now including incremental enum construction (`declset_new`, `declset_add_empty_enum`, `declset_add_enum_tag_variant`, `declset_add_enum_payload_variant`) alongside existing derived-struct/invariant emitters
-- stdlib comptime helpers are visible during user apply execution because `execute_comptime_applies` preloads stdlib comptime functions/types into its evaluation world without mutating the user AST ahead of `resolve`
+`ir::resolve_with_mode(ast, mode)` performs the shared resolve pipeline used by both bootstrap comptime and final runtime resolution:
+- stdlib loading from `crates/oac/src/std/std.oa` (which imports split `std/std_*.oa` modules including `std/std_meta.oa`, `std/std_comptime.oa`, `std/std_clib.oa`, `std/std_io.oa`, `std/std_string.oa`, `std/std_ref.oa`, `std/std_option_result.oa`, `std/std_set.oa`, `std/std_vec.oa`, and `std/std_traits.oa`) using the same flat import resolver, including stdlib invariant declarations.
+- generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages, including recursive expansion of local generic-body specializations after parent type substitutions are applied.
+- type definition graph creation plus runtime/comptime function signature collection
+- function body semantic checks and method/operator normalization for both runtime and comptime functions
+- semantic-expression metadata indexing across normalized function bodies and `pre { ... }` clauses so comptime source metadata queries can use resolved expression ids/spans
+- the public comptime semantic surface through ordinary namespace/method wrappers in `std_meta.oa`: `Type.name/resolve/is_struct/is_enum/as_struct_opt/as_enum_opt`, `StructInfo.field_count/field_at`, `EnumInfo.variant_count/variant_at`, `FieldInfo.name/ty`, `VariantInfo.name/payload_type_opt`, `DeclSet.new/...`, `SemanticExpr.definition_location_opt`, and `SourceSpan.display_compact`
+- compiler-private semantic intrinsics behind reserved names (`__intrinsic__meta__*`, `__intrinsic__emit__*`) with one synthetic public exception `Meta.expr_opt(x)` because the source type system cannot express its argument shape directly
 - trait metadata collection (signature registry, impl coherence checks, and synthesized concrete impl methods)
 - binary-operator resolution that first keeps compiler-owned primitive scalar behavior builtin, then falls back to resolved operator-trait impls for std/user types, with struct/tag-only-enum equality fallback and tagged-payload-enum equality rejection unless `Equality` is implemented
-- generic expansion (`specialize`) into concrete type/function/invariant declarations before normal type-checking/codegen stages, including recursive expansion of local generic-body specializations after parent type substitutions are applied.
-- type definition graph creation
-- function signature collection
-- function body semantic checks
+- bootstrap comptime mode stops after that shared staged builder, exposing a `ResolvedProgram` for `comptime::execute_comptime_applies`
+- final runtime mode additionally performs ownership rewriting, runtime rejection and runtime-lowerability pruning for semantic-only APIs/types so `Type.*`, `DeclSet.*`, semantic option aliases, and related helpers do not leak into backend lowering as ordinary runtime artifacts, model-invariant purity validation, and `main` validation
+- deterministic comptime evaluation is handled after bootstrap resolve in `comptime.rs`, including checked `I32` arithmetic (`+/-/*` overflow and `/` divide-by-zero or `MIN / -1` now produce deterministic comptime errors instead of Rust panics)
 
 Important enforced invariants include:
 - match subject must be enum type
@@ -149,13 +160,14 @@ Important enforced invariants include:
 - conditions in `if` / `while` must be `Bool`
 - `prove(...)` and `assert(...)` conditions must be `Bool`
 - `prove(...)` and `assert(...)` are statement-only; expression usage is rejected
-- Function `pre { ... }` clauses are lowered by resolve into synthesized helper functions `__pre__<function_name>__clause_<ordinal>` with the same parameter list as the owning function, and `ResolvedProgram.function_preconditions` tracks the owning function -> helper mapping for later verification/entry assumptions.
+- Function `pre { ... }` clauses are kept on `FunctionDefinition.preconditions` in resolved IR for bootstrap comptime evaluation, and runtime functions also synthesize helper functions `__pre__<function_name>__clause_<ordinal>` with the same parameter list as the owning function; `ResolvedProgram.function_preconditions` tracks the owning function -> helper mapping for later verification/entry assumptions.
+- `comptime fun` preconditions are evaluated directly by the comptime evaluator at comptime call sites instead of lowering into runtime verification obligations.
 - user-defined functions named `prove` or `assert` are rejected (reserved builtin names)
 - namespace function calls (`Name.fn(args)`) are type-checked as regular function calls using mangled names (`Name__fn`) when such a function exists; otherwise postfix call semantics continue to serve enum payload constructors
 - receiver method calls (`value.fn(args)`) are resolved through the receiver's concrete type (`TypeName__fn(value, args...)`) and normalized into ordinary `Call(...)` nodes before ownership/codegen
 - namespace call lowering is also used for generic-specialized helpers (`Alias.fn(args)` resolving to generated `Alias__fn` symbols)
 - trait calls are v1 namespaced calls (`Trait.method(value, ...)`) that type-check against trait signatures and resolve to concrete impl function names (`Trait__Type__method`)
-- user/std infix operator lowering shares the same trait-resolution path as explicit trait calls; comparison impls normalize to `Comparison.compare(lhs, rhs)` plus a builtin compare-to-zero step
+- user/std infix operator lowering shares the same trait-resolution path as explicit trait calls; comparison impls normalize to `Comparison.compare(lhs, rhs)` plus a builtin compare-to-zero step, and comptime now reuses that same normalized call path through bootstrap resolve
 - compiler-reserved primitive operator trait/type pairs (`Addition`/`Subtraction`/`Multiplication`/`Division`/`Comparison` on numeric scalars, `Equality` on numeric scalars plus `Bool`) reject user/std overrides during impl collection
 - trait coherence is enforced globally: duplicate `impl Trait for Type` is rejected, and missing impls for generic bounds are rejected at specialization time
 - special lifecycle-trait signatures are enforced: `Copy.copy(Ref[Self]) -> Self` and `Drop.drop(Self) -> Void`
@@ -194,10 +206,11 @@ Important enforced invariants include:
   - unary (`for (v: StructType)`) invariants remain struct invariants and synthesize `__struct__<TypeName>__invariant__<key>`
   - multi-argument (`for (a: ..., b: ..., ...)`) invariants become model invariants and synthesize `__model__invariant__<key>`
 - unary invariants keep legacy compatibility for explicit `__struct__<TypeName>__invariant(v: TypeName) -> Bool` functions.
-- model invariants are resolve-validated as a strict pure subset over their transitive user-call graph (reject `prove`, `assert`, extern calls, pointer load/store builtins, and side-effect builtins `print`/`print_str`).
+- model invariants are resolve-validated as a strict pure subset over their transitive user-call graph (reject `prove`, `assert`, extern calls, pointer load/store builtins, and side-effect builtin `print`; std `print_str` is rejected transitively because it reaches extern `Clib.write`).
 - `invariant_metadata.rs` centralizes struct-invariant metadata discovery and argument-invariant assumption construction, reused by prove, struct-invariant, and model-invariant verification entrypoints.
 - `verification_cycles.rs` centralizes reachable user-call graph discovery plus SCC-based recursion-cycle policy checks reused by prove, struct-invariants, and model invariants.
 - `prove(...)` sites reachable from `main` are verified by checker QBE synthesis: the site condition is marked in QBE, checker returns `1` when the proof condition is false at the site, and proving asks reachability of exit code `1` (`unsat` = proven, `sat` = compile failure)
+- `prove(...)` and integer-safety marker ids are now derived from shared AST paths instead of raw counters, which keeps source comments and QBE marker names stable across unrelated statement insertions.
 - reachable user-call return sites for struct-typed values are verified per `(call-site, invariant)` with generated checker QBE programs where return code `1` means violation; proving asks reachability of exit code `1` (`unsat` = success)
 - model invariants are verified globally (independent of `main` reachability): one checker obligation per declaration, where checker return is rewritten to `1` when invariant result is `0`.
 - checker generation is QBE-native and interprocedural: site instrumentation happens on compiled caller QBE, checker artifacts include a checker entry plus reachable user callees, and CHC encoding models user calls through function-summary relations (no checker-time call inlining)
@@ -207,7 +220,7 @@ Important enforced invariants include:
 ## Backend (`qbe_backend.rs`)
 
 - Generates QBE module/functions/data.
-- Includes builtins and interop helpers (for example integer ops, print, string utilities) plus user/std-declared extern call targets.
+- Includes runtime builtins and interop helpers (for example `print`, `i32_to_i64`, pointer-memory builtins, internal string layout helpers, and builtin `char_at`) plus user/std-declared extern call targets.
 - Extern calls emit symbol names from signature metadata; namespace externs (for example `Clib.malloc`) therefore call raw declared extern symbols (for example `malloc`) while keeping namespaced lookup keys internal.
 - Struct literals allocate zero-initialized storage via `calloc` before field stores, so padding bytes are deterministic for bytewise equality.
 - Struct assignment/call/return no longer inject unconditional clone barriers.
@@ -219,7 +232,7 @@ Important enforced invariants include:
 - Lowers `Void`-return calls only as statement calls; `Void` calls used as expression values are rejected.
 - Lowers pointer-memory builtins to QBE loads/stores: `load_u8` -> `loadub`, `load_i32` -> `loadw`, `load_i64` -> `loadl`, `load_bool` -> `loadw` + compare-to-zero, `store_u8` -> `storeb`, `store_i32`/`store_bool` -> `storew`, and `store_i64` -> `storel`.
 - Lowers string literals to std-owned `String.Literal(Bytes{ptr,len})` heap objects (compiler allocates `Bytes` payload and tagged-union `String` wrapper).
-- String helper builtins (`char_at`, `string_len`, `slice`, `print_str`) operate over std `String`/`Bytes` layout rather than raw C-string pointers.
+- Builtin `char_at` and std string helpers (`string_len`, `slice`, `print_str`) operate over std `String`/`Bytes` layout rather than raw C-string pointers.
 - Maps `FP32` to QBE `s` (`Type::Single`) and `FP64` to QBE `d` (`Type::Double`), emitting ordered float comparisons (`clt*/cle*/cgt*/cge*`) for `< <= > >=`.
 - Maps `U8` to QBE word temporaries with unsigned compare/div lowering for `U8` arithmetic relations.
 - Emits lightweight integer-site markers for source-level integer `+`, `-`, `*`, `/` expressions (`.oac_integer_site_<semantic_type>__<op>__<site_id>` plus `lhs`/`rhs`/`out` copies) so proof-stage integer checkers can recover operands/results without marking compiler-internal pointer math or offset arithmetic.
@@ -246,6 +259,7 @@ Important enforced invariants include:
 - `oac` routes prove/struct-invariant/model-invariant solver calls through `crates/oac/src/verification_solver.rs`, which preserves baseline two-step retries (`10s`, `30s`) and can add a candidate-only third attempt for large obligations that remain `unknown`.
 - `main.rs` also uses `qbe-smt` loop classification on generated in-memory `main` QBE as an early non-termination guard.
 - `qbe-smt` is parser-free: it consumes in-memory QBE IR directly as modules (`qbe::Module` via `qbe_module_to_smt` / `qbe_module_to_smt_with_assumptions`). Internals are split by concern across `crates/qbe-smt/src/lib.rs` (API + tests), `crates/qbe-smt/src/encode.rs` (Horn encoding), `crates/qbe-smt/src/encode_extern_models.rs` (extern-call model/arity catalog), and `crates/qbe-smt/src/classify.rs` (loop classification).
+- `qbe-smt` also exposes `qbe_module_to_annotated_smt_with_assumptions`, which returns `EncodedScripts { solver_smt, artifact_smt }`; the artifact variant adds full-line comments, readable CHC relation/variable names, function summaries, and per-rule PC/block/QBE-statement comments while leaving solver semantics unchanged.
 - `qbe-smt` models a broad integer + memory QBE subset plus an FP32/FP64 proving subset:
   - integer ALU/comparison ops (`add/sub/mul/div/rem`, unsigned variants, bitwise/shift ops)
   - FP32/FP64 ALU/comparison ops (`add/sub/mul/div`, `eq/ne/lt/le/gt/ge/o/uo`) with IEEE semantics (`RNE`)

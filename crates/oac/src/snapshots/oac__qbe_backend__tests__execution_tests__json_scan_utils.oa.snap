@@ -5,4 +5,4 @@ snapshot_kind: text
 ---
 COMPILATION ERROR
 
-[OAC-PROVE-001] Error: prove obligation verification failed: missing signature for function __string_data_len while building argument-invariant assumptions
+[OAC-PRE-001] Error: function precondition verification failed: solver returned unknown for function precondition obligation main#Json__parse_json_object_value_at#6#16#pre_0 (root=main, caller=Json__parse_json_object_value_at, callee=slice, clause=0, qbe_artifact=site_main_Json__parse_json_object_value_at_6_16_pre_0.qbe, smt_artifact=site_main_Json__parse_json_object_value_at_6_16_pre_0.smt2, attempts=[10s:unknown(timeout), 30s:unknown(timeout)]). verification is fail-closed until this obligation is proven unsat

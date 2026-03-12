@@ -6,4 +6,4 @@ snapshot_kind: text
 COMPILATION ERROR
 
 [OAC-PROVE-001] Error: prove obligation verification failed: integer safety verification failed (SAT counterexamples found):
-main#main#i32#.oac_integer_site_i32__div__0 (root=main, caller=main, op=div, semantic_type=I32, qbe_artifact=site_main_main_i32__oac_integer_site_i32__div__0.qbe, smt_artifact=site_main_main_i32__oac_integer_site_i32__div__0.smt2)
+main#main#i32#.oac_integer_site_i32__div__stmt_0_assign_value (root=main, caller=main, op=div, semantic_type=I32, qbe_artifact=site_main_main_i32__oac_integer_site_i32__div__stmt_0_assign_value.qbe, smt_artifact=site_main_main_i32__oac_integer_site_i32__div__stmt_0_assign_value.smt2)

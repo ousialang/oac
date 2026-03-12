@@ -1,0 +1,111 @@
+specialize TypeOpt = Option[Type]
+specialize StructInfoOpt = Option[StructInfo]
+specialize EnumInfoOpt = Option[EnumInfo]
+specialize FieldInfoOpt = Option[FieldInfo]
+specialize VariantInfoOpt = Option[VariantInfo]
+specialize SemanticExprOpt = Option[SemanticExpr]
+specialize SourceSpanOpt = Option[SourceSpan]
+
+namespace Type {
+	comptime fun name(t: Type) -> String {
+		return __intrinsic__meta__type_name(t)
+	}
+
+	comptime fun resolve(name: String) -> Type {
+		return __intrinsic__meta__resolve_type(name)
+	}
+
+	comptime fun is_struct(t: Type) -> Bool {
+		return __intrinsic__meta__is_struct(t)
+	}
+
+	comptime fun is_enum(t: Type) -> Bool {
+		return __intrinsic__meta__is_enum(t)
+	}
+
+	comptime fun as_struct_opt(t: Type) -> StructInfoOpt {
+		return __intrinsic__meta__as_struct_opt(t)
+	}
+
+	comptime fun as_enum_opt(t: Type) -> EnumInfoOpt {
+		return __intrinsic__meta__as_enum_opt(t)
+	}
+}
+
+namespace StructInfo {
+	comptime fun field_count(info: StructInfo) -> I32 {
+		return __intrinsic__meta__struct_field_count(info)
+	}
+
+	comptime fun field_at(info: StructInfo, index: I32) -> FieldInfoOpt {
+		return __intrinsic__meta__struct_field_at(info, index)
+	}
+}
+
+namespace EnumInfo {
+	comptime fun variant_count(info: EnumInfo) -> I32 {
+		return __intrinsic__meta__enum_variant_count(info)
+	}
+
+	comptime fun variant_at(info: EnumInfo, index: I32) -> VariantInfoOpt {
+		return __intrinsic__meta__enum_variant_at(info, index)
+	}
+}
+
+namespace FieldInfo {
+	comptime fun name(field: FieldInfo) -> String {
+		return __intrinsic__meta__field_name(field)
+	}
+
+	comptime fun ty(field: FieldInfo) -> Type {
+		return __intrinsic__meta__field_type(field)
+	}
+}
+
+namespace VariantInfo {
+	comptime fun name(variant: VariantInfo) -> String {
+		return __intrinsic__meta__variant_name(variant)
+	}
+
+	comptime fun payload_type_opt(variant: VariantInfo) -> TypeOpt {
+		return __intrinsic__meta__variant_payload_type_opt(variant)
+	}
+}
+
+namespace DeclSet {
+	comptime fun new() -> DeclSet {
+		return __intrinsic__emit__declset_new()
+	}
+
+	comptime fun add_empty_enum(ds: DeclSet, name: String) -> DeclSet {
+		return __intrinsic__emit__declset_add_empty_enum(ds, name)
+	}
+
+	comptime fun add_enum_tag_variant(ds: DeclSet, enum_name: String, variant_name: String) -> DeclSet {
+		return __intrinsic__emit__declset_add_enum_tag_variant(ds, enum_name, variant_name)
+	}
+
+	comptime fun add_enum_payload_variant(ds: DeclSet, enum_name: String, variant_name: String, payload_ty: Type) -> DeclSet {
+		return __intrinsic__emit__declset_add_enum_payload_variant(ds, enum_name, variant_name, payload_ty)
+	}
+
+	comptime fun add_derived_struct(ds: DeclSet, base: StructInfo, name: String) -> DeclSet {
+		return __intrinsic__emit__declset_add_derived_struct(ds, base, name)
+	}
+
+	comptime fun add_invariant_field_gt_i32(ds: DeclSet, target_type: Type, display_name: String, field_name: String, min_exclusive: I32) -> DeclSet {
+		return __intrinsic__emit__declset_add_invariant_field_gt_i32(ds, target_type, display_name, field_name, min_exclusive)
+	}
+}
+
+namespace SemanticExpr {
+	comptime fun definition_location_opt(expr: SemanticExpr) -> SourceSpanOpt {
+		return __intrinsic__meta__definition_location_opt(expr)
+	}
+}
+
+namespace SourceSpan {
+	comptime fun display_compact(span: SourceSpan) -> String {
+		return __intrinsic__meta__source_span_display_compact(span)
+	}
+}

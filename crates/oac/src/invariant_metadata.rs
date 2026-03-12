@@ -186,6 +186,10 @@ fn build_assumptions_from_function_name_pairs(
             continue;
         }
 
+        if !program.function_definitions.contains_key(semantic_name) {
+            continue;
+        }
+
         let Some(sig) = program.function_sigs.get(semantic_name) else {
             return Err(anyhow::anyhow!(
                 "missing signature for function {} while building argument-invariant assumptions",
@@ -193,9 +197,6 @@ fn build_assumptions_from_function_name_pairs(
             ));
         };
         if sig.extern_symbol_name.is_some() {
-            continue;
-        }
-        if !program.function_definitions.contains_key(semantic_name) {
             continue;
         }
 
@@ -236,6 +237,10 @@ fn build_range_assumptions_from_function_name_pairs(
 ) -> anyhow::Result<Vec<qbe_smt::FunctionArgRangeAssumption>> {
     let mut out = Vec::new();
     for (checker_name, semantic_name) in function_name_pairs {
+        if !program.function_definitions.contains_key(semantic_name) {
+            continue;
+        }
+
         let Some(sig) = program.function_sigs.get(semantic_name) else {
             return Err(anyhow::anyhow!(
                 "missing signature for function {} while building argument-range assumptions",
@@ -243,9 +248,6 @@ fn build_range_assumptions_from_function_name_pairs(
             ));
         };
         if sig.extern_symbol_name.is_some() {
-            continue;
-        }
-        if !program.function_definitions.contains_key(semantic_name) {
             continue;
         }
 
@@ -286,7 +288,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        build_function_arg_invariant_assumptions_for_names, discover_struct_invariant_bindings,
+        build_function_arg_invariant_assumptions,
+        build_function_arg_invariant_assumptions_for_names, build_function_arg_range_assumptions,
+        discover_struct_invariant_bindings,
     };
     use crate::{ir, parser, tokenizer};
 
@@ -294,6 +298,15 @@ mod tests {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
         let ast = parser::parse(tokens).expect("parse source");
         ir::resolve(ast).expect("resolve source")
+    }
+
+    fn qbe_function(name: &str) -> qbe::Function {
+        qbe::Function::new(
+            qbe::Linkage::private(),
+            name.to_string(),
+            vec![],
+            Some(qbe::Type::Word),
+        )
     }
 
     #[test]
@@ -394,5 +407,68 @@ fun main() -> I32 {
             assumptions[3].invariant_function_name,
             "__struct__Counter__invariant__value_non_negative"
         );
+    }
+
+    #[test]
+    fn skips_backend_only_helpers_when_building_argument_assumptions() {
+        let program = resolve_program(
+            r#"
+struct Counter {
+	value: I32,
+}
+
+invariant "counter value stays non-negative" for (v: Counter) {
+	return v.value >= 0
+}
+
+fun combine(v: Counter) -> I32 {
+	return v.value
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#,
+        );
+
+        let bindings = discover_struct_invariant_bindings(&program).expect("discover bindings");
+        let assumptions = build_function_arg_invariant_assumptions(
+            &program,
+            &[qbe_function("__string_data_ptr"), qbe_function("combine")],
+            &bindings,
+        )
+        .expect("build argument assumptions");
+
+        assert_eq!(assumptions.len(), 1);
+        assert_eq!(assumptions[0].function_name, "combine");
+        assert_eq!(assumptions[0].arg_index, 0);
+    }
+
+    #[test]
+    fn skips_backend_only_helpers_when_building_range_assumptions() {
+        let program = resolve_program(
+            r#"
+fun widen(x: U8) -> U8 {
+	return x
+}
+
+fun main() -> I32 {
+	return 0
+}
+"#,
+        );
+
+        let assumptions = build_function_arg_range_assumptions(
+            &program,
+            &[qbe_function("__string_data_ptr"), qbe_function("widen")],
+        )
+        .expect("build range assumptions");
+
+        assert_eq!(assumptions.len(), 1);
+        assert_eq!(assumptions[0].function_name, "widen");
+        assert_eq!(assumptions[0].arg_index, 0);
+        assert_eq!(assumptions[0].lower, 0);
+        assert_eq!(assumptions[0].upper, 255);
+        assert!(!assumptions[0].signed);
     }
 }

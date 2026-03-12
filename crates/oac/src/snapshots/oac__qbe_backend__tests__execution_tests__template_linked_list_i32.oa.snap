@@ -3,9 +3,6 @@ source: crates/oac/src/qbe_backend.rs
 expression: snapshot_content
 snapshot_kind: text
 ---
-3
-1
-2
-2
-1
-0
+COMPILATION ERROR
+
+[OAC-QBE-001] Error: compilation of QBE IR to assembly failed

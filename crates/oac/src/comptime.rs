@@ -1,14 +1,40 @@
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::HashMap;
 
-use crate::flat_imports;
-use crate::ir::SourceSpan;
+use crate::ir::{self, SourceSpan};
 use crate::parser::{
-    self, Ast, EnumDef, EnumVariantDef, Expression, Literal, Op, Statement, StructDef, StructField,
+    self, Ast, EnumVariantDef, Expression, Literal, Op, Statement, StructDef, StructField,
     TypeDefDecl, UnaryOp,
 };
 
 const MAX_WHILE_ITERATIONS: usize = 100_000;
+const MAX_CALL_STACK_DEPTH: usize = 256;
+
+const META_TYPE_NAME_INTRINSIC: &str = "__intrinsic__meta__type_name";
+const META_RESOLVE_TYPE_INTRINSIC: &str = "__intrinsic__meta__resolve_type";
+const META_EXPR_METADATA_INTRINSIC: &str = "__intrinsic__meta__expr_opt";
+const META_DEFINITION_LOCATION_INTRINSIC: &str = "__intrinsic__meta__definition_location_opt";
+const META_IS_STRUCT_INTRINSIC: &str = "__intrinsic__meta__is_struct";
+const META_IS_ENUM_INTRINSIC: &str = "__intrinsic__meta__is_enum";
+const META_AS_STRUCT_OPT_INTRINSIC: &str = "__intrinsic__meta__as_struct_opt";
+const META_AS_ENUM_OPT_INTRINSIC: &str = "__intrinsic__meta__as_enum_opt";
+const META_STRUCT_FIELD_COUNT_INTRINSIC: &str = "__intrinsic__meta__struct_field_count";
+const META_STRUCT_FIELD_AT_INTRINSIC: &str = "__intrinsic__meta__struct_field_at";
+const META_ENUM_VARIANT_COUNT_INTRINSIC: &str = "__intrinsic__meta__enum_variant_count";
+const META_ENUM_VARIANT_AT_INTRINSIC: &str = "__intrinsic__meta__enum_variant_at";
+const META_FIELD_NAME_INTRINSIC: &str = "__intrinsic__meta__field_name";
+const META_FIELD_TYPE_INTRINSIC: &str = "__intrinsic__meta__field_type";
+const META_VARIANT_NAME_INTRINSIC: &str = "__intrinsic__meta__variant_name";
+const META_VARIANT_PAYLOAD_TYPE_OPT_INTRINSIC: &str = "__intrinsic__meta__variant_payload_type_opt";
+const META_SOURCE_SPAN_DISPLAY_INTRINSIC: &str = "__intrinsic__meta__source_span_display_compact";
+const META_EXPR_OPT_FUNCTION: &str = "Meta__expr_opt";
+const EMIT_DECLSET_NEW_INTRINSIC: &str = "__intrinsic__emit__declset_new";
+const EMIT_ADD_EMPTY_ENUM_INTRINSIC: &str = "__intrinsic__emit__declset_add_empty_enum";
+const EMIT_ADD_ENUM_TAG_VARIANT_INTRINSIC: &str = "__intrinsic__emit__declset_add_enum_tag_variant";
+const EMIT_ADD_ENUM_PAYLOAD_VARIANT_INTRINSIC: &str =
+    "__intrinsic__emit__declset_add_enum_payload_variant";
+const EMIT_ADD_DERIVED_STRUCT_INTRINSIC: &str = "__intrinsic__emit__declset_add_derived_struct";
+const EMIT_ADD_INVARIANT_FIELD_GT_I32_INTRINSIC: &str =
+    "__intrinsic__emit__declset_add_invariant_field_gt_i32";
 
 #[derive(Clone, Debug, Default)]
 struct DeclSetValue {
@@ -49,25 +75,49 @@ struct VariantInfoValue {
     payload_ty: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SemanticExprValue {
+    id: String,
+    source_span: Option<SourceSpan>,
+}
+
+#[derive(Clone, Debug)]
+struct PatternMatchResult {
+    matched: bool,
+    binding: Option<(String, CtValueWithMeta)>,
+}
+
 #[derive(Clone, Debug)]
 enum CtValue {
     Bool(bool),
     I32(i32),
     #[allow(dead_code)]
     I64(i64),
+    FP32(String),
+    FP64(String),
     String(String),
     Type(String),
+    Struct {
+        type_name: String,
+        fields: HashMap<String, CtValueWithMeta>,
+    },
+    Enum {
+        type_name: String,
+        variant_name: String,
+        payload: Option<Box<CtValueWithMeta>>,
+    },
     StructInfo(StructInfoValue),
     FieldInfo(FieldInfoValue),
     EnumInfo(EnumInfoValue),
     VariantInfo(VariantInfoValue),
     DeclSet(DeclSetValue),
-    SemanticExpr(String),
+    SemanticExpr(SemanticExprValue),
     #[allow(dead_code)]
     SourceSpan(SourceSpan),
     Option {
         inner: Option<Box<CtValue>>,
         inner_type: String,
+        concrete_type: String,
     },
 }
 
@@ -75,184 +125,104 @@ enum CtValue {
 struct CtValueWithMeta {
     value: CtValue,
     provenance: Option<String>,
+    source_span: Option<SourceSpan>,
 }
 
 impl CtValueWithMeta {
-    fn new(value: CtValue, provenance: Option<String>) -> Self {
-        Self { value, provenance }
+    fn new(value: CtValue, provenance: Option<String>, source_span: Option<SourceSpan>) -> Self {
+        Self {
+            value,
+            provenance,
+            source_span,
+        }
     }
 }
 
-#[derive(Clone, Debug, Default)]
-struct TypeCatalog {
-    all_types: HashSet<String>,
-    structs: HashMap<String, StructDef>,
-    enums: HashMap<String, EnumDef>,
+fn resolve_bootstrap_program(ast: &Ast) -> anyhow::Result<ir::ResolvedProgram> {
+    ir::resolve_with_mode(ast.clone(), ir::ResolveMode::BootstrapComptime)
 }
 
-impl TypeCatalog {
-    fn from_ast(ast: &Ast) -> anyhow::Result<Self> {
-        let mut catalog = Self::default();
-        for builtin in [
-            "Int",
-            "Bool",
-            "U8",
-            "I32",
-            "I64",
-            "FP32",
-            "FP64",
-            "Type",
-            "DeclSet",
-            "SemanticExpr",
-            "SourceSpan",
-            "StructInfo",
-            "FieldInfo",
-            "EnumInfo",
-            "VariantInfo",
-        ] {
-            catalog.all_types.insert(builtin.to_string());
-        }
-        for type_def in &ast.type_definitions {
-            catalog.insert_type_def(type_def)?;
-        }
-        Ok(catalog)
-    }
-
-    fn insert_type_def(&mut self, type_def: &TypeDefDecl) -> anyhow::Result<()> {
-        match type_def {
-            TypeDefDecl::Struct(def) => {
-                if !self.all_types.insert(def.name.clone()) {
-                    return Err(anyhow::anyhow!(
-                        "duplicate type emitted by comptime evaluator: {}",
-                        def.name
-                    ));
-                }
-                self.structs.insert(def.name.clone(), def.clone());
-            }
-            TypeDefDecl::Enum(def) => {
-                if !self.all_types.insert(def.name.clone()) {
-                    return Err(anyhow::anyhow!(
-                        "duplicate type emitted by comptime evaluator: {}",
-                        def.name
-                    ));
-                }
-                self.enums.insert(def.name.clone(), def.clone());
-            }
-        }
-        Ok(())
-    }
-
-    fn extend_from_declset(&mut self, declset: &DeclSetValue) -> anyhow::Result<()> {
-        for type_def in &declset.type_definitions {
-            self.insert_type_def(type_def)?;
-        }
-        Ok(())
-    }
+fn resolved_function_definition<'a>(
+    program: &'a ir::ResolvedProgram,
+    function_name: &str,
+) -> Option<(&'a ir::FunctionDefinition, bool)> {
+    program
+        .comptime_function_definitions
+        .get(function_name)
+        .map(|definition| (definition, true))
+        .or_else(|| {
+            program
+                .function_definitions
+                .get(function_name)
+                .map(|definition| (definition, false))
+        })
 }
 
-#[derive(Clone)]
-struct EvalWorld {
-    functions: HashMap<String, parser::Function>,
-    type_catalog: TypeCatalog,
+fn resolved_expression_source_span(
+    program: &ir::ResolvedProgram,
+    path: &str,
+) -> Option<SourceSpan> {
+    program
+        .semantic_expr_metadata
+        .get(path)
+        .and_then(|metadata| metadata.source_span.clone())
 }
 
-fn preload_stdlib_comptime_context(world: &mut EvalWorld) -> anyhow::Result<()> {
-    let stdlib_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("std")
-        .join("std.oa");
-    let stdlib_ast = flat_imports::parse_and_resolve_file(&stdlib_path)?;
-
-    for function in stdlib_ast.top_level_functions {
-        if function.is_comptime {
-            world
-                .functions
-                .entry(function.name.clone())
-                .or_insert(function);
-        }
-    }
-    for type_def in stdlib_ast.type_definitions {
-        let already_known = match &type_def {
-            TypeDefDecl::Struct(def) => world.type_catalog.all_types.contains(&def.name),
-            TypeDefDecl::Enum(def) => world.type_catalog.all_types.contains(&def.name),
-        };
-        if !already_known {
-            world.type_catalog.insert_type_def(&type_def)?;
-        }
-    }
-
-    Ok(())
-}
-
-pub fn execute_comptime_applies(ast: &mut Ast) -> anyhow::Result<()> {
+pub fn execute_comptime_applies(
+    ast: &mut Ast,
+    mut program: ir::ResolvedProgram,
+) -> anyhow::Result<()> {
     if ast.comptime_applies.is_empty() {
         return Ok(());
     }
 
-    let mut functions = HashMap::new();
-    for function in &ast.top_level_functions {
-        if function.is_comptime {
-            if functions
-                .insert(function.name.clone(), function.clone())
-                .is_some()
-            {
-                return Err(anyhow::anyhow!(
-                    "duplicate comptime function {}",
-                    function.name
-                ));
-            }
-        }
-    }
-
-    let mut world = EvalWorld {
-        functions,
-        type_catalog: TypeCatalog::from_ast(ast)?,
-    };
-    preload_stdlib_comptime_context(&mut world)?;
-
-    let mut call_stack = Vec::new();
     for apply in ast.comptime_applies.clone() {
-        let function = world
-            .functions
-            .get(&apply.function_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown comptime function {}", apply.function_name))?
-            .clone();
-        if !function.is_comptime {
+        let (function, is_comptime) = resolved_function_definition(&program, &apply.function_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown comptime function {}", apply.function_name))?;
+        let function_name = function.name.clone();
+        let parameter_count = function.sig.parameters.len();
+        let first_parameter_type = function
+            .sig
+            .parameters
+            .first()
+            .map(|param| param.ty.clone());
+        if !is_comptime {
             return Err(anyhow::anyhow!(
                 "comptime apply target {} must be declared with `comptime fun`",
                 apply.function_name
             ));
         }
-        if function.parameters.len() != 1 {
+        if parameter_count != 1 {
             return Err(anyhow::anyhow!(
                 "comptime apply target {} must accept exactly one parameter",
                 apply.function_name
             ));
         }
-        if function.parameters[0].ty != "Type" {
+        if first_parameter_type.as_deref() != Some("Type") {
             return Err(anyhow::anyhow!(
                 "comptime apply target {} must accept a Type parameter, got {}",
                 apply.function_name,
-                function.parameters[0].ty
+                first_parameter_type.unwrap_or_else(|| "<missing>".to_string())
             ));
         }
-        let result = evaluate_comptime_function(
-            &function.name,
+        let result = evaluate_function(
+            &function_name,
             vec![CtValueWithMeta::new(
                 CtValue::Type(apply.argument_type.clone()),
                 None,
+                None,
             )],
-            &mut world,
-            &mut call_stack,
+            &program,
+            &mut Vec::new(),
         )?;
         let CtValue::DeclSet(declset) = result.value else {
             return Err(anyhow::anyhow!(
                 "comptime apply target {} must return DeclSet",
-                function.name
+                function_name
             ));
         };
-        world.type_catalog.extend_from_declset(&declset)?;
         merge_declset_into_ast(ast, declset)?;
+        program = resolve_bootstrap_program(ast)?;
     }
 
     Ok(())
@@ -281,43 +251,35 @@ fn merge_declset_into_ast(ast: &mut Ast, declset: DeclSetValue) -> anyhow::Resul
     Ok(())
 }
 
-fn evaluate_comptime_function(
+fn evaluate_function(
     function_name: &str,
     args: Vec<CtValueWithMeta>,
-    world: &mut EvalWorld,
+    program: &ir::ResolvedProgram,
     call_stack: &mut Vec<String>,
 ) -> anyhow::Result<CtValueWithMeta> {
-    if call_stack.iter().any(|name| name == function_name) {
+    if call_stack.len() >= MAX_CALL_STACK_DEPTH {
         return Err(anyhow::anyhow!(
-            "recursive comptime calls are unsupported in v1: {} -> {}",
+            "comptime call stack exceeded limit ({}): {} -> {}",
+            MAX_CALL_STACK_DEPTH,
             call_stack.join(" -> "),
             function_name
         ));
     }
-    let function = world
-        .functions
-        .get(function_name)
-        .ok_or_else(|| anyhow::anyhow!("unknown comptime function {}", function_name))?
-        .clone();
-    if !function.is_comptime {
+    let (function, is_comptime) = resolved_function_definition(program, function_name)
+        .ok_or_else(|| anyhow::anyhow!("unknown comptime-callable function {}", function_name))?;
+    if function.sig.parameters.len() != args.len() {
         return Err(anyhow::anyhow!(
-            "function {} is not a comptime function",
-            function_name
-        ));
-    }
-    if function.parameters.len() != args.len() {
-        return Err(anyhow::anyhow!(
-            "comptime function {} expects {} arguments, got {}",
+            "function {} expects {} arguments, got {}",
             function_name,
-            function.parameters.len(),
+            function.sig.parameters.len(),
             args.len()
         ));
     }
 
-    for (parameter, arg) in function.parameters.iter().zip(args.iter()) {
+    for (parameter, arg) in function.sig.parameters.iter().zip(args.iter()) {
         if !ct_value_matches_type(&arg.value, &parameter.ty) {
             return Err(anyhow::anyhow!(
-                "comptime function {} argument type mismatch for {}: expected {}, got {}",
+                "function {} argument type mismatch for {}: expected {}, got {}",
                 function_name,
                 parameter.name,
                 parameter.ty,
@@ -328,24 +290,46 @@ fn evaluate_comptime_function(
 
     call_stack.push(function_name.to_string());
     let mut env = HashMap::new();
-    for type_name in world.type_catalog.all_types.iter() {
+    for type_name in program.type_definitions.keys() {
         env.insert(
             type_name.clone(),
-            CtValueWithMeta::new(CtValue::Type(type_name.clone()), None),
+            CtValueWithMeta::new(CtValue::Type(type_name.clone()), None, None),
         );
     }
-    for (parameter, arg) in function.parameters.iter().zip(args) {
+    for (parameter, arg) in function.sig.parameters.iter().zip(args) {
         env.insert(parameter.name.clone(), arg);
     }
 
+    for (clause_ordinal, clause) in function.preconditions.iter().enumerate() {
+        let full_path = format!(
+            "{}/pre:{}",
+            function_scope_prefix(function_name, is_comptime),
+            clause_ordinal
+        );
+        let condition = evaluate_expression(clause, &full_path, &mut env, program, call_stack)?;
+        if !expect_bool(&condition.value, "comptime precondition")? {
+            call_stack.pop();
+            return Err(anyhow::anyhow!(
+                "precondition {} of {} evaluated to false during comptime execution",
+                clause_ordinal,
+                function_name
+            ));
+        }
+    }
+
     for (statement_index, statement) in function.body.iter().enumerate() {
-        let path = format!("comptime_fn:{function_name}/stmt:{statement_index}");
-        if let Some(ret) = evaluate_statement(statement, &path, &mut env, world, call_stack)? {
-            if !ct_value_matches_type(&ret.value, &function.return_type) {
+        let full_path = format!(
+            "{}/stmt:{}",
+            function_scope_prefix(function_name, is_comptime),
+            statement_index
+        );
+        if let Some(ret) = evaluate_statement(statement, &full_path, &mut env, program, call_stack)?
+        {
+            if !ct_value_matches_type(&ret.value, &function.sig.return_type) {
                 return Err(anyhow::anyhow!(
-                    "comptime function {} must return {}, got {}",
+                    "function {} must return {}, got {}",
                     function_name,
-                    function.return_type,
+                    function.sig.return_type,
                     ct_value_type_name(&ret.value)
                 ));
             }
@@ -356,25 +340,73 @@ fn evaluate_comptime_function(
 
     call_stack.pop();
     Err(anyhow::anyhow!(
-        "comptime function {} must return a value",
+        "function {} must return a value",
         function_name
     ))
+}
+
+fn function_scope_prefix(function_name: &str, is_comptime: bool) -> String {
+    if is_comptime {
+        format!("comptime_fn:{function_name}")
+    } else {
+        format!("fn:{function_name}")
+    }
+}
+
+fn with_expression_metadata(
+    mut value: CtValueWithMeta,
+    path: &str,
+    program: &ir::ResolvedProgram,
+) -> CtValueWithMeta {
+    value.provenance = Some(path.to_string());
+    value.source_span = resolved_expression_source_span(program, path);
+    value
 }
 
 fn evaluate_statement(
     statement: &Statement,
     path: &str,
     env: &mut HashMap<String, CtValueWithMeta>,
-    world: &mut EvalWorld,
+    program: &ir::ResolvedProgram,
     call_stack: &mut Vec<String>,
 ) -> anyhow::Result<Option<CtValueWithMeta>> {
     match statement {
         Statement::StructDef { .. } => Err(anyhow::anyhow!(
             "local struct declarations are unsupported in comptime function bodies"
         )),
-        Statement::Match { .. } => Err(anyhow::anyhow!(
-            "match statements are unsupported in comptime evaluator v1"
-        )),
+        Statement::Match { subject, arms } => {
+            let subject_value = evaluate_expression(
+                subject,
+                &format!("{path}/match.subject"),
+                env,
+                program,
+                call_stack,
+            )?;
+            for (arm_index, arm) in arms.iter().enumerate() {
+                let pattern_match = match_pattern_binding(&subject_value, &arm.pattern)?;
+                if pattern_match.matched {
+                    let previous = pattern_match
+                        .binding
+                        .as_ref()
+                        .and_then(|(name, value)| env.insert(name.clone(), value.clone()));
+                    for (statement_index, statement) in arm.body.iter().enumerate() {
+                        let arm_full_path =
+                            format!("{path}/match.arm.{arm_index}.{statement_index}");
+                        if let Some(ret) =
+                            evaluate_statement(statement, &arm_full_path, env, program, call_stack)?
+                        {
+                            restore_match_binding(env, pattern_match.binding.as_ref(), previous);
+                            return Ok(Some(ret));
+                        }
+                    }
+                    restore_match_binding(env, pattern_match.binding.as_ref(), previous);
+                    return Ok(None);
+                }
+            }
+            Err(anyhow::anyhow!(
+                "non-exhaustive match in comptime evaluator"
+            ))
+        }
         Statement::Conditional {
             condition,
             body,
@@ -384,7 +416,7 @@ fn evaluate_statement(
                 condition,
                 &format!("{path}/if.cond"),
                 env,
-                world,
+                program,
                 call_stack,
             )?;
             let cond_bool = expect_bool(&cond.value, "if condition")?;
@@ -394,7 +426,7 @@ fn evaluate_statement(
                         statement,
                         &format!("{path}/if.body.{index}"),
                         env,
-                        world,
+                        program,
                         call_stack,
                     )? {
                         return Ok(Some(ret));
@@ -406,7 +438,7 @@ fn evaluate_statement(
                         statement,
                         &format!("{path}/if.else.{index}"),
                         env,
-                        world,
+                        program,
                         call_stack,
                     )? {
                         return Ok(Some(ret));
@@ -420,19 +452,24 @@ fn evaluate_statement(
                 value,
                 &format!("{path}/assign.value"),
                 env,
-                world,
+                program,
                 call_stack,
             )?;
             env.insert(variable.clone(), evaluated);
             Ok(None)
         }
         Statement::Return { expr } => {
-            let evaluated =
-                evaluate_expression(expr, &format!("{path}/return"), env, world, call_stack)?;
+            let evaluated = evaluate_expression(
+                expr,
+                &format!("{path}/return.expr"),
+                env,
+                program,
+                call_stack,
+            )?;
             Ok(Some(evaluated))
         }
         Statement::Expression { expr } => {
-            evaluate_expression(expr, &format!("{path}/expr"), env, world, call_stack)?;
+            evaluate_expression(expr, &format!("{path}/expr"), env, program, call_stack)?;
             Ok(None)
         }
         Statement::Prove { condition } => {
@@ -440,7 +477,7 @@ fn evaluate_statement(
                 condition,
                 &format!("{path}/prove.cond"),
                 env,
-                world,
+                program,
                 call_stack,
             )?;
             if !expect_bool(&evaluated.value, "prove condition")? {
@@ -455,7 +492,7 @@ fn evaluate_statement(
                 condition,
                 &format!("{path}/assert.cond"),
                 env,
-                world,
+                program,
                 call_stack,
             )?;
             if !expect_bool(&evaluated.value, "assert condition")? {
@@ -479,7 +516,7 @@ fn evaluate_statement(
                     condition,
                     &format!("{path}/while.cond"),
                     env,
-                    world,
+                    program,
                     call_stack,
                 )?;
                 let cond_bool = expect_bool(&cond.value, "while condition")?;
@@ -491,7 +528,7 @@ fn evaluate_statement(
                         statement,
                         &format!("{path}/while.body.{statement_index}"),
                         env,
-                        world,
+                        program,
                         call_stack,
                     )? {
                         return Ok(Some(ret));
@@ -507,36 +544,68 @@ fn evaluate_expression(
     expression: &Expression,
     path: &str,
     env: &mut HashMap<String, CtValueWithMeta>,
-    world: &mut EvalWorld,
+    program: &ir::ResolvedProgram,
     call_stack: &mut Vec<String>,
 ) -> anyhow::Result<CtValueWithMeta> {
     match expression {
-        Expression::Match { .. } => Err(anyhow::anyhow!(
-            "match expressions are unsupported in comptime evaluator v1"
-        )),
+        Expression::Match { subject, arms } => {
+            let subject_value = evaluate_expression(
+                subject,
+                &format!("{path}/match.subject"),
+                env,
+                program,
+                call_stack,
+            )?;
+            for (arm_index, arm) in arms.iter().enumerate() {
+                let pattern_match = match_pattern_binding(&subject_value, &arm.pattern)?;
+                if pattern_match.matched {
+                    let previous = pattern_match
+                        .binding
+                        .as_ref()
+                        .and_then(|(name, value)| env.insert(name.clone(), value.clone()));
+                    let value = evaluate_expression(
+                        &arm.value,
+                        &format!("{path}/match.arm.{arm_index}"),
+                        env,
+                        program,
+                        call_stack,
+                    )?;
+                    restore_match_binding(env, pattern_match.binding.as_ref(), previous);
+                    return Ok(with_expression_metadata(value, path, program));
+                }
+            }
+            Err(anyhow::anyhow!(
+                "non-exhaustive match in comptime evaluator"
+            ))
+        }
         Expression::Literal(Literal::Int(n)) => {
             let value = i32::try_from(*n)
                 .map_err(|_| anyhow::anyhow!("integer literal {} is out of i32 range", n))?;
             Ok(CtValueWithMeta::new(
                 CtValue::I32(value),
                 Some(path.to_string()),
+                resolved_expression_source_span(program, path),
             ))
         }
-        Expression::Literal(Literal::Float32(value)) => Err(anyhow::anyhow!(
-            "FP32 literal {} is unsupported in comptime evaluator",
-            value
+        Expression::Literal(Literal::Float32(value)) => Ok(CtValueWithMeta::new(
+            CtValue::FP32(value.clone()),
+            Some(path.to_string()),
+            resolved_expression_source_span(program, path),
         )),
-        Expression::Literal(Literal::Float64(value)) => Err(anyhow::anyhow!(
-            "FP64 literal {} is unsupported in comptime evaluator",
-            value
+        Expression::Literal(Literal::Float64(value)) => Ok(CtValueWithMeta::new(
+            CtValue::FP64(value.clone()),
+            Some(path.to_string()),
+            resolved_expression_source_span(program, path),
         )),
         Expression::Literal(Literal::String(s)) => Ok(CtValueWithMeta::new(
             CtValue::String(s.clone()),
             Some(path.to_string()),
+            resolved_expression_source_span(program, path),
         )),
         Expression::Literal(Literal::Bool(b)) => Ok(CtValueWithMeta::new(
             CtValue::Bool(*b),
             Some(path.to_string()),
+            resolved_expression_source_span(program, path),
         )),
         Expression::Variable(name) => env
             .get(name)
@@ -551,23 +620,19 @@ fn evaluate_expression(
                         arg,
                         &format!("{path}/call.arg.{index}"),
                         env,
-                        world,
+                        program,
                         call_stack,
                     )
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            evaluate_call(name, evaluated_args, path, world, call_stack)
+            let value = evaluate_call(name, evaluated_args, path, program, call_stack)?;
+            Ok(with_expression_metadata(value, path, program))
         }
         Expression::MethodCall {
             receiver,
             method,
             args,
         } => {
-            let Expression::Variable(trait_name) = receiver.as_ref() else {
-                return Err(anyhow::anyhow!(
-                    "method calls are unsupported in comptime evaluator v1"
-                ));
-            };
             let evaluated_args = args
                 .iter()
                 .enumerate()
@@ -576,23 +641,68 @@ fn evaluate_expression(
                         arg,
                         &format!("{path}/method.arg.{index}"),
                         env,
-                        world,
+                        program,
                         call_stack,
                     )
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            evaluate_builtin_operator_trait_call(trait_name, method, evaluated_args, path)
+            if let Expression::Variable(name) = receiver.as_ref() {
+                let can_use_type_namespace = matches!(
+                    env.get(name).map(|value| &value.value),
+                    Some(CtValue::Type(type_name)) if type_name == name
+                );
+                if is_builtin_operator_trait_name(name) && !env.contains_key(name) {
+                    return evaluate_builtin_operator_trait_call(
+                        name,
+                        method,
+                        evaluated_args,
+                        path,
+                    );
+                }
+                if can_use_type_namespace || !env.contains_key(name) {
+                    if let Some(enum_value) = try_make_enum_constructor(
+                        name,
+                        method,
+                        evaluated_args.clone(),
+                        path,
+                        program,
+                    )? {
+                        return Ok(with_expression_metadata(enum_value, path, program));
+                    }
+                    let namespaced_call = parser::qualify_namespace_function_name(name, method);
+                    if resolved_function_definition(program, &namespaced_call).is_some()
+                        || namespaced_call == META_EXPR_OPT_FUNCTION
+                    {
+                        let value = evaluate_call(
+                            &namespaced_call,
+                            evaluated_args,
+                            path,
+                            program,
+                            call_stack,
+                        )?;
+                        return Ok(with_expression_metadata(value, path, program));
+                    }
+                }
+            }
+            let evaluated_receiver = evaluate_expression(
+                receiver,
+                &format!("{path}/method.receiver"),
+                env,
+                program,
+                call_stack,
+            )?;
+            let value = evaluate_supported_method_call(
+                evaluated_receiver,
+                method,
+                evaluated_args,
+                path,
+                program,
+                call_stack,
+            )?;
+            Ok(with_expression_metadata(value, path, program))
         }
         Expression::PostfixCall { callee, args } => {
-            let Expression::FieldAccess {
-                struct_variable,
-                field,
-            } = callee.as_ref()
-            else {
-                return Err(anyhow::anyhow!(
-                    "postfix calls are unsupported in comptime evaluator v1"
-                ));
-            };
+            let callee = callee.as_ref();
             let evaluated_args = args
                 .iter()
                 .enumerate()
@@ -601,37 +711,135 @@ fn evaluate_expression(
                         arg,
                         &format!("{path}/postfix.arg.{index}"),
                         env,
-                        world,
+                        program,
                         call_stack,
                     )
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            evaluate_builtin_operator_trait_call(struct_variable, field, evaluated_args, path)
+            match callee {
+                Expression::FieldAccess {
+                    struct_variable,
+                    field,
+                } if is_builtin_operator_trait_name(struct_variable) => {
+                    let value = evaluate_builtin_operator_trait_call(
+                        struct_variable,
+                        field,
+                        evaluated_args,
+                        path,
+                    )?;
+                    Ok(with_expression_metadata(value, path, program))
+                }
+                Expression::FieldAccess {
+                    struct_variable,
+                    field,
+                } => {
+                    if let Some(enum_value) = try_make_enum_constructor(
+                        struct_variable,
+                        field,
+                        evaluated_args.clone(),
+                        path,
+                        program,
+                    )? {
+                        return Ok(with_expression_metadata(enum_value, path, program));
+                    }
+                    let namespaced_call =
+                        parser::qualify_namespace_function_name(struct_variable, field);
+                    let value =
+                        evaluate_call(&namespaced_call, evaluated_args, path, program, call_stack)?;
+                    Ok(with_expression_metadata(value, path, program))
+                }
+                _ => Err(anyhow::anyhow!(
+                    "postfix calls are unsupported in comptime evaluator"
+                )),
+            }
         }
         Expression::BinOp(op, left, right) => {
             let left =
-                evaluate_expression(left, &format!("{path}/bin.left"), env, world, call_stack)?;
-            let right =
-                evaluate_expression(right, &format!("{path}/bin.right"), env, world, call_stack)?;
+                evaluate_expression(left, &format!("{path}/bin.left"), env, program, call_stack)?;
+            let right = evaluate_expression(
+                right,
+                &format!("{path}/bin.right"),
+                env,
+                program,
+                call_stack,
+            )?;
             let value = evaluate_binary_op(*op, &left.value, &right.value)?;
-            Ok(CtValueWithMeta::new(value, Some(path.to_string())))
+            Ok(CtValueWithMeta::new(
+                value,
+                Some(path.to_string()),
+                resolved_expression_source_span(program, path),
+            ))
         }
         Expression::UnaryOp(op, expr) => {
             let inner =
-                evaluate_expression(expr, &format!("{path}/unary"), env, world, call_stack)?;
+                evaluate_expression(expr, &format!("{path}/unary"), env, program, call_stack)?;
             match op {
                 UnaryOp::Not => Ok(CtValueWithMeta::new(
                     CtValue::Bool(!expect_bool(&inner.value, "unary ! operand")?),
                     Some(path.to_string()),
+                    resolved_expression_source_span(program, path),
                 )),
             }
         }
-        Expression::FieldAccess { .. } => Err(anyhow::anyhow!(
-            "field access is unsupported in comptime evaluator v1"
-        )),
-        Expression::StructValue { .. } => Err(anyhow::anyhow!(
-            "struct literals are unsupported in comptime evaluator v1"
-        )),
+        Expression::FieldAccess {
+            struct_variable,
+            field,
+        } => {
+            let value = env.get(struct_variable).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown variable {} in comptime field access",
+                    struct_variable
+                )
+            })?;
+            let result = match value.value {
+                CtValue::Struct { fields, .. } => fields.get(field).cloned().ok_or_else(|| {
+                    anyhow::anyhow!("field {} not found in {}", field, struct_variable)
+                }),
+                _ => Err(anyhow::anyhow!(
+                    "field access requires struct value, got {}",
+                    ct_value_type_name(&value.value)
+                )),
+            }?;
+            Ok(with_expression_metadata(result, path, program))
+        }
+        Expression::StructValue {
+            struct_name,
+            field_values,
+        } => {
+            let struct_def = resolved_struct_def(program, struct_name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("unknown struct {} in comptime literal", struct_name)
+                })?
+                .clone();
+            let mut fields = HashMap::new();
+            for (field_index, (field_name, field_value)) in field_values.iter().enumerate() {
+                let value = evaluate_expression(
+                    field_value,
+                    &format!("{path}/struct.field.{field_index}"),
+                    env,
+                    program,
+                    call_stack,
+                )?;
+                fields.insert(field_name.clone(), value);
+            }
+            for field in &struct_def.struct_fields {
+                if !fields.contains_key(&field.name) {
+                    return Err(anyhow::anyhow!(
+                        "missing field {} in comptime struct literal {}",
+                        field.name,
+                        struct_name
+                    ));
+                }
+            }
+            Ok(CtValueWithMeta::new(
+                CtValue::Struct {
+                    type_name: struct_name.clone(),
+                    fields,
+                },
+                Some(path.to_string()),
+                resolved_expression_source_span(program, path),
+            ))
+        }
     }
 }
 
@@ -692,7 +900,7 @@ fn evaluate_builtin_operator_trait_call(
     args: Vec<CtValueWithMeta>,
     path: &str,
 ) -> anyhow::Result<CtValueWithMeta> {
-    let as_value = |value| CtValueWithMeta::new(value, Some(path.to_string()));
+    let as_value = |value| CtValueWithMeta::new(value, Some(path.to_string()), None);
     if args.len() != 2 {
         return Err(anyhow::anyhow!(
             "trait call {}.{} expects 2 arguments in comptime evaluator, got {}",
@@ -765,6 +973,217 @@ fn evaluate_builtin_operator_trait_call(
     }
 }
 
+fn is_builtin_operator_trait_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Addition" | "Subtraction" | "Multiplication" | "Division" | "Equality" | "Comparison"
+    )
+}
+
+fn resolved_struct_def<'a>(
+    program: &'a ir::ResolvedProgram,
+    struct_name: &str,
+) -> Option<&'a StructDef> {
+    match program.type_definitions.get(struct_name) {
+        Some(ir::TypeDef::Struct(def)) => Some(def),
+        _ => None,
+    }
+}
+
+fn resolved_enum_def<'a>(
+    program: &'a ir::ResolvedProgram,
+    enum_name: &str,
+) -> Option<&'a ir::EnumTypeDef> {
+    match program.type_definitions.get(enum_name) {
+        Some(ir::TypeDef::Enum(def)) => Some(def),
+        _ => None,
+    }
+}
+
+fn resolved_type_exists(program: &ir::ResolvedProgram, type_name: &str) -> bool {
+    program.type_definitions.contains_key(type_name)
+}
+
+fn evaluate_supported_method_call(
+    receiver: CtValueWithMeta,
+    method_name: &str,
+    args: Vec<CtValueWithMeta>,
+    path: &str,
+    program: &ir::ResolvedProgram,
+    call_stack: &mut Vec<String>,
+) -> anyhow::Result<CtValueWithMeta> {
+    if let Some(namespace) = ct_value_namespace_name(&receiver.value) {
+        let function_name = parser::qualify_namespace_function_name(&namespace, method_name);
+        if resolved_function_definition(program, &function_name).is_some() {
+            let mut call_args = Vec::with_capacity(args.len() + 1);
+            call_args.push(receiver);
+            call_args.extend(args);
+            return evaluate_call(&function_name, call_args, path, program, call_stack);
+        }
+    }
+    Err(anyhow::anyhow!(
+        "method call {}.{} is unsupported in comptime evaluator",
+        ct_value_type_name(&receiver.value),
+        method_name
+    ))
+}
+
+fn ct_value_namespace_name(value: &CtValue) -> Option<String> {
+    match value {
+        CtValue::String(_) => Some("String".to_string()),
+        CtValue::Type(_) => Some("Type".to_string()),
+        CtValue::Struct { type_name, .. } => Some(type_name.clone()),
+        CtValue::Enum { type_name, .. } => Some(type_name.clone()),
+        CtValue::StructInfo(_) => Some("StructInfo".to_string()),
+        CtValue::FieldInfo(_) => Some("FieldInfo".to_string()),
+        CtValue::EnumInfo(_) => Some("EnumInfo".to_string()),
+        CtValue::VariantInfo(_) => Some("VariantInfo".to_string()),
+        CtValue::DeclSet(_) => Some("DeclSet".to_string()),
+        CtValue::SemanticExpr(_) => Some("SemanticExpr".to_string()),
+        CtValue::SourceSpan(_) => Some("SourceSpan".to_string()),
+        CtValue::Option { concrete_type, .. } => Some(concrete_type.clone()),
+        CtValue::Bool(_)
+        | CtValue::I32(_)
+        | CtValue::I64(_)
+        | CtValue::FP32(_)
+        | CtValue::FP64(_) => None,
+    }
+}
+
+fn try_make_enum_constructor(
+    enum_name: &str,
+    variant_name: &str,
+    args: Vec<CtValueWithMeta>,
+    path: &str,
+    program: &ir::ResolvedProgram,
+) -> anyhow::Result<Option<CtValueWithMeta>> {
+    let Some(enum_def) = resolved_enum_def(program, enum_name) else {
+        return Ok(None);
+    };
+    let Some(variant) = enum_def
+        .variants
+        .iter()
+        .find(|variant| variant.name == variant_name)
+    else {
+        return Ok(None);
+    };
+    let payload = match (&variant.payload_ty, args.as_slice()) {
+        (None, []) => None,
+        (Some(_), [value]) => Some(Box::new(value.clone())),
+        (None, _) => {
+            return Err(anyhow::anyhow!(
+                "enum constructor {}.{} expects no payload",
+                enum_name,
+                variant_name
+            ))
+        }
+        (Some(_), _) => {
+            return Err(anyhow::anyhow!(
+                "enum constructor {}.{} expects one payload argument",
+                enum_name,
+                variant_name
+            ))
+        }
+    };
+    Ok(Some(CtValueWithMeta::new(
+        CtValue::Enum {
+            type_name: enum_name.to_string(),
+            variant_name: variant_name.to_string(),
+            payload,
+        },
+        Some(path.to_string()),
+        None,
+    )))
+}
+
+fn match_pattern_binding(
+    subject: &CtValueWithMeta,
+    pattern: &parser::MatchPattern,
+) -> anyhow::Result<PatternMatchResult> {
+    let parser::MatchPattern::Variant {
+        type_name,
+        variant_name,
+        binder,
+    } = pattern;
+
+    match &subject.value {
+        CtValue::Enum {
+            type_name: subject_type,
+            variant_name: subject_variant,
+            payload,
+        } if subject_type == type_name && subject_variant == variant_name => {
+            let binding = match (binder, payload) {
+                (Some(name), Some(payload)) => Some((name.clone(), (**payload).clone())),
+                (None, None) => None,
+                (None, Some(_)) => None,
+                (Some(_), None) => {
+                    return Err(anyhow::anyhow!(
+                        "match binder requires payload for {}.{}",
+                        type_name,
+                        variant_name
+                    ))
+                }
+            };
+            Ok(PatternMatchResult {
+                matched: true,
+                binding,
+            })
+        }
+        CtValue::Option {
+            inner,
+            concrete_type,
+            ..
+        } if concrete_type == type_name => match (variant_name.as_str(), inner, binder) {
+            ("None", None, None) => Ok(PatternMatchResult {
+                matched: true,
+                binding: None,
+            }),
+            ("None", None, Some(_)) => Err(anyhow::anyhow!(
+                "match binder requires payload for {}.{}",
+                type_name,
+                variant_name
+            )),
+            ("Some", Some(payload), Some(name)) => Ok(PatternMatchResult {
+                matched: true,
+                binding: Some((
+                    name.clone(),
+                    CtValueWithMeta::new(
+                        (**payload).clone(),
+                        subject.provenance.clone(),
+                        subject.source_span.clone(),
+                    ),
+                )),
+            }),
+            ("Some", Some(_), None) => Ok(PatternMatchResult {
+                matched: true,
+                binding: None,
+            }),
+            _ => Ok(PatternMatchResult {
+                matched: false,
+                binding: None,
+            }),
+        },
+        _ => Ok(PatternMatchResult {
+            matched: false,
+            binding: None,
+        }),
+    }
+}
+
+fn restore_match_binding(
+    env: &mut HashMap<String, CtValueWithMeta>,
+    binding: Option<&(String, CtValueWithMeta)>,
+    previous: Option<CtValueWithMeta>,
+) {
+    if let Some((name, _)) = binding {
+        if let Some(previous) = previous {
+            env.insert(name.clone(), previous);
+        } else {
+            env.remove(name);
+        }
+    }
+}
+
 fn checked_i32_binary(
     left: i32,
     right: i32,
@@ -789,47 +1208,53 @@ fn evaluate_call(
     name: &str,
     args: Vec<CtValueWithMeta>,
     path: &str,
-    world: &mut EvalWorld,
+    program: &ir::ResolvedProgram,
     call_stack: &mut Vec<String>,
 ) -> anyhow::Result<CtValueWithMeta> {
-    let as_value = |value| CtValueWithMeta::new(value, Some(path.to_string()));
-    let as_option = |inner: Option<CtValue>, inner_type: &str| {
+    let as_value = |value| CtValueWithMeta::new(value, Some(path.to_string()), None);
+    let as_option = |inner: Option<CtValue>, concrete_type: &str, inner_type: &str| {
         CtValueWithMeta::new(
             CtValue::Option {
                 inner: inner.map(Box::new),
                 inner_type: inner_type.to_string(),
+                concrete_type: concrete_type.to_string(),
             },
             Some(path.to_string()),
+            None,
         )
     };
 
     match name {
-        "expr_meta_opt" => {
+        META_EXPR_OPT_FUNCTION | META_EXPR_METADATA_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             if let Some(meta) = args[0].provenance.clone() {
-                Ok(as_option(Some(CtValue::SemanticExpr(meta)), "SemanticExpr"))
+                Ok(as_option(
+                    Some(CtValue::SemanticExpr(SemanticExprValue {
+                        id: meta,
+                        source_span: args[0].source_span.clone(),
+                    })),
+                    "SemanticExprOpt",
+                    "SemanticExpr",
+                ))
             } else {
-                Ok(as_option(None, "SemanticExpr"))
+                Ok(as_option(None, "SemanticExprOpt", "SemanticExpr"))
             }
         }
-        "definition_location_opt" => {
+        META_DEFINITION_LOCATION_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
-            if args[0].provenance.is_some() {
+            let semantic_expr =
+                expect_semantic_expr(&args[0].value, "definition_location_opt argument")?;
+            if let Some(span) = semantic_expr.source_span.clone() {
                 Ok(as_option(
-                    Some(CtValue::SourceSpan(SourceSpan {
-                        file: None,
-                        start_line: None,
-                        start_column: None,
-                        end_line: None,
-                        end_column: None,
-                    })),
+                    Some(CtValue::SourceSpan(span)),
+                    "SourceSpanOpt",
                     "SourceSpan",
                 ))
             } else {
-                Ok(as_option(None, "SourceSpan"))
+                Ok(as_option(None, "SourceSpanOpt", "SourceSpan"))
             }
         }
-        "concat" => {
+        "String__concat" => {
             ensure_arity(name, &args, 2)?;
             Ok(as_value(CtValue::String(format!(
                 "{}{}",
@@ -837,99 +1262,82 @@ fn evaluate_call(
                 expect_string(&args[1].value, "concat right argument")?
             ))))
         }
-        "is_some" => {
-            ensure_arity(name, &args, 1)?;
-            let CtValue::Option { inner, .. } = &args[0].value else {
-                return Err(anyhow::anyhow!(
-                    "is_some expects Option[T], got {}",
-                    ct_value_type_name(&args[0].value)
-                ));
-            };
-            Ok(as_value(CtValue::Bool(inner.is_some())))
-        }
-        "unwrap" => {
-            ensure_arity(name, &args, 1)?;
-            let CtValue::Option { inner, inner_type } = &args[0].value else {
-                return Err(anyhow::anyhow!(
-                    "unwrap expects Option[T], got {}",
-                    ct_value_type_name(&args[0].value)
-                ));
-            };
-            let Some(inner) = inner.clone() else {
-                return Err(anyhow::anyhow!(
-                    "unwrap called on None for Option[{}]",
-                    inner_type
-                ));
-            };
-            Ok(CtValueWithMeta::new(*inner, Some(path.to_string())))
-        }
-        "resolve_type" => {
+        META_RESOLVE_TYPE_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             Ok(as_value(CtValue::Type(
                 expect_string(&args[0].value, "resolve_type argument")?.to_string(),
             )))
         }
-        "type_name" => {
+        META_TYPE_NAME_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             Ok(as_value(CtValue::String(
                 expect_type_name(&args[0].value, "type_name argument")?.to_string(),
             )))
         }
-        "is_struct" => {
+        META_IS_STRUCT_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let type_name = expect_type_name(&args[0].value, "is_struct argument")?;
             Ok(as_value(CtValue::Bool(
-                world.type_catalog.structs.contains_key(type_name),
+                resolved_struct_def(program, type_name).is_some(),
             )))
         }
-        "is_enum" => {
+        META_IS_ENUM_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let type_name = expect_type_name(&args[0].value, "is_enum argument")?;
             Ok(as_value(CtValue::Bool(
-                world.type_catalog.enums.contains_key(type_name),
+                resolved_enum_def(program, type_name).is_some(),
             )))
         }
-        "as_struct_opt" => {
+        META_AS_STRUCT_OPT_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let type_name = expect_type_name(&args[0].value, "as_struct_opt argument")?;
-            if let Some(struct_def) = world.type_catalog.structs.get(type_name) {
+            if let Some(struct_def) = resolved_struct_def(program, type_name) {
                 Ok(as_option(
                     Some(CtValue::StructInfo(StructInfoValue {
                         name: struct_def.name.clone(),
                         fields: struct_def.struct_fields.clone(),
                     })),
+                    "StructInfoOpt",
                     "StructInfo",
                 ))
             } else {
-                Ok(as_option(None, "StructInfo"))
+                Ok(as_option(None, "StructInfoOpt", "StructInfo"))
             }
         }
-        "as_enum_opt" => {
+        META_AS_ENUM_OPT_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let type_name = expect_type_name(&args[0].value, "as_enum_opt argument")?;
-            if let Some(enum_def) = world.type_catalog.enums.get(type_name) {
+            if let Some(enum_def) = resolved_enum_def(program, type_name) {
                 Ok(as_option(
                     Some(CtValue::EnumInfo(EnumInfoValue {
                         name: enum_def.name.clone(),
-                        variants: enum_def.variants.clone(),
+                        variants: enum_def
+                            .variants
+                            .iter()
+                            .map(|variant| EnumVariantDef {
+                                name: variant.name.clone(),
+                                payload_ty: variant.payload_ty.clone(),
+                            })
+                            .collect(),
                     })),
+                    "EnumInfoOpt",
                     "EnumInfo",
                 ))
             } else {
-                Ok(as_option(None, "EnumInfo"))
+                Ok(as_option(None, "EnumInfoOpt", "EnumInfo"))
             }
         }
-        "struct_field_count" => {
+        META_STRUCT_FIELD_COUNT_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let struct_info = expect_struct_info(&args[0].value, "struct_field_count argument")?;
             Ok(as_value(CtValue::I32(struct_info.fields.len() as i32)))
         }
-        "struct_field_at" => {
+        META_STRUCT_FIELD_AT_INTRINSIC => {
             ensure_arity(name, &args, 2)?;
             let struct_info = expect_struct_info(&args[0].value, "struct_field_at first argument")?;
             let index = expect_i32(&args[1].value, "struct_field_at second argument")?;
             if index < 0 || index as usize >= struct_info.fields.len() {
-                return Ok(as_option(None, "FieldInfo"));
+                return Ok(as_option(None, "FieldInfoOpt", "FieldInfo"));
             }
             let field = &struct_info.fields[index as usize];
             Ok(as_option(
@@ -939,20 +1347,21 @@ fn evaluate_call(
                     name: field.name.clone(),
                     ty: field.ty.clone(),
                 })),
+                "FieldInfoOpt",
                 "FieldInfo",
             ))
         }
-        "enum_variant_count" => {
+        META_ENUM_VARIANT_COUNT_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let enum_info = expect_enum_info(&args[0].value, "enum_variant_count argument")?;
             Ok(as_value(CtValue::I32(enum_info.variants.len() as i32)))
         }
-        "enum_variant_at" => {
+        META_ENUM_VARIANT_AT_INTRINSIC => {
             ensure_arity(name, &args, 2)?;
             let enum_info = expect_enum_info(&args[0].value, "enum_variant_at first argument")?;
             let index = expect_i32(&args[1].value, "enum_variant_at second argument")?;
             if index < 0 || index as usize >= enum_info.variants.len() {
-                return Ok(as_option(None, "VariantInfo"));
+                return Ok(as_option(None, "VariantInfoOpt", "VariantInfo"));
             }
             let variant = &enum_info.variants[index as usize];
             Ok(as_option(
@@ -962,56 +1371,65 @@ fn evaluate_call(
                     name: variant.name.clone(),
                     payload_ty: variant.payload_ty.clone(),
                 })),
+                "VariantInfoOpt",
                 "VariantInfo",
             ))
         }
-        "field_name" => {
+        META_FIELD_NAME_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let field_info = expect_field_info(&args[0].value, "field_name argument")?;
             Ok(as_value(CtValue::String(field_info.name.clone())))
         }
-        "field_type" => {
+        META_FIELD_TYPE_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let field_info = expect_field_info(&args[0].value, "field_type argument")?;
             Ok(as_value(CtValue::Type(field_info.ty.clone())))
         }
-        "variant_name" => {
+        META_VARIANT_NAME_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let variant_info = expect_variant_info(&args[0].value, "variant_name argument")?;
             Ok(as_value(CtValue::String(variant_info.name.clone())))
         }
-        "variant_payload_type_opt" => {
+        META_VARIANT_PAYLOAD_TYPE_OPT_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
             let variant_info =
                 expect_variant_info(&args[0].value, "variant_payload_type_opt argument")?;
             Ok(as_option(
                 variant_info.payload_ty.clone().map(CtValue::Type),
+                "TypeOpt",
                 "Type",
             ))
         }
-        "declset_new" => {
+        META_SOURCE_SPAN_DISPLAY_INTRINSIC => {
+            ensure_arity(name, &args, 1)?;
+            let span = expect_source_span(&args[0].value, "SourceSpan.display_compact argument")?;
+            Ok(as_value(CtValue::String(format_source_span_compact(span))))
+        }
+        EMIT_DECLSET_NEW_INTRINSIC => {
             ensure_arity(name, &args, 0)?;
             Ok(as_value(CtValue::DeclSet(DeclSetValue::default())))
         }
-        "declset_add_empty_enum" => {
+        EMIT_ADD_EMPTY_ENUM_INTRINSIC => {
             ensure_arity(name, &args, 2)?;
             let mut declset =
                 expect_declset(&args[0].value, "declset_add_empty_enum first argument")?.clone();
             let new_name = expect_string(&args[1].value, "declset_add_empty_enum second argument")?
                 .to_string();
-            if type_known_in_declset_or_catalog(&new_name, &declset, &world.type_catalog) {
+            if type_known_in_declset_or_program(&new_name, &declset, program) {
                 return Err(anyhow::anyhow!(
                     "declset_add_empty_enum cannot emit duplicate type {}",
                     new_name
                 ));
             }
-            declset.type_definitions.push(TypeDefDecl::Enum(EnumDef {
-                name: new_name,
-                variants: vec![],
-            }));
+            declset
+                .type_definitions
+                .push(TypeDefDecl::Enum(parser::EnumDef {
+                    name: new_name,
+                    variants: vec![],
+                }));
             Ok(as_value(CtValue::DeclSet(declset)))
         }
-        "declset_add_enum_tag_variant" => {
+        EMIT_ADD_ENUM_TAG_VARIANT_INTRINSIC => {
             ensure_arity(name, &args, 3)?;
             let mut declset = expect_declset(
                 &args[0].value,
@@ -1044,7 +1462,7 @@ fn evaluate_call(
             });
             Ok(as_value(CtValue::DeclSet(declset)))
         }
-        "declset_add_enum_payload_variant" => {
+        EMIT_ADD_ENUM_PAYLOAD_VARIANT_INTRINSIC => {
             ensure_arity(name, &args, 4)?;
             let mut declset = expect_declset(
                 &args[0].value,
@@ -1082,7 +1500,7 @@ fn evaluate_call(
             });
             Ok(as_value(CtValue::DeclSet(declset)))
         }
-        "declset_add_derived_struct" => {
+        EMIT_ADD_DERIVED_STRUCT_INTRINSIC => {
             ensure_arity(name, &args, 3)?;
             let mut declset =
                 expect_declset(&args[0].value, "declset_add_derived_struct first argument")?
@@ -1092,7 +1510,7 @@ fn evaluate_call(
             let new_name =
                 expect_string(&args[2].value, "declset_add_derived_struct third argument")?
                     .to_string();
-            if world.type_catalog.all_types.contains(&new_name)
+            if resolved_type_exists(program, &new_name)
                 || declset.type_definitions.iter().any(|def| match def {
                     TypeDefDecl::Struct(def) => def.name == new_name,
                     TypeDefDecl::Enum(def) => def.name == new_name,
@@ -1111,7 +1529,7 @@ fn evaluate_call(
                 }));
             Ok(as_value(CtValue::DeclSet(declset)))
         }
-        "declset_add_invariant_field_gt_i32" => {
+        EMIT_ADD_INVARIANT_FIELD_GT_I32_INTRINSIC => {
             ensure_arity(name, &args, 5)?;
             let mut declset = expect_declset(
                 &args[0].value,
@@ -1137,8 +1555,8 @@ fn evaluate_call(
                 "declset_add_invariant_field_gt_i32 fifth argument",
             )?;
 
-            let struct_def = find_struct_for_type(target_type, &declset, &world.type_catalog)
-                .ok_or_else(|| {
+            let struct_def =
+                find_struct_for_type(target_type, &declset, program).ok_or_else(|| {
                     anyhow::anyhow!(
                         "declset_add_invariant_field_gt_i32 target {} is not a known struct",
                         target_type
@@ -1186,17 +1604,23 @@ fn evaluate_call(
                         Box::new(Expression::Literal(Literal::Int(literal))),
                     ),
                 }],
+                source_span: None,
+                local_source_spans: HashMap::new(),
             });
 
             Ok(as_value(CtValue::DeclSet(declset)))
         }
         _ => {
-            if world.functions.contains_key(name) {
-                let result = evaluate_comptime_function(name, args, world, call_stack)?;
-                Ok(CtValueWithMeta::new(result.value, Some(path.to_string())))
+            if resolved_function_definition(program, name).is_some() {
+                let result = evaluate_function(name, args, program, call_stack)?;
+                Ok(CtValueWithMeta::new(
+                    result.value,
+                    Some(path.to_string()),
+                    result.source_span,
+                ))
             } else {
                 Err(anyhow::anyhow!(
-                    "unsupported function call {} in comptime evaluator (v1 is deterministic and pure)",
+                    "unsupported function call {} in comptime evaluator (it remains deterministic and pure)",
                     name
                 ))
             }
@@ -1207,7 +1631,7 @@ fn evaluate_call(
 fn find_struct_for_type<'a>(
     target_type: &str,
     declset: &'a DeclSetValue,
-    catalog: &'a TypeCatalog,
+    program: &'a ir::ResolvedProgram,
 ) -> Option<&'a StructDef> {
     for type_def in declset.type_definitions.iter().rev() {
         if let TypeDefDecl::Struct(def) = type_def {
@@ -1216,13 +1640,13 @@ fn find_struct_for_type<'a>(
             }
         }
     }
-    catalog.structs.get(target_type)
+    resolved_struct_def(program, target_type)
 }
 
 fn find_emitted_enum_mut<'a>(
     declset: &'a mut DeclSetValue,
     target_type: &str,
-) -> Option<&'a mut EnumDef> {
+) -> Option<&'a mut parser::EnumDef> {
     for type_def in declset.type_definitions.iter_mut().rev() {
         if let TypeDefDecl::Enum(def) = type_def {
             if def.name == target_type {
@@ -1233,12 +1657,12 @@ fn find_emitted_enum_mut<'a>(
     None
 }
 
-fn type_known_in_declset_or_catalog(
+fn type_known_in_declset_or_program(
     target_type: &str,
     declset: &DeclSetValue,
-    catalog: &TypeCatalog,
+    program: &ir::ResolvedProgram,
 ) -> bool {
-    catalog.all_types.contains(target_type)
+    resolved_type_exists(program, target_type)
         || declset
             .type_definitions
             .iter()
@@ -1249,7 +1673,7 @@ fn type_known_in_declset_or_catalog(
 }
 
 fn ensure_enum_variant_name_available(
-    enum_def: &EnumDef,
+    enum_def: &parser::EnumDef,
     variant_name: &str,
     builtin_name: &str,
 ) -> anyhow::Result<()> {
@@ -1394,11 +1818,53 @@ fn expect_declset<'a>(value: &'a CtValue, context: &str) -> anyhow::Result<&'a D
     }
 }
 
+fn expect_semantic_expr<'a>(
+    value: &'a CtValue,
+    context: &str,
+) -> anyhow::Result<&'a SemanticExprValue> {
+    if let CtValue::SemanticExpr(value) = value {
+        Ok(value)
+    } else {
+        Err(anyhow::anyhow!(
+            "{} expected SemanticExpr, got {}",
+            context,
+            ct_value_type_name(value)
+        ))
+    }
+}
+
+fn expect_source_span<'a>(value: &'a CtValue, context: &str) -> anyhow::Result<&'a SourceSpan> {
+    if let CtValue::SourceSpan(value) = value {
+        Ok(value)
+    } else {
+        Err(anyhow::anyhow!(
+            "{} expected SourceSpan, got {}",
+            context,
+            ct_value_type_name(value)
+        ))
+    }
+}
+
+fn format_source_span_compact(span: &SourceSpan) -> String {
+    let Some(file) = span.file.as_deref() else {
+        return "<unknown>".to_string();
+    };
+    let Some(start_line) = span.start_line else {
+        return file.to_string();
+    };
+    let Some(start_column) = span.start_column else {
+        return format!("{file}:{start_line}");
+    };
+    format!("{file}:{start_line}:{start_column}")
+}
+
 fn values_equal(left: &CtValue, right: &CtValue) -> anyhow::Result<bool> {
     match (left, right) {
         (CtValue::Bool(a), CtValue::Bool(b)) => Ok(a == b),
         (CtValue::I32(a), CtValue::I32(b)) => Ok(a == b),
         (CtValue::I64(a), CtValue::I64(b)) => Ok(a == b),
+        (CtValue::FP32(a), CtValue::FP32(b)) => Ok(a == b),
+        (CtValue::FP64(a), CtValue::FP64(b)) => Ok(a == b),
         (CtValue::Type(a), CtValue::Type(b)) => Ok(a == b),
         (CtValue::SemanticExpr(a), CtValue::SemanticExpr(b)) => Ok(a == b),
         _ => Err(anyhow::anyhow!(
@@ -1414,8 +1880,12 @@ fn ct_value_type_name(value: &CtValue) -> String {
         CtValue::Bool(_) => "Bool".to_string(),
         CtValue::I32(_) => "I32".to_string(),
         CtValue::I64(_) => "I64".to_string(),
+        CtValue::FP32(_) => "FP32".to_string(),
+        CtValue::FP64(_) => "FP64".to_string(),
         CtValue::String(_) => "String".to_string(),
         CtValue::Type(_) => "Type".to_string(),
+        CtValue::Struct { type_name, .. } => type_name.clone(),
+        CtValue::Enum { type_name, .. } => type_name.clone(),
         CtValue::StructInfo(_) => "StructInfo".to_string(),
         CtValue::FieldInfo(_) => "FieldInfo".to_string(),
         CtValue::EnumInfo(_) => "EnumInfo".to_string(),
@@ -1423,25 +1893,51 @@ fn ct_value_type_name(value: &CtValue) -> String {
         CtValue::DeclSet(_) => "DeclSet".to_string(),
         CtValue::SemanticExpr(_) => "SemanticExpr".to_string(),
         CtValue::SourceSpan(_) => "SourceSpan".to_string(),
-        CtValue::Option { inner_type, .. } => format!("Option[{inner_type}]"),
+        CtValue::Option { concrete_type, .. } => concrete_type.clone(),
     }
 }
 
 fn ct_value_matches_type(value: &CtValue, ty: &str) -> bool {
     match value {
-        CtValue::Option { inner_type, .. } => ty == format!("Option[{inner_type}]"),
-        _ => ct_value_type_name(value) == ty,
+        CtValue::Option {
+            inner_type,
+            concrete_type,
+            ..
+        } => {
+            let expected = normalize_type_alias(ty);
+            let concrete = normalize_type_alias(concrete_type);
+            expected == concrete || expected == format!("Option[{inner_type}]")
+        }
+        _ => normalize_type_alias(&ct_value_type_name(value)) == normalize_type_alias(ty),
+    }
+}
+
+fn normalize_type_alias(ty: &str) -> String {
+    match ty {
+        "Int" => "I32".to_string(),
+        "PtrInt" => "I64".to_string(),
+        _ => ty.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::execute_comptime_applies;
+    use crate::ir::{self, ResolveMode};
     use crate::{parser, tokenizer};
 
     fn parse_source(source: &str) -> parser::Ast {
         let tokens = tokenizer::tokenize(source.to_string()).expect("tokenize source");
         parser::parse(tokens).expect("parse source")
+    }
+
+    fn execute(ast: &mut parser::Ast) -> anyhow::Result<()> {
+        if ast.comptime_applies.is_empty() {
+            return Ok(());
+        }
+        let bootstrap = ir::resolve_with_mode(ast.clone(), ResolveMode::BootstrapComptime)
+            .expect("bootstrap resolve");
+        execute_comptime_applies(ast, bootstrap)
     }
 
     #[test]
@@ -1457,7 +1953,7 @@ fun main() -> I32 {
 }
 "#,
         );
-        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        execute(&mut ast).expect("execute comptime applies");
         assert_eq!(ast.type_definitions.len(), 1);
         assert!(ast.comptime_applies.is_empty());
     }
@@ -1472,22 +1968,21 @@ struct Counter {
 }
 
 comptime fun make_positive_second(T: Type) -> DeclSet {
-	ds = declset_new()
-	s = as_struct_opt(T)
-	if is_some(s) {
-		info = unwrap(s)
-		if struct_field_count(info) >= 2 {
-			f = struct_field_at(info, 1)
-			if is_some(f) {
-				second = unwrap(f)
-				if field_type(second) == I32 {
-					new_name = concat(type_name(T), "PositiveSecond")
-					ds2 = declset_add_derived_struct(ds, info, new_name)
-					return declset_add_invariant_field_gt_i32(
-						ds2,
-						resolve_type(new_name),
+	ds = DeclSet.new()
+	s = T.as_struct_opt()
+	if s.is_some() {
+		info = s.unwrap()
+		if info.field_count() >= 2 {
+			f = info.field_at(1)
+			if f.is_some() {
+				second = f.unwrap()
+				if second.ty() == I32 {
+					new_name = T.name().concat("PositiveSecond")
+					ds2 = ds.add_derived_struct(info, new_name)
+					return ds2.add_invariant_field_gt_i32(
+						Type.resolve(new_name),
 						"second field must be > 0",
-						field_name(second),
+						second.name(),
 						0
 					)
 				}
@@ -1501,7 +1996,7 @@ comptime apply make_positive_second(Counter)
 "#,
         );
 
-        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        execute(&mut ast).expect("execute comptime applies");
         assert!(ast.type_definitions.iter().any(|def| {
             matches!(
                 def,
@@ -1522,11 +2017,11 @@ struct Counter {
 }
 
 comptime fun derive(T: Type) -> DeclSet {
-	ds = declset_new()
-	s = as_struct_opt(T)
-	if is_some(s) {
-		info = unwrap(s)
-		return declset_add_derived_struct(ds, info, concat(type_name(T), "X"))
+	ds = DeclSet.new()
+	s = T.as_struct_opt()
+	if s.is_some() {
+		info = s.unwrap()
+		return ds.add_derived_struct(info, T.name().concat("X"))
 	}
 	return ds
 }
@@ -1535,7 +2030,7 @@ comptime apply derive(Counter)
 comptime apply derive(CounterX)
 "#,
         );
-        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        execute(&mut ast).expect("execute comptime applies");
         assert!(ast.type_definitions.iter().any(|def| {
             matches!(def, parser::TypeDefDecl::Struct(def) if def.name == "CounterX")
         }));
@@ -1559,39 +2054,39 @@ enum Token {
 }
 
 comptime fun reflect(T: Type) -> DeclSet {
-	ds = declset_new()
-	assert(is_enum(T))
-	assert(!is_enum(resolve_type("Payload")))
-	assert(!is_some(as_struct_opt(T)))
-	e = as_enum_opt(T)
-	assert(is_some(e))
-	info = unwrap(e)
-	assert(enum_variant_count(info) == 3)
-	out_name = concat(type_name(T), "Tags")
-	ds = declset_add_empty_enum(ds, out_name)
-	first = enum_variant_at(info, 0)
-	assert(is_some(first))
-	v0 = unwrap(first)
-	p0 = variant_payload_type_opt(v0)
-	assert(is_some(p0))
-	assert(unwrap(p0) == I32)
-	second = enum_variant_at(info, 1)
-	assert(is_some(second))
-	v1 = unwrap(second)
-	assert(!is_some(variant_payload_type_opt(v1)))
-	third = enum_variant_at(info, 2)
-	assert(is_some(third))
-	v2 = unwrap(third)
-	p2 = variant_payload_type_opt(v2)
-	assert(is_some(p2))
-	assert(unwrap(p2) == Payload)
+	ds = DeclSet.new()
+	assert(T.is_enum())
+	assert(!Type.resolve("Payload").is_enum())
+	assert(!T.as_struct_opt().is_some())
+	e = T.as_enum_opt()
+	assert(e.is_some())
+	info = e.unwrap()
+	assert(info.variant_count() == 3)
+	out_name = T.name().concat("Tags")
+	ds = ds.add_empty_enum(out_name)
+	first = info.variant_at(0)
+	assert(first.is_some())
+	v0 = first.unwrap()
+	p0 = v0.payload_type_opt()
+	assert(p0.is_some())
+	assert(p0.unwrap() == I32)
+	second = info.variant_at(1)
+	assert(second.is_some())
+	v1 = second.unwrap()
+	assert(!v1.payload_type_opt().is_some())
+	third = info.variant_at(2)
+	assert(third.is_some())
+	v2 = third.unwrap()
+	p2 = v2.payload_type_opt()
+	assert(p2.is_some())
+	assert(p2.unwrap() == Payload)
 	neg_one = 0 - 1
-	assert(!is_some(enum_variant_at(info, neg_one)))
-	assert(!is_some(enum_variant_at(info, 3)))
+	assert(!info.variant_at(neg_one).is_some())
+	assert(!info.variant_at(3).is_some())
 	i = 0
-	while i < enum_variant_count(info) {
-		v = unwrap(enum_variant_at(info, i))
-		ds = declset_add_enum_tag_variant(ds, out_name, variant_name(v))
+	while i < info.variant_count() {
+		v = info.variant_at(i).unwrap()
+		ds = ds.add_enum_tag_variant(out_name, v.name())
 		i = i + 1
 	}
 	return ds
@@ -1601,7 +2096,7 @@ comptime apply reflect(Token)
 "#,
         );
 
-        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        execute(&mut ast).expect("execute comptime applies");
         let emitted = ast
             .type_definitions
             .iter()
@@ -1634,18 +2129,18 @@ enum Token {
 }
 
 comptime fun clone_enum(T: Type) -> DeclSet {
-	ds = declset_new()
-	e = unwrap(as_enum_opt(T))
-	out_name = concat(type_name(T), "Clone")
-	ds = declset_add_empty_enum(ds, out_name)
+	ds = DeclSet.new()
+	e = T.as_enum_opt().unwrap()
+	out_name = T.name().concat("Clone")
+	ds = ds.add_empty_enum(out_name)
 	i = 0
-	while i < enum_variant_count(e) {
-		v = unwrap(enum_variant_at(e, i))
-		payload_opt = variant_payload_type_opt(v)
-		if is_some(payload_opt) {
-			ds = declset_add_enum_payload_variant(ds, out_name, variant_name(v), unwrap(payload_opt))
+	while i < e.variant_count() {
+		v = e.variant_at(i).unwrap()
+		payload_opt = v.payload_type_opt()
+		if payload_opt.is_some() {
+			ds = ds.add_enum_payload_variant(out_name, v.name(), payload_opt.unwrap())
 		} else {
-			ds = declset_add_enum_tag_variant(ds, out_name, variant_name(v))
+			ds = ds.add_enum_tag_variant(out_name, v.name())
 		}
 		i = i + 1
 	}
@@ -1656,7 +2151,7 @@ comptime apply clone_enum(Token)
 "#,
         );
 
-        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        execute(&mut ast).expect("execute comptime applies");
         let emitted = ast
             .type_definitions
             .iter()
@@ -1688,7 +2183,7 @@ comptime apply derive_enum_tags(Token)
 "#,
         );
 
-        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        execute(&mut ast).expect("execute comptime applies");
         let emitted = ast
             .type_definitions
             .iter()
@@ -1715,17 +2210,16 @@ struct Counter {
 }
 
 comptime fun meta_probe(T: Type) -> DeclSet {
-	meta_from_param = expr_meta_opt(T)
-	meta_from_expr = expr_meta_opt(resolve_type("I32"))
-	assert(!is_some(meta_from_param))
-	assert(is_some(meta_from_expr))
-	return declset_new()
+	meta_from_param = Meta.expr_opt(T)
+	assert(!meta_from_param.is_some())
+	assert(Meta.expr_opt(Type.resolve("I32")).is_some())
+	return DeclSet.new()
 }
 
 comptime apply meta_probe(Counter)
 "#,
         );
-        execute_comptime_applies(&mut ast).expect("execute comptime applies");
+        execute(&mut ast).expect("execute comptime applies");
     }
 
     #[test]
@@ -1733,17 +2227,19 @@ comptime apply meta_probe(Counter)
         let mut ast = parse_source(
             r#"
 comptime fun bad(T: Type) -> DeclSet {
-	ds = declset_new()
-	s = as_struct_opt(T)
-	info = unwrap(s)
-	return declset_add_derived_struct(ds, info, "X")
+	ds = DeclSet.new()
+	s = T.as_struct_opt()
+	info = s.unwrap()
+	return ds.add_derived_struct(info, "X")
 }
 
 comptime apply bad(I32)
 "#,
         );
-        let err = execute_comptime_applies(&mut ast).expect_err("bad emit should fail");
-        assert!(err.to_string().contains("unwrap called on None"));
+        let err = execute(&mut ast).expect_err("bad emit should fail");
+        assert!(err
+            .to_string()
+            .contains("precondition 0 of StructInfoOpt__unwrap evaluated to false"));
     }
 
     #[test]
@@ -1752,13 +2248,13 @@ comptime apply bad(I32)
             r#"
 comptime fun overflow(T: Type) -> DeclSet {
 	x = 2147483647 + 1
-	return declset_new()
+	return DeclSet.new()
 }
 
 comptime apply overflow(I32)
 "#,
         );
-        let err = execute_comptime_applies(&mut ast).expect_err("overflow should fail");
+        let err = execute(&mut ast).expect_err("overflow should fail");
         assert!(err
             .to_string()
             .contains("comptime integer overflow in 2147483647 + 1"));
@@ -1770,13 +2266,13 @@ comptime apply overflow(I32)
             r#"
 comptime fun div_zero(T: Type) -> DeclSet {
 	x = 1 / 0
-	return declset_new()
+	return DeclSet.new()
 }
 
 comptime apply div_zero(I32)
 "#,
         );
-        let err = execute_comptime_applies(&mut ast).expect_err("division by zero should fail");
+        let err = execute(&mut ast).expect_err("division by zero should fail");
         assert!(err
             .to_string()
             .contains("comptime division by zero in 1 / 0"));
@@ -1791,13 +2287,13 @@ comptime fun div_min(T: Type) -> DeclSet {
 	min = min - 1
 	neg_one = 0 - 1
 	x = min / neg_one
-	return declset_new()
+	return DeclSet.new()
 }
 
 comptime apply div_min(I32)
 "#,
         );
-        let err = execute_comptime_applies(&mut ast).expect_err("min / -1 should fail");
+        let err = execute(&mut ast).expect_err("min / -1 should fail");
         assert!(err
             .to_string()
             .contains("comptime integer overflow in -2147483648 / -1"));
@@ -1815,31 +2311,101 @@ comptime fun ops(T: Type) -> DeclSet {
 	cmp = Comparison.compare(quotient, 3)
 	assert(Equality.equals(quotient, 3))
 	assert(cmp == 0)
-	return declset_new()
+	return DeclSet.new()
 }
 
 comptime apply ops(I32)
 "#,
         );
-        execute_comptime_applies(&mut ast).expect("builtin operator trait calls should work");
+        execute(&mut ast).expect("builtin operator trait calls should work");
     }
 
     #[test]
-    fn custom_operator_trait_calls_fail_closed_in_comptime() {
+    fn resolved_operator_impl_calls_work_in_comptime() {
         let mut ast = parse_source(
             r#"
-comptime fun bad(T: Type) -> DeclSet {
-	same = "alpha" == "alpha"
-	return declset_new()
+struct Counter {
+	value: I32,
 }
 
-comptime apply bad(I32)
+impl Equality for Counter {
+	fun equals(a: Counter, b: Counter) -> Bool {
+		return a.value == b.value
+	}
+}
+
+comptime fun check(T: Type) -> DeclSet {
+	same = Counter struct { value: 7 } == Counter struct { value: 7 }
+	assert(same)
+	return DeclSet.new()
+}
+
+comptime apply check(I32)
 "#,
         );
-        let err = execute_comptime_applies(&mut ast)
-            .expect_err("custom operator trait calls should fail closed in comptime");
-        assert!(err
-            .to_string()
-            .contains("unsupported equality in comptime evaluator for String and String"));
+        execute(&mut ast).expect("resolved operator impl calls should work in comptime");
+    }
+
+    #[test]
+    fn ordinary_helper_preconditions_and_custom_operator_impls_work_in_comptime() {
+        let mut ast = parse_source(
+            r#"
+struct Counter {
+	value: I32,
+}
+
+impl Equality for Counter {
+	fun equals(a: Counter, b: Counter) -> Bool {
+		return a.value == b.value
+	}
+}
+
+fun require_same(v: Counter) -> Counter pre {
+	v == Counter struct { value: 7 }
+} {
+	return v
+}
+
+comptime fun derive(T: Type) -> DeclSet {
+	c = require_same(Counter struct { value: 7 })
+	assert(c == Counter struct { value: 7 })
+	return DeclSet.new()
+}
+
+comptime apply derive(Counter)
+"#,
+        );
+
+        execute(&mut ast).expect("ordinary helper preconditions should execute in comptime");
+    }
+
+    #[test]
+    fn later_applies_see_types_emitted_by_earlier_applies() {
+        let mut ast = parse_source(
+            r#"
+struct Counter {
+	value: I32,
+}
+
+comptime fun emit_x(T: Type) -> DeclSet {
+	return DeclSet.new().add_derived_struct(T.as_struct_opt().unwrap(), T.name().concat("X"))
+}
+
+comptime fun emit_y(T: Type) -> DeclSet {
+	return DeclSet.new().add_derived_struct(T.as_struct_opt().unwrap(), T.name().concat("Y"))
+}
+
+comptime apply emit_x(Counter)
+comptime apply emit_y(CounterX)
+"#,
+        );
+
+        execute(&mut ast).expect("later applies should see earlier emitted types");
+        assert!(ast.type_definitions.iter().any(|def| {
+            matches!(def, parser::TypeDefDecl::Struct(def) if def.name == "CounterX")
+        }));
+        assert!(ast.type_definitions.iter().any(|def| {
+            matches!(def, parser::TypeDefDecl::Struct(def) if def.name == "CounterXY")
+        }));
     }
 }

@@ -34,6 +34,19 @@ generic Option[T] {
 			Option.Some(value) => value
 		}
 	}
+
+	fun unwrap(v: Option) -> T pre {
+		v.is_some()
+	} {
+		match v {
+			Option.None => {
+				assert(false)
+			}
+			Option.Some(value) => {
+				return value
+			}
+		}
+	}
 }
 
 generic Result[T, E] {

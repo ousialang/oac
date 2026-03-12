@@ -7,7 +7,7 @@ invariant positive_value "counter value must be non-negative" for (v: Counter) {
 }
 
 fun make_counter() -> Counter {
-	return Counter struct { value: sub(0, 1), }
+	return Counter struct { value: 0 - 1, }
 }
 
 fun main() -> I32 {

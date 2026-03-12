@@ -3,11 +3,13 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::ast_paths::{local_statement_key, marker_path_id};
+use crate::ast_walk::{self, AstPathStyle};
 use crate::invariant_metadata::{
     build_function_arg_invariant_assumptions_for_names, discover_struct_invariant_bindings,
     InvariantBinding,
 };
-use crate::ir::ResolvedProgram;
+use crate::ir::{ResolvedProgram, SourceSpan};
 use crate::precondition_metadata::build_function_precondition_assumptions_for_names;
 use crate::qbe_backend::INTEGER_SAFETY_MARKER_PREFIX;
 use crate::verification_cache::{
@@ -114,6 +116,8 @@ struct IntegerSafetySite {
     lhs_marker: String,
     rhs_marker: String,
     out_marker: String,
+    ast_path: Option<String>,
+    source_span: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug)]
@@ -121,7 +125,9 @@ pub(crate) struct PreparedIntegerSafetySite {
     site: IntegerSafetySite,
     qbe_filename: String,
     smt_filename: String,
-    smt: String,
+    solver_smt: String,
+    #[allow(dead_code)]
+    artifact_smt: String,
 }
 
 impl PreparedIntegerSafetySite {
@@ -137,7 +143,7 @@ impl PreparedIntegerSafetySite {
         VerificationSummaryInput {
             kind: VerificationKind::Prove,
             local_id: self.site.id.clone(),
-            smt: self.smt.clone(),
+            smt: self.solver_smt.clone(),
         }
     }
 }
@@ -216,7 +222,7 @@ pub(crate) fn prepare_integer_safety_obligations_with_config(
     let mut prepared = Vec::new();
     for root in roots {
         let reachable = reachable_user_functions(program, &root.function_name)?;
-        let sites = collect_integer_sites(&function_map, &reachable, &root)?;
+        let sites = collect_integer_sites(program, &function_map, &reachable, &root)?;
         if sites.is_empty() {
             continue;
         }
@@ -254,7 +260,24 @@ pub(crate) fn prepare_integer_safety_obligations_with_config(
                 )
             })?;
 
-            let smt = qbe_smt::qbe_module_to_smt_with_assumptions(
+            let mut header_comments = vec![
+                format!("integer safety obligation {}", site.id),
+                format!("root: {}", site.root_name),
+                format!("caller: {}", site.caller),
+                format!(
+                    "operation: {} {}",
+                    site.integer_type.diagnostic_label(),
+                    site.op.marker_label()
+                ),
+                "bad means exit == 1 is reachable".to_string(),
+            ];
+            if let Some(ast_path) = &site.ast_path {
+                header_comments.insert(3, format!("ast path: {}", ast_path));
+            }
+            if let Some(source_span) = &site.source_span {
+                header_comments.insert(3, format!("source: {}", source_span.display_compact()));
+            }
+            let scripts = qbe_smt::qbe_module_to_annotated_smt_with_assumptions(
                 &checker_module,
                 "main",
                 &qbe_smt::EncodeOptions {
@@ -265,6 +288,7 @@ pub(crate) fn prepare_integer_safety_obligations_with_config(
                     first_arg_i32_range: None,
                 },
                 &assumptions,
+                &qbe_smt::ArtifactAnnotations { header_comments },
             )
             .map_err(|err| {
                 anyhow::anyhow!(
@@ -276,7 +300,7 @@ pub(crate) fn prepare_integer_safety_obligations_with_config(
             })?;
 
             let smt_path = verification_dir.join(&smt_filename);
-            std::fs::write(&smt_path, &smt).with_context(|| {
+            std::fs::write(&smt_path, &scripts.artifact_smt).with_context(|| {
                 format!(
                     "failed to write integer safety SMT obligation {}",
                     smt_path.display()
@@ -287,7 +311,8 @@ pub(crate) fn prepare_integer_safety_obligations_with_config(
                 site,
                 qbe_filename,
                 smt_filename,
-                smt,
+                solver_smt: scripts.solver_smt,
+                artifact_smt: scripts.artifact_smt,
             });
         }
     }
@@ -348,7 +373,7 @@ pub(crate) fn verify_prepared_integer_safety_obligations(
                 }
             };
 
-        match solve_chc_with_policy(&prepared.smt, config.profile) {
+        match solve_chc_with_policy(&prepared.solver_smt, config.profile) {
             Ok(run) if run.final_run.result == qbe_smt::SolverResult::Unsat => {
                 record_outcome(VerificationOutcomeRecord {
                     kind: VerificationKind::Prove,
@@ -546,6 +571,7 @@ fn collect_verification_roots(
 }
 
 fn collect_integer_sites(
+    program: &ResolvedProgram,
     function_map: &HashMap<String, qbe::Function>,
     reachable: &HashSet<String>,
     root: &VerificationRoot,
@@ -555,6 +581,42 @@ fn collect_integer_sites(
 
     let mut sites = Vec::new();
     for function_name in functions {
+        let source_paths = program
+            .function_definitions
+            .get(&function_name)
+            .map(|definition| {
+                let mut out = HashMap::new();
+                for (statement_index, statement) in definition.body.iter().enumerate() {
+                    ast_walk::walk_statement_expressions(
+                        statement,
+                        &local_statement_key(statement_index),
+                        AstPathStyle::Ir,
+                        &mut |expr_path, expression| {
+                            let crate::parser::Expression::BinOp(op, _, _) = expression else {
+                                return;
+                            };
+                            if !matches!(
+                                op,
+                                crate::parser::Op::Add
+                                    | crate::parser::Op::Sub
+                                    | crate::parser::Op::Mul
+                                    | crate::parser::Op::Div
+                            ) {
+                                return;
+                            }
+                            out.insert(
+                                marker_path_id(expr_path),
+                                (
+                                    expr_path.to_string(),
+                                    definition.local_source_spans.get(expr_path).cloned(),
+                                ),
+                            );
+                        },
+                    );
+                }
+                out
+            })
+            .unwrap_or_default();
         let function = function_map
             .get(&function_name)
             .ok_or_else(|| anyhow::anyhow!("missing QBE function {}", function_name))?;
@@ -569,6 +631,10 @@ fn collect_integer_sites(
             let out_marker = partial
                 .out_marker
                 .ok_or_else(|| anyhow::anyhow!("missing out marker for {}", partial.base))?;
+            let (ast_path, source_span) = source_paths
+                .get(&partial.base)
+                .cloned()
+                .unwrap_or((String::new(), None));
             sites.push(IntegerSafetySite {
                 id: format!(
                     "{}#{}#{}#{}",
@@ -585,6 +651,8 @@ fn collect_integer_sites(
                 lhs_marker,
                 rhs_marker,
                 out_marker,
+                ast_path: (!ast_path.is_empty()).then_some(ast_path),
+                source_span,
             });
         }
     }
@@ -1352,11 +1420,16 @@ fun main() -> I32 {
         )
         .expect("prepare integer safety obligations");
 
-        assert_eq!(prepared.len(), 1);
-        assert_eq!(prepared[0].root_name(), "main");
-        assert_eq!(prepared[0].site.caller, "helper");
+        let matching = prepared
+            .iter()
+            .filter(|site| site.root_name() == "main" && site.site.caller == "helper")
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].root_name(), "main");
+        assert_eq!(matching[0].site.caller, "helper");
         assert_eq!(
-            prepared[0].summary_kind(),
+            matching[0].summary_kind(),
             crate::verification_cache::VerificationSummaryKind::OrdinaryFunction
         );
     }
@@ -1430,7 +1503,8 @@ fun main() -> I32 {
             .expect("main verification root");
         let reachable =
             reachable_user_functions(&program, &root.function_name).expect("reachable functions");
-        let sites = collect_integer_sites(&function_map, &reachable, &root).expect("collect sites");
+        let sites = collect_integer_sites(&program, &function_map, &reachable, &root)
+            .expect("collect sites");
         let site = sites
             .iter()
             .find(|site| site.caller == "main")

@@ -1,7 +1,16 @@
+use std::collections::HashMap;
+
 use serde::Serialize;
 use tracing::trace;
 
-use crate::tokenizer::{TokenData, TokenList};
+use crate::ast_paths::{
+    bin_left_segment, bin_right_segment, expression_statement_segment, if_else_statement_segment,
+    if_then_statement_segment, join_path, local_precondition_key, local_statement_key,
+    match_arm_expression_segment, match_arm_statement_segment, struct_field_segment, unary_segment,
+    while_body_statement_segment, AstPathStyle,
+};
+use crate::source_span::SourceSpan;
+use crate::tokenizer::{TokenData, TokenList, TokenSpan};
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct StructDef {
@@ -125,6 +134,12 @@ pub struct Function {
     pub return_type: String,
     pub is_comptime: bool,
     pub is_extern: bool,
+    #[serde(skip)]
+    pub source_span: Option<SourceSpan>,
+    #[serde(skip)]
+    pub local_source_spans: HashMap<String, SourceSpan>,
+    #[serde(skip)]
+    pub precondition_source_spans: Vec<SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -133,6 +148,10 @@ pub struct StructInvariantDecl {
     pub display_name: String,
     pub parameters: Vec<Parameter>,
     pub body: Vec<Statement>,
+    #[serde(skip)]
+    pub source_span: Option<SourceSpan>,
+    #[serde(skip)]
+    pub local_source_spans: HashMap<String, SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -313,17 +332,181 @@ pub struct Parameter {
     pub ty: String,
 }
 
-fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
+#[derive(Clone, Debug)]
+struct TokenCursor {
+    tokens: Vec<TokenData>,
+    spans: Vec<TokenSpan>,
+    source_name: Option<String>,
+    last_removed_span: Option<TokenSpan>,
+}
+
+impl TokenCursor {
+    fn new(tokens: TokenList) -> Self {
+        Self {
+            tokens: tokens.tokens,
+            spans: tokens.spans,
+            source_name: tokens.source_name,
+            last_removed_span: None,
+        }
+    }
+
+    fn first(&self) -> Option<&TokenData> {
+        self.tokens.first()
+    }
+
+    fn get(&self, index: usize) -> Option<&TokenData> {
+        self.tokens.get(index)
+    }
+
+    fn remove(&mut self, index: usize) -> TokenData {
+        debug_assert_eq!(index, 0, "parser only removes from the front");
+        let token = self.tokens.remove(index);
+        self.last_removed_span = self.spans.get(index).cloned();
+        self.spans.remove(index);
+        token
+    }
+
+    fn retain(&mut self, mut predicate: impl FnMut(&TokenData) -> bool) {
+        let mut kept_tokens = Vec::with_capacity(self.tokens.len());
+        let mut kept_spans = Vec::with_capacity(self.spans.len());
+        for (token, span) in self.tokens.drain(..).zip(self.spans.drain(..)) {
+            if predicate(&token) {
+                kept_tokens.push(token);
+                kept_spans.push(span);
+            }
+        }
+        self.tokens = kept_tokens;
+        self.spans = kept_spans;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.tokens.is_empty()
+    }
+
+    fn current_token_span(&self) -> Option<TokenSpan> {
+        self.spans.first().cloned()
+    }
+
+    fn last_removed_source_span(&self) -> Option<SourceSpan> {
+        self.last_removed_span
+            .as_ref()
+            .map(|span| span.as_source_span(self.source_name.as_deref()))
+    }
+
+    fn source_name(&self) -> Option<&str> {
+        self.source_name.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LocalSourceRecorder {
+    local_source_spans: HashMap<String, SourceSpan>,
+    precondition_source_spans: Vec<SourceSpan>,
+}
+
+impl LocalSourceRecorder {
+    fn record_local(&mut self, path: impl Into<String>, span: Option<SourceSpan>) {
+        if let Some(span) = span {
+            self.local_source_spans.insert(path.into(), span);
+        }
+    }
+
+    fn record_precondition(&mut self, span: Option<SourceSpan>) {
+        if let Some(span) = span {
+            self.precondition_source_spans.push(span);
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ParsedExpressionNode {
+    expression: Expression,
+    span: Option<SourceSpan>,
+    children: Vec<(String, ParsedExpressionNode)>,
+}
+
+impl ParsedExpressionNode {
+    fn new(expression: Expression, span: Option<SourceSpan>) -> Self {
+        Self {
+            expression,
+            span,
+            children: Vec::new(),
+        }
+    }
+}
+
+fn compose_source_span(
+    start: Option<TokenSpan>,
+    end: Option<SourceSpan>,
+    source_name: Option<&str>,
+) -> Option<SourceSpan> {
+    let start = start?;
+    let end = end?;
+    Some(SourceSpan::new(
+        source_name.map(str::to_string),
+        start.start.line,
+        start.start.column,
+        end.end_line?,
+        end.end_column?,
+    ))
+}
+
+fn record_path_span(
+    recorder: Option<&mut LocalSourceRecorder>,
+    path: &str,
+    span: Option<SourceSpan>,
+) {
+    if path.is_empty() {
+        return;
+    }
+    if let Some(recorder) = recorder {
+        recorder.record_local(path.to_string(), span);
+    }
+}
+
+fn local_statement_segment(_style: AstPathStyle, index: usize) -> String {
+    local_statement_key(index)
+}
+
+fn record_expression_node(
+    recorder: &mut LocalSourceRecorder,
+    path: &str,
+    node: &ParsedExpressionNode,
+) {
+    if !path.is_empty() {
+        recorder.record_local(path.to_string(), node.span.clone());
+    }
+    for (segment, child) in &node.children {
+        record_expression_node(recorder, &join_path(path, segment, AstPathStyle::Ir), child);
+    }
+}
+
+#[allow(dead_code)]
+fn parse_statement(tokens: &mut TokenCursor) -> anyhow::Result<Statement> {
+    parse_statement_with_path(tokens, None, "")
+}
+
+fn parse_statement_with_path(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    statement_path: &str,
+) -> anyhow::Result<Statement> {
+    let start = tokens.current_token_span();
     trace!(?tokens, "Parsing statement");
 
-    match tokens.first() {
+    let statement = match tokens.first() {
         Some(TokenData::Word(name)) => {
             let name = name.clone();
 
             if name == "return" {
                 tokens.remove(0);
-                let expr = parse_expression(tokens, 0)?;
-                return Ok(Statement::Return { expr });
+                let expr = parse_expression_with_path(
+                    tokens,
+                    0,
+                    recorder.as_deref_mut(),
+                    &join_path(statement_path, "return.expr", AstPathStyle::Ir),
+                )?;
+                Statement::Return { expr }
             } else if name == "comptime" {
                 return Err(anyhow::anyhow!(
                     "`comptime` declarations are only allowed at top level"
@@ -335,44 +518,93 @@ fn parse_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
                         is_opening: true,
                     })
             {
-                return parse_builtin_assertion_statement(tokens);
+                parse_builtin_assertion_statement(tokens, recorder.as_deref_mut(), statement_path)?
             } else if name == "match" {
                 tokens.remove(0);
-                return parse_match_statement(tokens);
+                parse_match_statement(tokens, recorder.as_deref_mut(), statement_path)?
             } else if name == "if" {
                 tokens.remove(0);
-                let condition = parse_expression(tokens, 0)?;
-                let body = parse_braced_block(tokens)?;
-                let else_body = parse_optional_else(tokens)?;
-                return Ok(Statement::Conditional {
+                let condition = parse_expression_with_path(
+                    tokens,
+                    0,
+                    recorder.as_deref_mut(),
+                    &join_path(statement_path, "if.cond", AstPathStyle::Ir),
+                )?;
+                let body = parse_braced_block(
+                    tokens,
+                    recorder.as_deref_mut(),
+                    statement_path,
+                    if_then_statement_segment,
+                )?;
+                let else_body =
+                    parse_optional_else(tokens, recorder.as_deref_mut(), statement_path)?;
+                Statement::Conditional {
                     condition,
                     body,
                     else_body,
-                });
+                }
             } else if name == "while" {
                 tokens.remove(0);
-                let condition = parse_expression(tokens, 0)?;
-                let body = parse_braced_block(tokens)?;
-                return Ok(Statement::While { condition, body });
+                let condition = parse_expression_with_path(
+                    tokens,
+                    0,
+                    recorder.as_deref_mut(),
+                    &join_path(statement_path, "while.cond", AstPathStyle::Ir),
+                )?;
+                let body = parse_braced_block(
+                    tokens,
+                    recorder.as_deref_mut(),
+                    statement_path,
+                    while_body_statement_segment,
+                )?;
+                Statement::While { condition, body }
             } else if tokens.get(1) == Some(&TokenData::Symbols("=".to_string())) {
                 tokens.remove(0);
                 tokens.remove(0);
                 trace!("Parsing assignment statement");
-                let value = parse_expression(tokens, 0)?;
-                return Ok(Statement::Assign {
+                let value = parse_expression_with_path(
+                    tokens,
+                    0,
+                    recorder.as_deref_mut(),
+                    &join_path(statement_path, "assign.value", AstPathStyle::Ir),
+                )?;
+                Statement::Assign {
                     variable: name,
                     value,
-                });
+                }
             } else {
-                let expr = parse_expression(tokens, 0)?;
-                return Ok(Statement::Expression { expr });
+                let expr = parse_expression_with_path(
+                    tokens,
+                    0,
+                    recorder.as_deref_mut(),
+                    &join_path(
+                        statement_path,
+                        expression_statement_segment(AstPathStyle::Ir),
+                        AstPathStyle::Ir,
+                    ),
+                )?;
+                Statement::Expression { expr }
             }
         }
         token => return Err(anyhow::anyhow!("expected statement instead of {:?}", token)),
-    }
+    };
+    record_path_span(
+        recorder,
+        statement_path,
+        compose_source_span(
+            start,
+            tokens.last_removed_source_span(),
+            tokens.source_name(),
+        ),
+    );
+    Ok(statement)
 }
 
-fn parse_builtin_assertion_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
+fn parse_builtin_assertion_statement(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    statement_path: &str,
+) -> anyhow::Result<Statement> {
     let keyword = match tokens.remove(0) {
         TokenData::Word(name) if name == "prove" || name == "assert" => name,
         other => {
@@ -383,15 +615,41 @@ fn parse_builtin_assertion_statement(tokens: &mut Vec<TokenData>) -> anyhow::Res
         }
     };
 
-    let args = parse_call_args(tokens)?;
-    if args.len() != 1 {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true
+            },
+        "expected opening parenthesis for builtin assertion"
+    );
+    let condition = parse_expression_with_path(
+        tokens,
+        0,
+        recorder.as_deref_mut(),
+        &join_path(
+            statement_path,
+            if keyword == "prove" {
+                "prove.cond"
+            } else {
+                "assert.cond"
+            },
+            AstPathStyle::Ir,
+        ),
+    )?;
+    if matches!(tokens.first(), Some(TokenData::Symbols(symbols)) if symbols == ",") {
         return Err(anyhow::anyhow!(
-            "{} expects exactly one Bool argument, got {}",
-            keyword,
-            args.len()
+            "{keyword} expects exactly one Bool argument"
         ));
     }
-    let condition = args.into_iter().next().expect("single argument exists");
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: ')',
+                is_opening: false
+            },
+        "expected closing parenthesis for builtin assertion"
+    );
     if keyword == "prove" {
         Ok(Statement::Prove { condition })
     } else {
@@ -399,13 +657,18 @@ fn parse_builtin_assertion_statement(tokens: &mut Vec<TokenData>) -> anyhow::Res
     }
 }
 
-fn consume_newlines(tokens: &mut Vec<TokenData>) {
+fn consume_newlines(tokens: &mut TokenCursor) {
     while tokens.first() == Some(&TokenData::Newline) {
         tokens.remove(0);
     }
 }
 
-fn parse_braced_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Statement>> {
+fn parse_braced_block(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    statement_path: &str,
+    child_segment: fn(AstPathStyle, usize) -> String,
+) -> anyhow::Result<Vec<Statement>> {
     consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
@@ -430,7 +693,13 @@ fn parse_braced_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Stateme
                 tokens.remove(0);
             }
             Some(_) => {
-                let statement = parse_statement(tokens)?;
+                let nested_path = join_path(
+                    statement_path,
+                    &child_segment(AstPathStyle::Ir, body.len()),
+                    AstPathStyle::Ir,
+                );
+                let statement =
+                    parse_statement_with_path(tokens, recorder.as_deref_mut(), &nested_path)?;
                 body.push(statement);
             }
             None => return Err(anyhow::anyhow!("unexpected end of file in braced block")),
@@ -439,73 +708,7 @@ fn parse_braced_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Stateme
     Ok(body)
 }
 
-fn parse_call_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Expression>> {
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: '(',
-                is_opening: true
-            },
-        "expected opening parenthesis for call"
-    );
-
-    let mut args = vec![];
-    loop {
-        match tokens.get(0) {
-            Some(TokenData::Newline) => {
-                tokens.remove(0);
-            }
-            Some(TokenData::Parenthesis {
-                opening: ')',
-                is_opening: false,
-            }) => {
-                tokens.remove(0);
-                break;
-            }
-            None => return Err(anyhow::anyhow!("unexpected end of file")),
-            _ => {
-                let expr = parse_expression(tokens, 0)?;
-                args.push(expr);
-                match tokens.get(0) {
-                    Some(TokenData::Symbols(s)) if s == "," => {
-                        tokens.remove(0);
-                        while tokens.get(0) == Some(&TokenData::Newline) {
-                            tokens.remove(0);
-                        }
-                    }
-                    Some(TokenData::Parenthesis {
-                        opening: ')',
-                        is_opening: false,
-                    }) => {}
-                    Some(TokenData::Newline) => {
-                        while tokens.get(0) == Some(&TokenData::Newline) {
-                            tokens.remove(0);
-                        }
-                        anyhow::ensure!(
-                            tokens.get(0)
-                                == Some(&TokenData::Parenthesis {
-                                    opening: ')',
-                                    is_opening: false
-                                }),
-                            "expected ')' after function call argument"
-                        );
-                    }
-                    Some(tok) => {
-                        return Err(anyhow::anyhow!(
-                            "expected ',' or ')' after function call argument, got {:?}",
-                            tok
-                        ));
-                    }
-                    None => return Err(anyhow::anyhow!("unexpected end of file")),
-                }
-            }
-        }
-    }
-
-    Ok(args)
-}
-
-fn parse_match_pattern(tokens: &mut Vec<TokenData>) -> anyhow::Result<MatchPattern> {
+fn parse_match_pattern(tokens: &mut TokenCursor) -> anyhow::Result<MatchPattern> {
     let type_name = match tokens.remove(0) {
         TokenData::Word(name) => name,
         tok => {
@@ -564,8 +767,62 @@ fn parse_match_pattern(tokens: &mut Vec<TokenData>) -> anyhow::Result<MatchPatte
     })
 }
 
-fn parse_match_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statement> {
-    let subject = parse_expression(tokens, 0)?;
+fn parse_match_arm_body(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    statement_path: &str,
+    arm_index: usize,
+) -> anyhow::Result<Vec<Statement>> {
+    consume_newlines(tokens);
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace"
+    );
+
+    let mut body = vec![];
+    loop {
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(_) => {
+                let nested_path = join_path(
+                    statement_path,
+                    &match_arm_statement_segment(AstPathStyle::Ir, arm_index, body.len()),
+                    AstPathStyle::Ir,
+                );
+                let statement =
+                    parse_statement_with_path(tokens, recorder.as_deref_mut(), &nested_path)?;
+                body.push(statement);
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file in braced block")),
+        }
+    }
+    Ok(body)
+}
+
+fn parse_match_statement(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    statement_path: &str,
+) -> anyhow::Result<Statement> {
+    let subject = parse_expression_with_path(
+        tokens,
+        0,
+        recorder.as_deref_mut(),
+        &join_path(statement_path, "match.subject", AstPathStyle::Ir),
+    )?;
     consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
@@ -596,7 +853,13 @@ fn parse_match_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statemen
                     tokens.remove(0) == TokenData::Symbols("=>".to_string()),
                     "expected '=>' after match pattern"
                 );
-                let body = parse_braced_block(tokens)?;
+                let arm_index = arms.len();
+                let body = parse_match_arm_body(
+                    tokens,
+                    recorder.as_deref_mut(),
+                    statement_path,
+                    arm_index,
+                )?;
                 arms.push(MatchArm { pattern, body });
             }
             None => return Err(anyhow::anyhow!("unexpected end of file in match")),
@@ -606,67 +869,11 @@ fn parse_match_statement(tokens: &mut Vec<TokenData>) -> anyhow::Result<Statemen
     Ok(Statement::Match { subject, arms })
 }
 
-fn parse_match_expression(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
-    let subject = parse_expression(tokens, 0)?;
-    consume_newlines(tokens);
-    anyhow::ensure!(
-        tokens.remove(0)
-            == TokenData::Parenthesis {
-                opening: '{',
-                is_opening: true
-            },
-        "expected opening brace after match subject"
-    );
-
-    let mut arms = vec![];
-    loop {
-        while tokens.first() == Some(&TokenData::Newline) {
-            tokens.remove(0);
-        }
-
-        match tokens.first() {
-            Some(TokenData::Parenthesis {
-                opening: '}',
-                is_opening: false,
-            }) => {
-                tokens.remove(0);
-                break;
-            }
-            Some(_) => {
-                let pattern = parse_match_pattern(tokens)?;
-                anyhow::ensure!(
-                    tokens.remove(0) == TokenData::Symbols("=>".to_string()),
-                    "expected '=>' after match pattern"
-                );
-                let value = parse_expression(tokens, 0)?;
-                arms.push(MatchExprArm { pattern, value });
-
-                while tokens.first() == Some(&TokenData::Newline) {
-                    tokens.remove(0);
-                }
-                if tokens.first() == Some(&TokenData::Symbols(",".to_string())) {
-                    tokens.remove(0);
-                }
-            }
-            None => {
-                return Err(anyhow::anyhow!(
-                    "unexpected end of file in match expression"
-                ))
-            }
-        }
-    }
-
-    anyhow::ensure!(
-        !arms.is_empty(),
-        "match expression must have at least one arm"
-    );
-    Ok(Expression::Match {
-        subject: Box::new(subject),
-        arms,
-    })
-}
-
-fn parse_optional_else(tokens: &mut Vec<TokenData>) -> anyhow::Result<Option<Vec<Statement>>> {
+fn parse_optional_else(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    statement_path: &str,
+) -> anyhow::Result<Option<Vec<Statement>>> {
     while tokens.first() == Some(&TokenData::Newline) {
         tokens.remove(0);
     }
@@ -677,22 +884,31 @@ fn parse_optional_else(tokens: &mut Vec<TokenData>) -> anyhow::Result<Option<Vec
     tokens.remove(0);
 
     if tokens.first() == Some(&TokenData::Word("if".to_string())) {
-        tokens.remove(0);
-        let condition = parse_expression(tokens, 0)?;
-        let body = parse_braced_block(tokens)?;
-        let nested_else = parse_optional_else(tokens)?;
-        Ok(Some(vec![Statement::Conditional {
-            condition,
-            body,
-            else_body: nested_else,
-        }]))
+        let nested_path = join_path(
+            statement_path,
+            &if_else_statement_segment(AstPathStyle::Ir, 0),
+            AstPathStyle::Ir,
+        );
+        let nested = parse_statement_with_path(tokens, recorder.as_deref_mut(), &nested_path)?;
+        match nested {
+            Statement::Conditional { .. } => Ok(Some(vec![nested])),
+            other => Err(anyhow::anyhow!(
+                "expected else-if conditional statement, got {:?}",
+                other
+            )),
+        }
     } else {
-        let body = parse_braced_block(tokens)?;
+        let body = parse_braced_block(
+            tokens,
+            recorder.as_deref_mut(),
+            statement_path,
+            if_else_statement_segment,
+        )?;
         Ok(Some(body))
     }
 }
 
-fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parameter>> {
+fn parse_function_args(tokens: &mut TokenCursor) -> anyhow::Result<Vec<Parameter>> {
     let mut parameters = vec![];
     loop {
         match tokens.first() {
@@ -730,7 +946,7 @@ fn parse_function_args(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parame
     Ok(parameters)
 }
 
-fn parse_parameter_list(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Parameter>> {
+fn parse_parameter_list(tokens: &mut TokenCursor) -> anyhow::Result<Vec<Parameter>> {
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -742,7 +958,10 @@ fn parse_parameter_list(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Param
     parse_function_args(tokens)
 }
 
-fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Statement>> {
+fn parse_function_like_body(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+) -> anyhow::Result<Vec<Statement>> {
     consume_newlines(tokens);
     anyhow::ensure!(
         tokens.remove(0)
@@ -776,7 +995,11 @@ fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<S
                 tokens.remove(0);
             }
             Some(_) => {
-                let statement = parse_statement(tokens)?;
+                let statement = parse_statement_with_path(
+                    tokens,
+                    recorder.as_deref_mut(),
+                    &local_statement_key(body.len()),
+                )?;
                 body.push(statement);
             }
             None => return Err(anyhow::anyhow!("unexpected end of file in function body")),
@@ -786,7 +1009,10 @@ fn parse_function_like_body(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<S
     Ok(body)
 }
 
-fn parse_precondition_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Expression>> {
+fn parse_precondition_block(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+) -> anyhow::Result<Vec<Expression>> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("pre".to_string()),
         "expected 'pre' keyword"
@@ -819,7 +1045,20 @@ fn parse_precondition_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<E
                 tokens.remove(0);
             }
             Some(_) => {
-                let expression = parse_expression(tokens, 0)?;
+                let clause_start = tokens.current_token_span();
+                let expression = parse_expression_with_path(
+                    tokens,
+                    0,
+                    recorder.as_deref_mut(),
+                    &local_precondition_key(preconditions.len()),
+                )?;
+                if let Some(recorder) = recorder.as_deref_mut() {
+                    recorder.record_precondition(compose_source_span(
+                        clause_start,
+                        tokens.last_removed_source_span(),
+                        tokens.source_name(),
+                    ));
+                }
                 preconditions.push(expression);
                 match tokens.first() {
                     Some(TokenData::Newline) => {
@@ -851,7 +1090,7 @@ fn parse_precondition_block(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<E
     Ok(preconditions)
 }
 
-fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<StructDef> {
+fn parse_struct_declaration(tokens: &mut TokenCursor) -> anyhow::Result<StructDef> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("struct".to_string()),
         "expected 'struct' keyword"
@@ -934,7 +1173,7 @@ fn parse_struct_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Struc
     })
 }
 
-fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef> {
+fn parse_enum_declaration(tokens: &mut TokenCursor) -> anyhow::Result<EnumDef> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("enum".to_string()),
         "expected 'enum' keyword"
@@ -1008,9 +1247,10 @@ fn parse_enum_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<EnumDef
 }
 
 fn parse_function_declaration(
-    tokens: &mut Vec<TokenData>,
+    tokens: &mut TokenCursor,
     is_comptime: bool,
 ) -> anyhow::Result<Function> {
+    let start = tokens.current_token_span();
     if is_comptime {
         anyhow::ensure!(
             tokens.remove(0) == TokenData::Word("comptime".to_string()),
@@ -1037,18 +1277,14 @@ fn parse_function_declaration(
 
     let return_type = parse_type_reference(tokens)?;
     consume_newlines(tokens);
+    let mut recorder = LocalSourceRecorder::default();
     let preconditions = if tokens.first() == Some(&TokenData::Word("pre".to_string())) {
-        anyhow::ensure!(
-            !is_comptime,
-            "comptime function {} cannot use pre blocks in v1",
-            name
-        );
-        parse_precondition_block(tokens)?
+        parse_precondition_block(tokens, Some(&mut recorder))?
     } else {
         vec![]
     };
 
-    let body = parse_function_like_body(tokens)?;
+    let body = parse_function_like_body(tokens, Some(&mut recorder))?;
 
     Ok(Function {
         name,
@@ -1059,10 +1295,18 @@ fn parse_function_declaration(
         return_type,
         is_comptime,
         is_extern: false,
+        source_span: compose_source_span(
+            start,
+            tokens.last_removed_source_span(),
+            tokens.source_name(),
+        ),
+        local_source_spans: recorder.local_source_spans,
+        precondition_source_spans: recorder.precondition_source_spans,
     })
 }
 
-fn parse_extern_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Function> {
+fn parse_extern_function_declaration(tokens: &mut TokenCursor) -> anyhow::Result<Function> {
+    let start = tokens.current_token_span();
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("extern".to_string()),
         "expected 'extern' keyword"
@@ -1100,10 +1344,17 @@ fn parse_extern_function_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Res
         return_type,
         is_comptime: false,
         is_extern: true,
+        source_span: compose_source_span(
+            start,
+            tokens.last_removed_source_span(),
+            tokens.source_name(),
+        ),
+        local_source_spans: HashMap::new(),
+        precondition_source_spans: Vec::new(),
     })
 }
 
-fn parse_test_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TestDecl> {
+fn parse_test_declaration(tokens: &mut TokenCursor) -> anyhow::Result<TestDecl> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("test".to_string()),
         "expected 'test' keyword"
@@ -1123,11 +1374,11 @@ fn parse_test_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TestDec
         tokens.remove(0);
     }
 
-    let body = parse_braced_block(tokens)?;
+    let body = parse_braced_block(tokens, None, "", local_statement_segment)?;
     Ok(TestDecl { name, body })
 }
 
-fn parse_namespace_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Function>> {
+fn parse_namespace_declaration(tokens: &mut TokenCursor) -> anyhow::Result<Vec<Function>> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("namespace".to_string()),
         "expected 'namespace' keyword"
@@ -1178,12 +1429,19 @@ fn parse_namespace_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Ve
                 function.extern_symbol_name = Some(symbol_name);
                 functions.push(function);
             }
-            Some(TokenData::Word(name)) if name == "comptime" => {
-                return Err(anyhow::anyhow!(
-                    "namespace {} only supports `fun` and `extern fun` declarations in v1",
-                    namespace
-                ));
-            }
+            Some(TokenData::Word(name)) if name == "comptime" => match tokens.get(1) {
+                Some(TokenData::Word(next)) if next == "fun" => {
+                    let mut function = parse_function_declaration(tokens, true)?;
+                    function.name = qualify_namespace_function_name(&namespace, &function.name);
+                    functions.push(function);
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "namespace {} only supports `fun`, `comptime fun`, and `extern fun` declarations in v1",
+                        namespace
+                    ));
+                }
+            },
             Some(token) => {
                 return Err(anyhow::anyhow!(
                     "unexpected token in namespace {} body: {:?}",
@@ -1198,7 +1456,7 @@ fn parse_namespace_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Ve
     Ok(functions)
 }
 
-fn parse_type_reference(tokens: &mut Vec<TokenData>) -> anyhow::Result<String> {
+fn parse_type_reference(tokens: &mut TokenCursor) -> anyhow::Result<String> {
     let base = match tokens.remove(0) {
         TokenData::Word(name) => name,
         token => return Err(anyhow::anyhow!("expected type name, got {:?}", token)),
@@ -1221,7 +1479,7 @@ fn parse_type_reference(tokens: &mut Vec<TokenData>) -> anyhow::Result<String> {
     }
 }
 
-fn parse_bracketed_type_argument_list(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<String>> {
+fn parse_bracketed_type_argument_list(tokens: &mut TokenCursor) -> anyhow::Result<Vec<String>> {
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1279,7 +1537,7 @@ fn parse_bracketed_type_argument_list(tokens: &mut Vec<TokenData>) -> anyhow::Re
     Ok(args)
 }
 
-fn parse_generic_params(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<GenericParam>> {
+fn parse_generic_params(tokens: &mut TokenCursor) -> anyhow::Result<Vec<GenericParam>> {
     anyhow::ensure!(
         tokens.remove(0)
             == TokenData::Parenthesis {
@@ -1368,7 +1626,7 @@ fn parse_generic_params(tokens: &mut Vec<TokenData>) -> anyhow::Result<Vec<Gener
 }
 
 fn parse_invariant_name_components(
-    tokens: &mut Vec<TokenData>,
+    tokens: &mut TokenCursor,
 ) -> anyhow::Result<(Option<String>, String)> {
     match tokens.remove(0) {
         TokenData::String(display_name) => Ok((None, display_name)),
@@ -1387,7 +1645,7 @@ fn parse_invariant_name_components(
 }
 
 fn parse_grouped_struct_invariant_declarations(
-    tokens: &mut Vec<TokenData>,
+    tokens: &mut TokenCursor,
 ) -> anyhow::Result<Vec<StructInvariantDecl>> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("for".to_string()),
@@ -1427,13 +1685,21 @@ fn parse_grouped_struct_invariant_declarations(
                 ));
             }
             Some(_) => {
+                let start = tokens.current_token_span();
                 let (identifier, display_name) = parse_invariant_name_components(tokens)?;
-                let body = parse_function_like_body(tokens)?;
+                let mut recorder = LocalSourceRecorder::default();
+                let body = parse_function_like_body(tokens, Some(&mut recorder))?;
                 out.push(StructInvariantDecl {
                     identifier,
                     display_name,
                     parameters: parameters.clone(),
                     body,
+                    source_span: compose_source_span(
+                        start,
+                        tokens.last_removed_source_span(),
+                        tokens.source_name(),
+                    ),
+                    local_source_spans: recorder.local_source_spans,
                 });
             }
             None => {
@@ -1452,7 +1718,7 @@ fn parse_grouped_struct_invariant_declarations(
 }
 
 fn parse_struct_invariant_declarations(
-    tokens: &mut Vec<TokenData>,
+    tokens: &mut TokenCursor,
 ) -> anyhow::Result<Vec<StructInvariantDecl>> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("invariant".to_string()),
@@ -1463,6 +1729,7 @@ fn parse_struct_invariant_declarations(
         return parse_grouped_struct_invariant_declarations(tokens);
     }
 
+    let start = tokens.current_token_span();
     let (identifier, display_name) = parse_invariant_name_components(tokens)?;
 
     anyhow::ensure!(
@@ -1474,17 +1741,24 @@ fn parse_struct_invariant_declarations(
         !parameters.is_empty(),
         "invariant requires at least one parameter"
     );
-    let body = parse_function_like_body(tokens)?;
+    let mut recorder = LocalSourceRecorder::default();
+    let body = parse_function_like_body(tokens, Some(&mut recorder))?;
 
     Ok(vec![StructInvariantDecl {
         identifier,
         display_name,
         parameters,
         body,
+        source_span: compose_source_span(
+            start,
+            tokens.last_removed_source_span(),
+            tokens.source_name(),
+        ),
+        local_source_spans: recorder.local_source_spans,
     }])
 }
 
-fn parse_comptime_apply(tokens: &mut Vec<TokenData>) -> anyhow::Result<ComptimeApply> {
+fn parse_comptime_apply(tokens: &mut TokenCursor) -> anyhow::Result<ComptimeApply> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("comptime".to_string()),
         "expected 'comptime' keyword"
@@ -1526,11 +1800,10 @@ fn parse_comptime_apply(tokens: &mut Vec<TokenData>) -> anyhow::Result<ComptimeA
 }
 
 #[tracing::instrument(level = "trace", skip(tokens))]
-pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
+pub fn parse(tokens: TokenList) -> anyhow::Result<Ast> {
+    let mut tokens = TokenCursor::new(tokens);
     // Discard all comments.
-    tokens
-        .tokens
-        .retain(|token| !matches!(token, TokenData::Comment(_)));
+    tokens.retain(|token| !matches!(token, TokenData::Comment(_)));
 
     let mut ast = Ast {
         imports: vec![],
@@ -1545,37 +1818,37 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
         comptime_applies: vec![],
     };
 
-    while let Some(token) = tokens.tokens.first() {
+    while let Some(token) = tokens.first() {
         match token {
             TokenData::Word(name) if name == "struct" => {
-                let type_definition = parse_struct_declaration(&mut tokens.tokens)?;
+                let type_definition = parse_struct_declaration(&mut tokens)?;
                 ast.type_definitions
                     .push(TypeDefDecl::Struct(type_definition));
             }
             TokenData::Word(name) if name == "enum" => {
-                let type_definition = parse_enum_declaration(&mut tokens.tokens)?;
+                let type_definition = parse_enum_declaration(&mut tokens)?;
                 ast.type_definitions
                     .push(TypeDefDecl::Enum(type_definition));
             }
             TokenData::Word(name) if name == "fun" => {
-                let function = parse_function_declaration(&mut tokens.tokens, false)?;
+                let function = parse_function_declaration(&mut tokens, false)?;
                 ast.top_level_functions.push(function);
             }
             TokenData::Word(name) if name == "extern" => {
-                let function = parse_extern_function_declaration(&mut tokens.tokens)?;
+                let function = parse_extern_function_declaration(&mut tokens)?;
                 ast.top_level_functions.push(function);
             }
             TokenData::Word(name) if name == "test" => {
-                let test = parse_test_declaration(&mut tokens.tokens)?;
+                let test = parse_test_declaration(&mut tokens)?;
                 ast.tests.push(test);
             }
-            TokenData::Word(name) if name == "comptime" => match tokens.tokens.get(1) {
+            TokenData::Word(name) if name == "comptime" => match tokens.get(1) {
                 Some(TokenData::Word(kind)) if kind == "fun" => {
-                    let function = parse_function_declaration(&mut tokens.tokens, true)?;
+                    let function = parse_function_declaration(&mut tokens, true)?;
                     ast.top_level_functions.push(function);
                 }
                 Some(TokenData::Word(kind)) if kind == "apply" => {
-                    let apply = parse_comptime_apply(&mut tokens.tokens)?;
+                    let apply = parse_comptime_apply(&mut tokens)?;
                     ast.comptime_applies.push(apply);
                 }
                 token => {
@@ -1586,27 +1859,27 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
                 }
             },
             TokenData::Word(name) if name == "invariant" => {
-                let invariants = parse_struct_invariant_declarations(&mut tokens.tokens)?;
+                let invariants = parse_struct_invariant_declarations(&mut tokens)?;
                 ast.invariants.extend(invariants);
             }
             TokenData::Word(name) if name == "generic" => {
-                let generic = parse_generic_declaration(&mut tokens.tokens)?;
+                let generic = parse_generic_declaration(&mut tokens)?;
                 ast.generic_definitions.push(generic);
             }
             TokenData::Word(name) if name == "namespace" => {
-                let functions = parse_namespace_declaration(&mut tokens.tokens)?;
+                let functions = parse_namespace_declaration(&mut tokens)?;
                 ast.top_level_functions.extend(functions);
             }
             TokenData::Word(name) if name == "specialize" => {
-                let specialization = parse_generic_specialization(&mut tokens.tokens)?;
+                let specialization = parse_generic_specialization(&mut tokens)?;
                 ast.generic_specializations.push(specialization);
             }
             TokenData::Word(name) if name == "trait" => {
-                let trait_decl = parse_trait_declaration(&mut tokens.tokens)?;
+                let trait_decl = parse_trait_declaration(&mut tokens)?;
                 ast.trait_declarations.push(trait_decl);
             }
             TokenData::Word(name) if name == "impl" => {
-                let impl_decl = parse_impl_declaration(&mut tokens.tokens)?;
+                let impl_decl = parse_impl_declaration(&mut tokens)?;
                 ast.impl_declarations.push(impl_decl);
             }
             TokenData::Word(name) if name == "template" => {
@@ -1620,11 +1893,11 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
                 ));
             }
             TokenData::Word(name) if name == "import" => {
-                let import = parse_import_declaration(&mut tokens.tokens)?;
+                let import = parse_import_declaration(&mut tokens)?;
                 ast.imports.push(import);
             }
             TokenData::Newline => {
-                tokens.tokens.remove(0);
+                tokens.remove(0);
             }
             _ => return Err(anyhow::anyhow!("unexpected token {:?}", token)),
         }
@@ -1633,7 +1906,7 @@ pub fn parse(mut tokens: TokenList) -> anyhow::Result<Ast> {
     Ok(ast)
 }
 
-fn parse_import_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<ImportDecl> {
+fn parse_import_declaration(tokens: &mut TokenCursor) -> anyhow::Result<ImportDecl> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("import".to_string()),
         "expected 'import' keyword"
@@ -1647,10 +1920,11 @@ fn parse_import_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Impor
     Ok(ImportDecl { path })
 }
 
-fn parse_struct_value(
-    tokens: &mut Vec<TokenData>,
+fn parse_struct_value_node(
+    tokens: &mut TokenCursor,
     struct_name: String,
-) -> anyhow::Result<Expression> {
+    start: Option<TokenSpan>,
+) -> anyhow::Result<ParsedExpressionNode> {
     match tokens.first() {
         Some(TokenData::Word(keyword)) if keyword == "struct" => {
             tokens.remove(0);
@@ -1682,6 +1956,7 @@ fn parse_struct_value(
     }
 
     let mut fields = vec![];
+    let mut children = vec![];
     while tokens.get(0)
         != Some(&TokenData::Parenthesis {
             opening: '}',
@@ -1703,7 +1978,11 @@ fn parse_struct_value(
             "expected ':' after struct field name"
         );
 
-        fields.push((field_name, parse_expression(tokens, 0)?));
+        let field_index = fields.len();
+        let node = parse_expression_node(tokens, 0)?;
+        let field_segment = struct_field_segment(AstPathStyle::Ir, field_index, &field_name);
+        fields.push((field_name, node.expression.clone()));
+        children.push((field_segment, node));
 
         match tokens.first() {
             Some(TokenData::Symbols(s)) if s == "," => {
@@ -1728,64 +2007,319 @@ fn parse_struct_value(
 
     tokens.remove(0);
 
-    Ok(Expression::StructValue {
-        struct_name,
-        field_values: fields,
-    })
+    let mut node = ParsedExpressionNode::new(
+        Expression::StructValue {
+            struct_name,
+            field_values: fields,
+        },
+        compose_source_span(
+            start,
+            tokens.last_removed_source_span(),
+            tokens.source_name(),
+        ),
+    );
+    node.children = children;
+    Ok(node)
 }
 
-fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
+fn parse_call_arg_nodes(tokens: &mut TokenCursor) -> anyhow::Result<Vec<ParsedExpressionNode>> {
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '(',
+                is_opening: true
+            },
+        "expected opening parenthesis for call"
+    );
+
+    let mut args = vec![];
+    loop {
+        match tokens.get(0) {
+            Some(TokenData::Newline) => {
+                tokens.remove(0);
+            }
+            Some(TokenData::Parenthesis {
+                opening: ')',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            None => return Err(anyhow::anyhow!("unexpected end of file")),
+            _ => {
+                let expr = parse_expression_node(tokens, 0)?;
+                args.push(expr);
+                match tokens.get(0) {
+                    Some(TokenData::Symbols(s)) if s == "," => {
+                        tokens.remove(0);
+                        while tokens.get(0) == Some(&TokenData::Newline) {
+                            tokens.remove(0);
+                        }
+                    }
+                    Some(TokenData::Parenthesis {
+                        opening: ')',
+                        is_opening: false,
+                    }) => {}
+                    Some(TokenData::Newline) => {
+                        while tokens.get(0) == Some(&TokenData::Newline) {
+                            tokens.remove(0);
+                        }
+                        anyhow::ensure!(
+                            tokens.get(0)
+                                == Some(&TokenData::Parenthesis {
+                                    opening: ')',
+                                    is_opening: false
+                                }),
+                            "expected ')' after function call argument"
+                        );
+                    }
+                    Some(tok) => {
+                        return Err(anyhow::anyhow!(
+                            "expected ',' or ')' after function call argument, got {:?}",
+                            tok
+                        ));
+                    }
+                    None => return Err(anyhow::anyhow!("unexpected end of file")),
+                }
+            }
+        }
+    }
+
+    Ok(args)
+}
+
+#[allow(dead_code)]
+fn parse_call_args(
+    tokens: &mut TokenCursor,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    expression_path: &str,
+    arg_prefix: &str,
+) -> anyhow::Result<Vec<Expression>> {
+    let nodes = parse_call_arg_nodes(tokens)?;
+    if let Some(recorder) = recorder.as_deref_mut() {
+        for (index, node) in nodes.iter().enumerate() {
+            record_expression_node(
+                recorder,
+                &join_path(
+                    expression_path,
+                    &format!("{arg_prefix}.{index}"),
+                    AstPathStyle::Ir,
+                ),
+                node,
+            );
+        }
+    }
+    Ok(nodes.into_iter().map(|node| node.expression).collect())
+}
+
+fn parse_match_expression_node(
+    tokens: &mut TokenCursor,
+    start: Option<TokenSpan>,
+) -> anyhow::Result<ParsedExpressionNode> {
+    let subject = parse_expression_node(tokens, 0)?;
+    consume_newlines(tokens);
+    anyhow::ensure!(
+        tokens.remove(0)
+            == TokenData::Parenthesis {
+                opening: '{',
+                is_opening: true
+            },
+        "expected opening brace after match subject"
+    );
+
+    let mut arms = vec![];
+    let mut children = vec![("match.subject".to_string(), subject.clone())];
+    loop {
+        while tokens.first() == Some(&TokenData::Newline) {
+            tokens.remove(0);
+        }
+
+        match tokens.first() {
+            Some(TokenData::Parenthesis {
+                opening: '}',
+                is_opening: false,
+            }) => {
+                tokens.remove(0);
+                break;
+            }
+            Some(_) => {
+                let pattern = parse_match_pattern(tokens)?;
+                anyhow::ensure!(
+                    tokens.remove(0) == TokenData::Symbols("=>".to_string()),
+                    "expected '=>' after match pattern"
+                );
+                let arm_index = arms.len();
+                let value = parse_expression_node(tokens, 0)?;
+                children.push((
+                    match_arm_expression_segment(AstPathStyle::Ir, arm_index),
+                    value.clone(),
+                ));
+                arms.push(MatchExprArm {
+                    pattern,
+                    value: value.expression,
+                });
+
+                while tokens.first() == Some(&TokenData::Newline) {
+                    tokens.remove(0);
+                }
+                if tokens.first() == Some(&TokenData::Symbols(",".to_string())) {
+                    tokens.remove(0);
+                }
+            }
+            None => {
+                return Err(anyhow::anyhow!(
+                    "unexpected end of file in match expression"
+                ))
+            }
+        }
+    }
+
+    anyhow::ensure!(
+        !arms.is_empty(),
+        "match expression must have at least one arm"
+    );
+    let mut node = ParsedExpressionNode::new(
+        Expression::Match {
+            subject: Box::new(subject.expression),
+            arms,
+        },
+        compose_source_span(
+            start,
+            tokens.last_removed_source_span(),
+            tokens.source_name(),
+        ),
+    );
+    node.children = children;
+    Ok(node)
+}
+
+fn parse_atom_node(tokens: &mut TokenCursor) -> anyhow::Result<ParsedExpressionNode> {
     if tokens.is_empty() {
         return Err(anyhow::anyhow!(
             "unexpected end of file while parsing expression"
         ));
     }
+    let start = tokens.current_token_span();
     let next = tokens.remove(0);
     match next {
         TokenData::Symbols(s) if s == "!" => {
-            let rhs = parse_expression(tokens, u8::MAX)?;
-            Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(rhs)))
+            let rhs = parse_expression_node(tokens, u8::MAX)?;
+            let rhs_expression = rhs.expression.clone();
+            let mut node = ParsedExpressionNode::new(
+                Expression::UnaryOp(UnaryOp::Not, Box::new(rhs_expression)),
+                compose_source_span(
+                    start,
+                    tokens.last_removed_source_span(),
+                    tokens.source_name(),
+                ),
+            );
+            node.children
+                .push((unary_segment(AstPathStyle::Ir).to_string(), rhs));
+            Ok(node)
         }
-        TokenData::Number(n) => Ok(Expression::Literal(Literal::Int(n))),
+        TokenData::Number(n) => Ok(ParsedExpressionNode::new(
+            Expression::Literal(Literal::Int(n)),
+            compose_source_span(
+                start,
+                tokens.last_removed_source_span(),
+                tokens.source_name(),
+            ),
+        )),
         TokenData::Float(value) => {
             if let Some(TokenData::Word(suffix)) = tokens.first() {
                 if suffix == "f64" {
                     tokens.remove(0);
-                    return Ok(Expression::Literal(Literal::Float64(value)));
+                    return Ok(ParsedExpressionNode::new(
+                        Expression::Literal(Literal::Float64(value)),
+                        compose_source_span(
+                            start,
+                            tokens.last_removed_source_span(),
+                            tokens.source_name(),
+                        ),
+                    ));
                 }
                 if suffix == "f32" {
                     tokens.remove(0);
-                    return Ok(Expression::Literal(Literal::Float32(value)));
+                    return Ok(ParsedExpressionNode::new(
+                        Expression::Literal(Literal::Float32(value)),
+                        compose_source_span(
+                            start,
+                            tokens.last_removed_source_span(),
+                            tokens.source_name(),
+                        ),
+                    ));
                 }
             }
-            Ok(Expression::Literal(Literal::Float32(value)))
+            Ok(ParsedExpressionNode::new(
+                Expression::Literal(Literal::Float32(value)),
+                compose_source_span(
+                    start,
+                    tokens.last_removed_source_span(),
+                    tokens.source_name(),
+                ),
+            ))
         }
-        TokenData::Char(value) => Ok(Expression::Call(
-            qualify_namespace_function_name("Char", "from_code"),
-            vec![Expression::Literal(Literal::Int(value as u32))],
+        TokenData::Char(value) => Ok(ParsedExpressionNode::new(
+            Expression::Call(
+                qualify_namespace_function_name("Char", "from_code"),
+                vec![Expression::Literal(Literal::Int(value as u32))],
+            ),
+            compose_source_span(
+                start,
+                tokens.last_removed_source_span(),
+                tokens.source_name(),
+            ),
         )),
-        TokenData::String(s) => Ok(Expression::Literal(Literal::String(s))),
+        TokenData::String(s) => Ok(ParsedExpressionNode::new(
+            Expression::Literal(Literal::String(s)),
+            compose_source_span(
+                start,
+                tokens.last_removed_source_span(),
+                tokens.source_name(),
+            ),
+        )),
         TokenData::Word(s) => {
             if s == "match" {
-                return parse_match_expression(tokens);
+                return parse_match_expression_node(tokens, start);
             }
             if s == "true" {
-                return Ok(Expression::Literal(Literal::Bool(true)));
+                return Ok(ParsedExpressionNode::new(
+                    Expression::Literal(Literal::Bool(true)),
+                    compose_source_span(
+                        start,
+                        tokens.last_removed_source_span(),
+                        tokens.source_name(),
+                    ),
+                ));
             }
             if s == "false" {
-                return Ok(Expression::Literal(Literal::Bool(false)));
+                return Ok(ParsedExpressionNode::new(
+                    Expression::Literal(Literal::Bool(false)),
+                    compose_source_span(
+                        start,
+                        tokens.last_removed_source_span(),
+                        tokens.source_name(),
+                    ),
+                ));
             }
             if tokens.get(0) == Some(&TokenData::Word("struct".to_string())) {
-                parse_struct_value(tokens, s)
+                parse_struct_value_node(tokens, s, start)
             } else {
-                Ok(Expression::Variable(s))
+                Ok(ParsedExpressionNode::new(
+                    Expression::Variable(s),
+                    compose_source_span(
+                        start,
+                        tokens.last_removed_source_span(),
+                        tokens.source_name(),
+                    ),
+                ))
             }
         }
         TokenData::Parenthesis {
             opening: '(',
             is_opening: true,
         } => {
-            let expr = parse_expression(tokens, 0)?;
+            let mut expr = parse_expression_node(tokens, 0)?;
             anyhow::ensure!(
                 tokens.remove(0)
                     == TokenData::Parenthesis {
@@ -1793,21 +2327,48 @@ fn parse_atom(tokens: &mut Vec<TokenData>) -> anyhow::Result<Expression> {
                         is_opening: false
                     }
             );
+            expr.span = compose_source_span(
+                start,
+                tokens.last_removed_source_span(),
+                tokens.source_name(),
+            );
             Ok(expr)
         }
         t => Err(anyhow::anyhow!("expected a value, got {:?}", t)),
     }
 }
 
-fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::Result<Expression> {
-    trace!(?tokens, "Parsing expression");
+#[allow(dead_code)]
+fn parse_expression(tokens: &mut TokenCursor, min_precedence: u8) -> anyhow::Result<Expression> {
+    parse_expression_with_path(tokens, min_precedence, None, "")
+}
 
-    let mut lhs = parse_atom(tokens)?;
+fn parse_expression_with_path(
+    tokens: &mut TokenCursor,
+    min_precedence: u8,
+    mut recorder: Option<&mut LocalSourceRecorder>,
+    expression_path: &str,
+) -> anyhow::Result<Expression> {
+    let node = parse_expression_node(tokens, min_precedence)?;
+    if let Some(recorder) = recorder.as_deref_mut() {
+        record_expression_node(recorder, expression_path, &node);
+    }
+    Ok(node.expression)
+}
+
+fn parse_expression_node(
+    tokens: &mut TokenCursor,
+    min_precedence: u8,
+) -> anyhow::Result<ParsedExpressionNode> {
+    trace!(?tokens, "Parsing expression");
+    let start = tokens.current_token_span();
+
+    let mut lhs = parse_atom_node(tokens)?;
 
     loop {
         match tokens.get(0) {
             Some(TokenData::Symbols(s)) if s == "." => {
-                trace!("Parsing field access or method call {:?}", lhs);
+                trace!("Parsing field access or method call {:?}", lhs.expression);
                 tokens.remove(0); // Consume '.'
                 let field_token = if tokens.is_empty() {
                     return Err(anyhow::anyhow!(
@@ -1824,15 +2385,32 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
                         is_opening: true
                     })
                 ) {
-                    let args = parse_call_args(tokens)?;
-                    lhs = Expression::MethodCall {
-                        receiver: Box::new(lhs),
-                        method: field_name,
-                        args,
+                    let arg_nodes = parse_call_arg_nodes(tokens)?;
+                    let mut children = vec![("method.receiver".to_string(), lhs.clone())];
+                    let args = arg_nodes
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, node)| {
+                            children.push((format!("method.arg.{index}"), node.clone()));
+                            node.expression
+                        })
+                        .collect();
+                    lhs = ParsedExpressionNode {
+                        expression: Expression::MethodCall {
+                            receiver: Box::new(lhs.expression),
+                            method: field_name,
+                            args,
+                        },
+                        span: compose_source_span(
+                            start.clone(),
+                            tokens.last_removed_source_span(),
+                            tokens.source_name(),
+                        ),
+                        children,
                     };
                     continue;
                 }
-                let struct_variable = match lhs {
+                let struct_variable = match lhs.expression {
                     Expression::Variable(s) => s,
                     other => {
                         return Err(anyhow::anyhow!(
@@ -1841,23 +2419,64 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
                         ))
                     }
                 };
-                lhs = Expression::FieldAccess {
-                    struct_variable,
-                    field: field_name,
-                };
+                lhs = ParsedExpressionNode::new(
+                    Expression::FieldAccess {
+                        struct_variable,
+                        field: field_name,
+                    },
+                    compose_source_span(
+                        start.clone(),
+                        tokens.last_removed_source_span(),
+                        tokens.source_name(),
+                    ),
+                );
                 continue;
             }
             Some(TokenData::Parenthesis {
                 opening: '(',
                 is_opening: true,
             }) => {
-                let args = parse_call_args(tokens)?;
+                let arg_nodes = parse_call_arg_nodes(tokens)?;
+                let args = arg_nodes
+                    .iter()
+                    .map(|node| node.expression.clone())
+                    .collect::<Vec<_>>();
+                let mut children = Vec::new();
+                for (index, node) in arg_nodes.into_iter().enumerate() {
+                    children.push((format!("call.arg.{index}"), node));
+                }
                 lhs = match lhs {
-                    Expression::Variable(name) => Expression::Call(name, args),
-                    expr => Expression::PostfixCall {
-                        callee: Box::new(expr),
-                        args,
+                    ParsedExpressionNode {
+                        expression: Expression::Variable(name),
+                        ..
+                    } => ParsedExpressionNode {
+                        expression: Expression::Call(name, args),
+                        span: compose_source_span(
+                            start.clone(),
+                            tokens.last_removed_source_span(),
+                            tokens.source_name(),
+                        ),
+                        children,
                     },
+                    callee_node => {
+                        let mut postfix_children =
+                            vec![("postfix.callee".to_string(), callee_node.clone())];
+                        for (index, (_, node)) in children.into_iter().enumerate() {
+                            postfix_children.push((format!("postfix.arg.{index}"), node));
+                        }
+                        ParsedExpressionNode {
+                            expression: Expression::PostfixCall {
+                                callee: Box::new(callee_node.expression),
+                                args,
+                            },
+                            span: compose_source_span(
+                                start.clone(),
+                                tokens.last_removed_source_span(),
+                                tokens.source_name(),
+                            ),
+                            children: postfix_children,
+                        }
+                    }
                 };
                 continue;
             }
@@ -1866,8 +2485,27 @@ fn parse_expression(tokens: &mut Vec<TokenData>, min_precedence: u8) -> anyhow::
                 let precedence = op.precedence();
                 if precedence >= min_precedence {
                     tokens.remove(0);
-                    let rhs = parse_expression(tokens, precedence)?;
-                    lhs = Expression::BinOp(op, Box::new(lhs), Box::new(rhs));
+                    let rhs = parse_expression_node(tokens, precedence)?;
+                    let left = lhs;
+                    let left_expression = left.expression.clone();
+                    let rhs_expression = rhs.expression.clone();
+                    lhs = ParsedExpressionNode {
+                        expression: Expression::BinOp(
+                            op,
+                            Box::new(left_expression),
+                            Box::new(rhs_expression),
+                        ),
+                        span: compose_source_span(
+                            start.clone(),
+                            tokens.last_removed_source_span(),
+                            tokens.source_name(),
+                        ),
+                        children: vec![
+                            (bin_left_segment(AstPathStyle::Ir).to_string(), left),
+                            (bin_right_segment(AstPathStyle::Ir).to_string(), rhs),
+                        ],
+                    };
+                    continue;
                 } else {
                     break;
                 }
@@ -1887,7 +2525,7 @@ fn expect_identifier(token: TokenData) -> anyhow::Result<String> {
     }
 }
 
-fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<GenericDef> {
+fn parse_generic_declaration(tokens: &mut TokenCursor) -> anyhow::Result<GenericDef> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("generic".to_string()),
         "expected 'generic' keyword"
@@ -1983,9 +2621,7 @@ fn parse_generic_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<Gene
     })
 }
 
-fn parse_generic_specialization(
-    tokens: &mut Vec<TokenData>,
-) -> anyhow::Result<GenericSpecialization> {
+fn parse_generic_specialization(tokens: &mut TokenCursor) -> anyhow::Result<GenericSpecialization> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("specialize".to_string()),
         "expected 'specialize' keyword"
@@ -2019,7 +2655,7 @@ fn parse_generic_specialization(
     })
 }
 
-fn parse_trait_method_signature(tokens: &mut Vec<TokenData>) -> anyhow::Result<TraitMethodSig> {
+fn parse_trait_method_signature(tokens: &mut TokenCursor) -> anyhow::Result<TraitMethodSig> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("fun".to_string()),
         "expected 'fun' keyword in trait body"
@@ -2066,7 +2702,7 @@ fn parse_trait_method_signature(tokens: &mut Vec<TokenData>) -> anyhow::Result<T
     })
 }
 
-fn parse_trait_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TraitDecl> {
+fn parse_trait_declaration(tokens: &mut TokenCursor) -> anyhow::Result<TraitDecl> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("trait".to_string()),
         "expected 'trait' keyword"
@@ -2114,7 +2750,7 @@ fn parse_trait_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<TraitD
     Ok(TraitDecl { name, methods })
 }
 
-fn parse_impl_declaration(tokens: &mut Vec<TokenData>) -> anyhow::Result<ImplDecl> {
+fn parse_impl_declaration(tokens: &mut TokenCursor) -> anyhow::Result<ImplDecl> {
     anyhow::ensure!(
         tokens.remove(0) == TokenData::Word("impl".to_string()),
         "expected 'impl' keyword"
@@ -2846,7 +3482,7 @@ extern fun clamp(v: I32) -> I32 pre {
     }
 
     #[test]
-    fn rejects_comptime_function_preconditions() {
+    fn parses_comptime_function_preconditions() {
         let source = r#"
 comptime fun clamp(v: I32) -> I32 pre {
 	v >= 0
@@ -2857,12 +3493,11 @@ comptime fun clamp(v: I32) -> I32 pre {
         .to_string();
 
         let tokens = tokenize(source).expect("tokenize source");
-        let err = parse(tokens).expect_err("comptime pre block must fail");
-        assert!(
-            err.to_string()
-                .contains("comptime function clamp cannot use pre blocks in v1"),
-            "unexpected error: {err}"
-        );
+        let ast = parse(tokens).expect("comptime pre block should parse");
+        assert_eq!(ast.top_level_functions.len(), 1);
+        let clamp = &ast.top_level_functions[0];
+        assert!(clamp.is_comptime);
+        assert_eq!(clamp.preconditions.len(), 1);
     }
 
     #[test]
@@ -3011,7 +3646,7 @@ fun main() -> I32 {
     fn parses_comptime_fun_and_apply() {
         let source = r#"
 comptime fun build_counter(T: Type) -> DeclSet {
-	return declset_new()
+	return DeclSet.new()
 }
 
 comptime apply build_counter(Counter)
@@ -3218,7 +3853,7 @@ fun main() -> I32 {
     }
 
     #[test]
-    fn rejects_comptime_function_inside_namespace() {
+    fn parses_comptime_function_inside_namespace() {
         let source = r#"
 namespace Option {
 	comptime fun bad(v: I32) -> I32 {
@@ -3229,12 +3864,11 @@ namespace Option {
         .to_string();
 
         let tokens = tokenize(source).expect("tokenize source");
-        let err = parse(tokens).expect_err("namespace comptime function must fail");
-        assert!(
-            err.to_string()
-                .contains("only supports `fun` and `extern fun` declarations"),
-            "unexpected error: {err}"
-        );
+        let ast = parse(tokens).expect("namespace comptime function should parse");
+        assert_eq!(ast.top_level_functions.len(), 1);
+        let function = &ast.top_level_functions[0];
+        assert_eq!(function.name, "Option__bad");
+        assert!(function.is_comptime);
     }
 
     #[test]
