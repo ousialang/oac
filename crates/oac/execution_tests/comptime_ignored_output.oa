@@ -1,0 +1,19 @@
+fun log_value(v: I32) -> I32 {
+	return print(v)
+}
+
+fun log_text(s: String) -> I32 {
+	return print_str(s)
+}
+
+comptime fun debug(T: Type) -> DeclSet {
+	log_value(1)
+	log_text("hello")
+	return DeclSet.new()
+}
+
+comptime apply debug(I32)
+
+fun main() -> I32 {
+	return 0
+}

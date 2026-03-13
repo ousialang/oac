@@ -1224,6 +1224,10 @@ fn evaluate_call(
         )
     };
 
+    if let Some(ignored) = try_evaluate_ignored_output_call(name, &args, path)? {
+        return Ok(ignored);
+    }
+
     match name {
         META_EXPR_OPT_FUNCTION | META_EXPR_METADATA_INTRINSIC => {
             ensure_arity(name, &args, 1)?;
@@ -1625,6 +1629,27 @@ fn evaluate_call(
                 ))
             }
         }
+    }
+}
+
+fn try_evaluate_ignored_output_call(
+    name: &str,
+    args: &[CtValueWithMeta],
+    path: &str,
+) -> anyhow::Result<Option<CtValueWithMeta>> {
+    let as_value = |value| CtValueWithMeta::new(value, Some(path.to_string()), None);
+    match name {
+        "print" => {
+            ensure_arity(name, args, 1)?;
+            expect_i32(&args[0].value, "print argument")?;
+            Ok(Some(as_value(CtValue::I32(0))))
+        }
+        "print_str" => {
+            ensure_arity(name, args, 1)?;
+            expect_string(&args[0].value, "print_str argument")?;
+            Ok(Some(as_value(CtValue::I32(0))))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -2377,6 +2402,31 @@ comptime apply derive(Counter)
         );
 
         execute(&mut ast).expect("ordinary helper preconditions should execute in comptime");
+    }
+
+    #[test]
+    fn print_and_print_str_are_ignored_in_comptime() {
+        let mut ast = parse_source(
+            r#"
+fun log_value(v: I32) -> I32 {
+	return print(v)
+}
+
+fun log_text(s: String) -> I32 {
+	return print_str(s)
+}
+
+comptime fun debug(T: Type) -> DeclSet {
+	assert(log_value(7) == 0)
+	assert(log_text("hello") == 0)
+	return DeclSet.new()
+}
+
+comptime apply debug(I32)
+"#,
+        );
+
+        execute(&mut ast).expect("print-style output should be ignored in comptime");
     }
 
     #[test]

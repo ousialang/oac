@@ -1,8 +1,0 @@
----
-source: crates/oac/src/qbe_backend.rs
-expression: "format!(\"COMPILATION ERROR\\n\\n{err}\")"
-snapshot_kind: text
----
-COMPILATION ERROR
-
-[OAC-COMPTIME-001] Error: failed to execute comptime applies: unsupported function call print in comptime evaluator (it remains deterministic and pure)
